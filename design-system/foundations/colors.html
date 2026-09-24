@@ -1,0 +1,67 @@
+<!-- @dsCard group="Foundations" title="Colors — terminal palette" subtitle="Black surfaces, amber signal ramp, semantic up/down, data series" width="900" height="760" -->
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#000; --s1:#0a0a0a; --s2:#121212; --s3:#1a1a1a;
+    --line:#232323; --line-2:#383838;
+    --amber:#ff9f1a; --amber-hi:#ffb84d; --amber-deep:#b36f0f; --amber-dim:#7d5410;
+    --up:#00d26a; --down:#ff453a; --cyan:#4db8ff; --violet:#b087f5; --gold:#ffce54; --rose:#ff6ea9;
+    --text:#f2f2f2; --muted:#9a9a9a; --faint:#6a6a6a;
+    --mono:'JetBrains Mono',monospace; --sans:'Inter',sans-serif;
+  }
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);padding:26px 30px}
+  h1{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--amber);margin:0 0 4px}
+  p.lead{color:var(--muted);font-size:12.5px;margin:0 0 22px;max-width:620px}
+  h2{font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);margin:22px 0 10px}
+  .row{display:flex;gap:10px;flex-wrap:wrap}
+  .sw{width:118px;border:1px solid var(--line);border-radius:3px;overflow:hidden;transition:transform .25s cubic-bezier(.16,1,.3,1),border-color .25s}
+  .sw:hover{transform:translateY(-3px);border-color:var(--line-2)}
+  .chip{height:56px}
+  .meta{padding:7px 9px;background:var(--s1)}
+  .meta b{display:block;font-size:11px;font-weight:600}
+  .meta span{font-family:var(--mono);font-size:10px;color:var(--faint)}
+  .note{margin-top:20px;padding:10px 12px;border:1px solid var(--line);border-left:2px solid var(--amber);border-radius:3px;background:var(--s1);color:var(--muted);font-size:12px;line-height:1.55}
+  .note code{font-family:var(--mono);color:var(--amber);font-size:11px}
+</style></head><body>
+  <h1>Color — Terminal Palette</h1>
+  <p class="lead">Pure-black terminal base with one signature signal color: amber. Amber means <b>attention & input</b> — never gains or losses. Green/red are reserved for direction of value. Data-series colors stay cool so amber always reads first.</p>
+
+  <h2>Core surfaces</h2>
+  <div class="row">
+    <div class="sw"><div class="chip" style="background:#000"></div><div class="meta"><b>bg</b><span>#000000</span></div></div>
+    <div class="sw"><div class="chip" style="background:#0a0a0a"></div><div class="meta"><b>surface-1</b><span>#0A0A0A</span></div></div>
+    <div class="sw"><div class="chip" style="background:#121212"></div><div class="meta"><b>surface-2</b><span>#121212</span></div></div>
+    <div class="sw"><div class="chip" style="background:#1a1a1a"></div><div class="meta"><b>surface-3</b><span>#1A1A1A</span></div></div>
+    <div class="sw"><div class="chip" style="background:#232323"></div><div class="meta"><b>hairline</b><span>#232323</span></div></div>
+    <div class="sw"><div class="chip" style="background:#383838"></div><div class="meta"><b>hairline-2</b><span>#383838</span></div></div>
+  </div>
+
+  <h2>Signal — amber ramp (attention, inputs, brand)</h2>
+  <div class="row">
+    <div class="sw"><div class="chip" style="background:#ffb84d"></div><div class="meta"><b>amber-hi</b><span>#FFB84D</span></div></div>
+    <div class="sw"><div class="chip" style="background:#ff9f1a"></div><div class="meta"><b>amber</b><span>#FF9F1A</span></div></div>
+    <div class="sw"><div class="chip" style="background:#b36f0f"></div><div class="meta"><b>amber-deep</b><span>#B36F0F</span></div></div>
+    <div class="sw"><div class="chip" style="background:#7d5410"></div><div class="meta"><b>amber-dim</b><span>#7D5410</span></div></div>
+    <div class="sw"><div class="chip" style="background:rgba(255,159,26,.12)"></div><div class="meta"><b>amber-soft</b><span>12% tint</span></div></div>
+    <div class="sw"><div class="chip" style="background:rgba(255,159,26,.05)"></div><div class="meta"><b>amber-tint</b><span>5% tint</span></div></div>
+  </div>
+
+  <h2>Semantic — direction of value only</h2>
+  <div class="row">
+    <div class="sw"><div class="chip" style="background:#00d26a"></div><div class="meta"><b>up / gain</b><span>#00D26A</span></div></div>
+    <div class="sw"><div class="chip" style="background:#ff453a"></div><div class="meta"><b>down / loss</b><span>#FF453A</span></div></div>
+    <div class="sw"><div class="chip" style="background:#ffce54"></div><div class="meta"><b>warn / mkt</b><span>#FFCE54</span></div></div>
+  </div>
+
+  <h2>Data series (charts)</h2>
+  <div class="row">
+    <div class="sw"><div class="chip" style="background:#4db8ff"></div><div class="meta"><b>series-2</b><span>#4DB8FF</span></div></div>
+    <div class="sw"><div class="chip" style="background:#b087f5"></div><div class="meta"><b>series-3</b><span>#B087F5</span></div></div>
+    <div class="sw"><div class="chip" style="background:#ff6ea9"></div><div class="meta"><b>series-4</b><span>#FF6EA9</span></div></div>
+    <div class="sw"><div class="chip" style="background:#35d0dd"></div><div class="meta"><b>series-5</b><span>#35D0DD</span></div></div>
+  </div>
+
+  <div class="note">Text ramp: <code>#F2F2F2</code> primary · <code>#9A9A9A</code> muted · <code>#6A6A6A</code> faint. Rule of use: <b>amber for what the user can change or should look at</b>, green/red for what the numbers did, cool colors for everything plotted.</div>
+</body></html>

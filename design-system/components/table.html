@@ -1,0 +1,53 @@
+<!-- @dsCard group="Components" title="Statement table" subtitle="Dense mono grid, amber editable cells, hover wash, red negatives" width="980" height="640" -->
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{--bg:#000;--s1:#0a0a0a;--s2:#121212;--line:#232323;--amber:#ff9f1a;--down:#ff453a;
+        --text:#f2f2f2;--muted:#9a9a9a;--faint:#6a6a6a;--mono:'JetBrains Mono',monospace;--sans:'Inter',sans-serif;
+        --ease:cubic-bezier(.16,1,.3,1)}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);padding:26px 30px}
+  h1{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--amber);margin:0 0 4px}
+  p.lead{color:var(--muted);font-size:12.5px;margin:0 0 16px;max-width:660px}
+  .wrap{border:1px solid var(--line);border-radius:3px;overflow:auto;background:var(--s1)}
+  table{border-collapse:collapse;width:100%;font-size:13px}
+  th{font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);
+     text-align:right;padding:7px 12px;border-bottom:1px solid #383838;background:var(--s2);position:sticky;top:0}
+  th:first-child{text-align:left}
+  td{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:right;padding:5px 12px;border-bottom:1px solid var(--line);color:var(--text)}
+  td:first-child{font-family:var(--sans);text-align:left;color:var(--muted)}
+  tr{transition:background .15s}
+  tbody tr:hover{background:rgba(255,159,26,.045)}
+  tr.sechead td{font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--amber);background:var(--s2);padding:6px 12px}
+  tr.bold td{font-weight:700;color:var(--text)}
+  tr.bold td:first-child{color:var(--text)}
+  tr.sub td{color:var(--faint);font-size:12px}
+  td.neg{color:var(--down)}
+  .edit{width:64px;font-family:var(--mono);font-size:12.5px;text-align:right;color:var(--amber);background:rgba(255,159,26,.05);
+    border:1px dashed rgba(255,159,26,.45);border-radius:2px;padding:2px 5px;outline:none;transition:all .2s var(--ease)}
+  .edit:hover{border-style:solid;background:rgba(255,159,26,.1)}
+  .edit:focus{border:1px solid var(--amber);background:#000;box-shadow:0 0 0 3px rgba(255,159,26,.16);transform:scale(1.18)}
+  .pen{color:var(--amber);font-size:10px;margin-left:5px;opacity:.7}
+  .note{margin-top:14px;padding:10px 12px;border:1px solid var(--line);border-left:2px solid var(--amber);border-radius:3px;background:var(--s1);color:var(--muted);font-size:12px;line-height:1.55}
+</style></head><body>
+  <h1>Financial Statement Table</h1>
+  <p class="lead">Dense mono grid: tabular numerals, hairline rows, amber section heads, red negatives. Amber-dashed cells are direct inputs — hover fills them, focus magnifies. Row hover is a 4.5% amber wash, never a solid bar.</p>
+  <div class="wrap"><table>
+    <thead><tr><th>FCFF build (₹ Cr)</th><th>2026</th><th>2027</th><th>2028</th><th>2029</th><th>2030</th></tr></thead>
+    <tbody>
+      <tr class="sechead"><td colspan="6">Income statement</td></tr>
+      <tr class="bold"><td>Revenue<span class="pen">✎</span></td>
+        <td><input class="edit" value="5600"></td><td><input class="edit" value="6104"></td><td><input class="edit" value="6616"></td><td><input class="edit" value="7113"></td><td><input class="edit" value="7682"></td></tr>
+      <tr class="sub"><td>Growth %</td><td>12.0%</td><td>9.0%</td><td>8.4%</td><td>7.5%</td><td>8.0%</td></tr>
+      <tr><td>EBITDA</td><td>1,232</td><td>1,399</td><td>1,573</td><td>1,751</td><td>1,932</td></tr>
+      <tr class="sub"><td>Less: D&amp;A</td><td class="neg">(252)</td><td class="neg">(275)</td><td class="neg">(298)</td><td class="neg">(320)</td><td class="neg">(346)</td></tr>
+      <tr><td>EBIT</td><td>980</td><td>1,124</td><td>1,275</td><td>1,431</td><td>1,586</td></tr>
+      <tr class="sechead"><td colspan="6">Free cash flow</td></tr>
+      <tr><td>NOPAT (EBIT × (1−t))</td><td>733</td><td>841</td><td>954</td><td>1,070</td><td>1,186</td></tr>
+      <tr class="sub"><td>Less: Capex</td><td class="neg">(336)</td><td class="neg">(366)</td><td class="neg">(397)</td><td class="neg">(427)</td><td class="neg">(461)</td></tr>
+      <tr class="sub"><td>Less: Δ NWC</td><td class="neg">(72)</td><td class="neg">(60)</td><td class="neg">(61)</td><td class="neg">(60)</td><td class="neg">(68)</td></tr>
+      <tr class="bold"><td>FCFF</td><td>577</td><td>670</td><td>769</td><td>874</td><td>982</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note">Editing feel: click a cell and it magnifies (scale 1.18) with an amber focus ring; Enter commits, Esc cancels, and the whole model re-tweens. An untouched cell never changes the model.</div>
+</body></html>

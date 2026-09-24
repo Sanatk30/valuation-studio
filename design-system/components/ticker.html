@@ -1,0 +1,58 @@
+<!-- @dsCard group="Components" title="Ticker strip" subtitle="Live tape — green/red price pops, feed-line, click-to-jump pills" width="980" height="320" -->
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{--bg:#000;--s1:#0a0a0a;--s3:#1a1a1a;--line:#232323;--line-2:#383838;--amber:#ff9f1a;--up:#00d26a;--down:#ff453a;--gold:#ffce54;
+        --text:#f2f2f2;--muted:#9a9a9a;--faint:#6a6a6a;--mono:'JetBrains Mono',monospace;--sans:'Inter',sans-serif;
+        --ease:cubic-bezier(.16,1,.3,1)}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);padding:26px 30px}
+  h1{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--amber);margin:0 0 4px}
+  p.lead{color:var(--muted);font-size:12.5px;margin:0 0 16px;max-width:660px}
+  .ticker{display:flex;gap:8px;align-items:center;overflow-x:auto;border:1px solid var(--line);border-radius:3px;background:var(--s1);
+          padding:8px 12px;position:relative}
+  .ticker::after{content:'';position:absolute;left:0;right:0;bottom:-1px;height:1px;
+          background:linear-gradient(90deg,transparent,rgba(255,159,26,.55),transparent);
+          background-size:200% 100%;animation:feed 6s linear infinite}
+  @keyframes feed{to{background-position:-200% 0}}
+  .tk{display:inline-flex;align-items:center;gap:8px;flex:none;border:1px solid var(--line);border-radius:3px;background:#000;
+      padding:5px 11px;cursor:pointer;font-family:var(--mono);transition:border-color .2s,transform .2s var(--ease)}
+  .tk:hover{border-color:var(--line-2);transform:translateY(-1px)}
+  .tk.on{border-color:rgba(255,159,26,.5);background:rgba(255,159,26,.05)}
+  .tk-name{font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint)}
+  .tk-px{font-size:12.5px;font-weight:700;font-variant-numeric:tabular-nums;transition:color .3s}
+  .tk-px.up{color:var(--up);animation:pop .5s var(--ease)}
+  .tk-px.down{color:var(--down);animation:pop .5s var(--ease)}
+  @keyframes pop{30%{transform:scale(1.12)}100%{transform:scale(1)}}
+  .tk-d{font-size:9.5px;font-weight:600}
+  .tk-d.pos{color:var(--up)}.tk-d.neg{color:var(--down)}
+  .blend .tk-name::before{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--up);
+      margin-right:6px;vertical-align:.5px;animation:pulse 2s infinite}
+  @keyframes pulse{50%{box-shadow:0 0 0 4px rgba(0,210,106,.15)}}
+  .mkt{border-style:dashed}
+  .note{margin-top:14px;padding:10px 12px;border:1px solid var(--line);border-left:2px solid var(--amber);border-radius:3px;background:var(--s1);color:var(--muted);font-size:12px;line-height:1.55}
+</style></head><body>
+  <h1>Ticker Strip — Live Valuation Tape</h1>
+  <p class="lead">Always-visible tape under the top bar: blended value, market price, and every method's implied price. Prices flash green/red and pop when they move; a faint amber feed-line runs beneath. Click a pill to jump to that method.</p>
+  <div class="ticker">
+    <span class="tk blend on"><span class="tk-name">Blended</span><b class="tk-px" id="p0">₹1,342.0</b><span class="tk-d pos">▲ 57.9%</span></span>
+    <span class="tk mkt"><span class="tk-name">Market</span><b class="tk-px">₹850.0</b></span>
+    <span class="tk"><span class="tk-name">DCF · FCFF</span><b class="tk-px" id="p1">₹1,043.7</b><span class="tk-d pos">▲ 23%</span></span>
+    <span class="tk"><span class="tk-name">DCF · FCFE</span><b class="tk-px" id="p2">₹749.5</b><span class="tk-d neg">▼ 12%</span></span>
+    <span class="tk"><span class="tk-name">Comps EV/EBITDA</span><b class="tk-px" id="p3">₹1,521.6</b><span class="tk-d pos">▲ 79%</span></span>
+    <span class="tk"><span class="tk-name">LBO floor</span><b class="tk-px" id="p4">₹1,122.8</b><span class="tk-d pos">▲ 32%</span></span>
+  </div>
+  <div class="note">Motion contract: a price that rises flashes green and pops 12% for 500&nbsp;ms, then settles back to white — direction is a moment, level is the resting state. The green dot on Blended breathes every 2s: the model is live.</div>
+<script>
+  const ids=['p0','p1','p2','p3','p4'];
+  setInterval(()=>{
+    const el=document.getElementById(ids[Math.floor(Math.random()*ids.length)]);
+    const up=Math.random()>0.45;
+    const v=parseFloat(el.textContent.replace(/[₹,]/g,''))*(1+(up?1:-1)*(Math.random()*0.012));
+    el.textContent='₹'+v.toLocaleString('en-IN',{minimumFractionDigits:1,maximumFractionDigits:1});
+    el.classList.remove('up','down');void el.offsetWidth;
+    el.classList.add(up?'up':'down');
+    setTimeout(()=>el.classList.remove('up','down'),650);
+  },1500);
+</script>
+</body></html>

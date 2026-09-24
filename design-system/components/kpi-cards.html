@@ -1,0 +1,81 @@
+<!-- @dsCard group="Components" title="KPI cards" subtitle="Count-up numbers, delta chips, self-drawing sparklines, hover lift" width="980" height="420" -->
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{--bg:#000;--s1:#0a0a0a;--s3:#1a1a1a;--line:#232323;--line-2:#383838;--amber:#ff9f1a;
+        --up:#00d26a;--down:#ff453a;--text:#f2f2f2;--muted:#9a9a9a;--faint:#6a6a6a;
+        --mono:'JetBrains Mono',monospace;--sans:'Inter',sans-serif;--ease:cubic-bezier(.16,1,.3,1)}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);padding:26px 30px}
+  h1{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--amber);margin:0 0 4px}
+  p.lead{color:var(--muted);font-size:12.5px;margin:0 0 18px;max-width:640px}
+  .cards{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+  .card{border:1px solid var(--line);border-radius:3px;background:var(--s1);padding:13px 15px 12px;position:relative;
+        transition:transform .3s var(--ease),border-color .3s,box-shadow .3s}
+  .card:hover{transform:translateY(-3px);border-color:var(--line-2);box-shadow:0 12px 32px rgba(0,0,0,.55)}
+  .card.hero{border-top:2px solid var(--amber)}
+  .card.hero:hover{box-shadow:0 12px 32px rgba(0,0,0,.55),0 0 0 1px rgba(255,159,26,.15)}
+  .k{font-family:var(--mono);font-size:9.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);margin-bottom:7px}
+  .v{font-family:var(--mono);font-size:19px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+  .v.pos{color:var(--up)}.v.neg{color:var(--down)}
+  .s{font-size:11px;color:var(--faint);margin-top:6px}
+  .delta{display:inline-flex;align-items:center;gap:4px;font-family:var(--mono);font-size:10px;font-weight:600;
+         border-radius:999px;padding:2px 8px;margin-left:8px;vertical-align:3px}
+  .delta.up{color:var(--up);background:rgba(0,210,106,.1);border:1px solid rgba(0,210,106,.28)}
+  .delta.dn{color:var(--down);background:rgba(255,69,58,.1);border:1px solid rgba(255,69,58,.28)}
+  .spark{display:block;margin-top:9px;width:100%;height:26px}
+  .spark polyline{fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;
+    stroke-dasharray:220;stroke-dashoffset:220;animation:draw 1.4s var(--ease) .3s forwards}
+  .spark .fill{opacity:0;animation:fadein .8s .9s forwards}
+  @keyframes draw{to{stroke-dashoffset:0}}
+  @keyframes fadein{to{opacity:1}}
+  .note{margin-top:16px;padding:10px 12px;border:1px solid var(--line);border-left:2px solid var(--amber);border-radius:3px;background:var(--s1);color:var(--muted);font-size:12px;line-height:1.55}
+</style></head><body>
+  <h1>KPI Cards</h1>
+  <p class="lead">Row of four under every hero. The primary card carries the amber top edge. Numbers count up on load and tween on every assumption change; sparklines draw themselves in; deltas are pill-chips, green/red only.</p>
+  <div class="cards">
+    <div class="card hero">
+      <div class="k">DCF — implied share price</div>
+      <div class="v" data-count="1043.7" data-prefix="₹">₹0.0</div>
+      <div class="s">Gordon primary · TV 75% of EV<span class="delta up">▲ 22.8%</span></div>
+      <svg class="spark" viewBox="0 0 140 26" preserveAspectRatio="none">
+        <polyline class="fill" points="0,24 20,20 40,21 60,15 80,12 100,13 120,7 140,4 140,26 0,26" fill="rgba(255,159,26,.1)" stroke="none"/>
+        <polyline points="0,24 20,20 40,21 60,15 80,12 100,13 120,7 140,4" stroke="#ff9f1a"/>
+      </svg>
+    </div>
+    <div class="card">
+      <div class="k">LBO — sponsor IRR</div>
+      <div class="v pos" data-count="19.8" data-suffix="%">0%</div>
+      <div class="s">MOIC 2.46x · 5-yr hold<span class="delta up">▲ hurdle</span></div>
+      <svg class="spark" viewBox="0 0 140 26" preserveAspectRatio="none">
+        <polyline points="0,22 25,19 50,17 75,13 100,10 120,8 140,5" stroke="#00d26a"/>
+      </svg>
+    </div>
+    <div class="card">
+      <div class="k">Comps — EV/EBITDA median</div>
+      <div class="v" data-count="1521.6" data-prefix="₹">₹0.0</div>
+      <div class="s">13.0x NTM EBITDA<span class="delta up">▲ 79%</span></div>
+      <svg class="spark" viewBox="0 0 140 26" preserveAspectRatio="none">
+        <polyline points="0,18 25,16 50,19 75,14 100,15 120,11 140,9" stroke="#4db8ff"/>
+      </svg>
+    </div>
+    <div class="card">
+      <div class="k">DCF — FCFE @ CoE</div>
+      <div class="v neg" data-count="749.5" data-prefix="₹">₹0.0</div>
+      <div class="s">vs market ₹850<span class="delta dn">▼ 11.8%</span></div>
+      <svg class="spark" viewBox="0 0 140 26" preserveAspectRatio="none">
+        <polyline points="0,8 25,10 50,9 75,14 100,13 120,17 140,19" stroke="#ff453a"/>
+      </svg>
+    </div>
+  </div>
+  <div class="note">Motion contract: value changes never snap — they exponential-tween (~140&nbsp;ms time constant). Hover lifts 3px with a soft black shadow. Nothing pulses at rest.</div>
+<script>
+  document.querySelectorAll('.v[data-count]').forEach(el=>{
+    const target=+el.dataset.count,pre=el.dataset.prefix||'',suf=el.dataset.suffix||'';
+    const t0=performance.now(),D=1200;
+    (function tick(t){const p=Math.min(1,(t-t0)/D),e=1-Math.pow(1-p,4);
+      el.textContent=pre+(target*e).toLocaleString('en-IN',{minimumFractionDigits:1,maximumFractionDigits:1})+suf;
+      if(p<1)requestAnimationFrame(tick);})(t0);
+  });
+</script>
+</body></html>

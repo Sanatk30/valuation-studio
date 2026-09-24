@@ -1,0 +1,54 @@
+<!-- @dsCard group="Components" title="Navigation rail" subtitle="Amber active bar, keyboard hints, brand sheen" width="620" height="420" -->
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{--bg:#000;--s1:#0a0a0a;--s3:#1a1a1a;--line:#232323;--amber:#ff9f1a;
+        --text:#f2f2f2;--muted:#9a9a9a;--faint:#6a6a6a;--mono:'JetBrains Mono',monospace;--sans:'Inter',sans-serif;
+        --ease:cubic-bezier(.16,1,.3,1)}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);padding:20px;display:flex;gap:18px}
+  .rail{width:206px;border:1px solid var(--line);border-radius:3px;background:var(--bg);padding:10px 8px;display:flex;flex-direction:column;gap:1px}
+  .brand{display:flex;align-items:center;gap:9px;padding:4px 5px 12px}
+  .mark{width:30px;height:30px;border-radius:3px;background:var(--amber);display:flex;align-items:center;justify-content:center;
+        font-family:var(--mono);font-weight:700;font-size:12px;color:#000;position:relative;overflow:hidden}
+  .mark::after{content:'';position:absolute;inset:0;background:linear-gradient(115deg,transparent 35%,rgba(255,255,255,.45) 50%,transparent 65%);
+        transform:translateX(-120%);animation:sheen 5s var(--ease) infinite}
+  @keyframes sheen{12%{transform:translateX(120%)}100%{transform:translateX(120%)}}
+  .bname{font-family:var(--mono);font-weight:700;font-size:12px;letter-spacing:.02em;text-transform:uppercase;color:var(--amber);line-height:1.2}
+  .bname small{display:block;color:var(--faint);font-size:9px;font-weight:500;text-transform:none;margin-top:2px}
+  .item{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:3px;border:none;background:none;cursor:pointer;
+        color:var(--muted);font-family:var(--mono);font-size:11.5px;font-weight:500;letter-spacing:.03em;text-transform:uppercase;
+        position:relative;text-align:left;width:100%;transition:color .18s,background .18s}
+  .item::before{content:'';position:absolute;left:0;top:22%;bottom:22%;width:2px;border-radius:2px;background:var(--amber);
+        transform:scaleY(0);transition:transform .28s var(--ease)}
+  .item:hover{color:var(--text);background:var(--s1)}
+  .item.active{color:var(--amber);background:rgba(255,159,26,.06)}
+  .item.active::before{transform:scaleY(1)}
+  .item svg{width:15px;height:15px;flex:none}
+  .item kbd{margin-left:auto;font-size:9px;border:1px solid var(--line);border-radius:3px;padding:1px 5px;color:var(--faint)}
+  .side{flex:1;max-width:330px}
+  .side h1{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--amber);margin:0 0 4px}
+  .side p{color:var(--muted);font-size:12.5px;line-height:1.6}
+  .side .rule{margin-top:12px;padding:10px 12px;border:1px solid var(--line);border-left:2px solid var(--amber);border-radius:3px;background:var(--s1);color:var(--muted);font-size:12px;line-height:1.55}
+</style></head><body>
+  <nav class="rail" id="rail">
+    <div class="brand"><div class="mark">VS</div><div class="bname">Valuation Studio<small>live modeling suite</small></div></div>
+    <button class="item active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5"/></svg>Summary<kbd>1</kbd></button>
+    <button class="item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg>DCF<kbd>2</kbd></button>
+    <button class="item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l9 5-9 5-9-5 9-5z"/><path d="M3 12l9 5 9-5"/></svg>3-Statement<kbd>3</kbd></button>
+    <button class="item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 5L5 19"/><circle cx="7" cy="7" r="2.6"/><circle cx="17" cy="17" r="2.6"/></svg>Ratios<kbd>4</kbd></button>
+    <button class="item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>LBO<kbd>5</kbd></button>
+    <button class="item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 20V10M12 20V4M19 20v-8"/></svg>Comps<kbd>6</kbd></button>
+  </nav>
+  <div class="side">
+    <h1>Navigation Rail</h1>
+    <p>The spine of the workspace. Active view gets amber text, a 6% amber wash, and a 2px left bar that <b>scales in vertically</b> (280&nbsp;ms). Hover is a quiet surface step. The VS mark catches a sheen every 5s.</p>
+    <div class="rule">Keyboard-first: <b>1–9</b> jump views, <b>A</b> toggles the assumptions dock. The kbd hints live in the rail so the shortcuts teach themselves. Collapses to a 56px icon rail.</div>
+  </div>
+<script>
+  document.querySelectorAll('.item').forEach(b=>b.onclick=()=>{
+    document.querySelectorAll('.item').forEach(x=>x.classList.remove('active'));
+    b.classList.add('active');
+  });
+</script>
+</body></html>

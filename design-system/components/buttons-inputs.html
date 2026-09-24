@@ -1,0 +1,85 @@
+<!-- @dsCard group="Components" title="Buttons & inputs" subtitle="Primary sheen, sliding segments, slider, editable cells" width="880" height="620" -->
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{--bg:#000;--s1:#0a0a0a;--s2:#121212;--s3:#1a1a1a;--line:#232323;--line-2:#383838;--amber:#ff9f1a;--amber-hi:#ffb84d;
+        --text:#f2f2f2;--muted:#9a9a9a;--faint:#6a6a6a;--mono:'JetBrains Mono',monospace;--sans:'Inter',sans-serif;
+        --ease:cubic-bezier(.16,1,.3,1)}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);padding:26px 30px}
+  h1{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--amber);margin:0 0 4px}
+  p.lead{color:var(--muted);font-size:12.5px;margin:0 0 20px;max-width:640px}
+  h2{font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);margin:20px 0 10px}
+  .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+  .btn{font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+       padding:7px 14px;border-radius:3px;border:1px solid var(--line-2);background:var(--s2);color:var(--text);
+       cursor:pointer;position:relative;overflow:hidden;transition:transform .18s var(--ease),border-color .18s,background .18s,box-shadow .18s}
+  .btn:hover{border-color:var(--amber);color:var(--amber-hi);transform:translateY(-1px)}
+  .btn:active{transform:translateY(0) scale(.98)}
+  .btn.primary{background:var(--amber);border-color:var(--amber);color:#000}
+  .btn.primary:hover{background:var(--amber-hi);color:#000;box-shadow:0 4px 18px rgba(255,159,26,.35)}
+  .btn.primary::after{content:'';position:absolute;inset:0;background:linear-gradient(110deg,transparent 30%,rgba(255,255,255,.35) 50%,transparent 70%);transform:translateX(-120%);transition:transform .6s var(--ease)}
+  .btn.primary:hover::after{transform:translateX(120%)}
+  .btn.ghost{background:none;border-color:transparent;color:var(--muted)}
+  .btn.ghost:hover{color:var(--amber);border-color:var(--line)}
+  .btn.danger:hover{border-color:#ff453a;color:#ff453a}
+  .seg{display:inline-flex;position:relative;border:1px solid var(--line-2);border-radius:3px;background:var(--s1);padding:2px}
+  .seg button{position:relative;z-index:1;font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;
+       padding:5px 14px;border:none;background:none;color:var(--faint);cursor:pointer;transition:color .2s}
+  .seg button.on{color:#000}
+  .seg .pill{position:absolute;top:2px;bottom:2px;border-radius:2px;background:var(--amber);transition:left .3s var(--ease),width .3s var(--ease)}
+  .ninput{max-width:280px}
+  .ninput .r1{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+  .ninput label{font-size:12px;color:var(--muted)}
+  .valbox{display:flex;align-items:center;gap:4px;border:1px solid var(--line-2);border-radius:3px;background:#000;padding:3px 8px;transition:border-color .2s,box-shadow .2s}
+  .valbox:focus-within{border-color:var(--amber);box-shadow:0 0 0 3px rgba(255,159,26,.16)}
+  .valbox input{width:56px;border:none;background:none;color:var(--amber);font-family:var(--mono);font-size:12.5px;font-weight:600;text-align:right;outline:none}
+  .valbox .sfx{font-family:var(--mono);font-size:10.5px;color:var(--faint)}
+  input[type=range]{-webkit-appearance:none;width:100%;height:3px;border-radius:2px;outline:none;
+    background:linear-gradient(90deg,var(--amber) var(--fill,50%),#2a2a2a var(--fill,50%))}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:13px;height:13px;border-radius:2px;background:var(--amber);border:1px solid #000;cursor:pointer;transition:transform .15s var(--ease),box-shadow .15s}
+  input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.25);box-shadow:0 0 0 5px rgba(255,159,26,.15)}
+  .cellin{width:74px;font-family:var(--mono);font-size:12.5px;text-align:right;color:var(--amber);background:rgba(255,159,26,.05);
+    border:1px dashed rgba(255,159,26,.45);border-radius:2px;padding:3px 6px;outline:none;transition:all .2s}
+  .cellin:hover{border-style:solid;background:rgba(255,159,26,.1)}
+  .cellin:focus{border:1px solid var(--amber);background:#000;box-shadow:0 0 0 3px rgba(255,159,26,.16);transform:scale(1.12)}
+</style></head><body>
+  <h1>Buttons, Inputs &amp; Controls</h1>
+  <p class="lead">Amber = "you can act here". Primary buttons are solid amber with black text and a sheen sweep on hover; every input glows amber on focus; sliders and editable cells share the same amber input language.</p>
+
+  <h2>Buttons</h2>
+  <div class="row">
+    <button class="btn primary">Export Excel ▾</button>
+    <button class="btn">Enter Data</button>
+    <button class="btn ghost">Reset</button>
+    <button class="btn danger">Delete</button>
+  </div>
+
+  <h2>Segmented control — sliding amber pill</h2>
+  <div class="row">
+    <div class="seg" id="seg">
+      <div class="pill" id="pill"></div>
+      <button class="on">Base</button><button>Bear</button><button>Bull</button>
+    </div>
+    <span style="font-size:11px;color:var(--faint)">click — the pill glides, it never jumps</span>
+  </div>
+
+  <h2>Number input + slider (assumptions dock)</h2>
+  <div class="ninput">
+    <div class="r1"><label>Revenue growth — Year 1</label>
+      <span class="valbox"><input id="gv" value="12.0"><span class="sfx">%</span></span></div>
+    <input type="range" id="gr" min="-20" max="50" step="0.5" value="12" style="--fill:45.7%">
+  </div>
+
+  <h2>Editable statement cell — dashed amber, magnifies on focus</h2>
+  <div class="row"><input class="cellin" value="5600"><input class="cellin" value="6104"><input class="cellin" value="6616"><span style="font-size:11px;color:var(--faint)">← type like a spreadsheet; Esc cancels</span></div>
+
+<script>
+  const seg=document.getElementById('seg'),pill=document.getElementById('pill');
+  const place=b=>{pill.style.left=b.offsetLeft+'px';pill.style.width=b.offsetWidth+'px'};
+  const btns=[...seg.querySelectorAll('button')];place(btns[0]);
+  btns.forEach(b=>b.onclick=()=>{btns.forEach(x=>x.classList.remove('on'));b.classList.add('on');place(b)});
+  const gr=document.getElementById('gr'),gv=document.getElementById('gv');
+  gr.oninput=()=>{gv.value=(+gr.value).toFixed(1);gr.style.setProperty('--fill',((gr.value-(-20))/70*100)+'%')};
+</script>
+</body></html>

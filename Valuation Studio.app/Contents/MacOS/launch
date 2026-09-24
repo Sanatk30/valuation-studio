@@ -1,0 +1,81 @@
+#!/bin/bash
+# Valuation Studio launcher — double-click to start the dev server and open the app.
+# Idempotent: if it's already running, this just reopens the browser tab.
+
+DIR="/Users/sanatkumar/Downloads/valuation-studio"
+URL="http://localhost:5173"
+LABEL="com.sanatk.valuationstudio.server"
+# Logs + the launchd plist MUST live outside ~/Downloads: Downloads is TCC-protected,
+# and launchd cannot open a StandardOutPath there (it fails the job with EX_CONFIG/78).
+RUNDIR="$HOME/Library/Logs/ValuationStudio"
+PLIST="$RUNDIR/server.plist"
+DEVLOG="$RUNDIR/dev.log"
+
+# GUI-launched apps don't load your shell profile, so make node/npm findable.
+export PATH="/usr/local/bin:/opt/homebrew/bin:$HOME/.npm-global/bin:/usr/bin:/bin:$PATH"
+[ -s "$HOME/.nvm/nvm.sh" ] && . "$HOME/.nvm/nvm.sh" >/dev/null 2>&1
+
+die() {
+  osascript -e "display dialog \"$1\" buttons {\"OK\"} with icon stop with title \"Valuation Studio\"" >/dev/null 2>&1
+  exit 1
+}
+
+cd "$DIR" 2>/dev/null || die "Valuation Studio folder not found at ~/Downloads/valuation-studio."
+mkdir -p "$RUNDIR"
+
+# Already serving? Just bring it up.
+if /usr/bin/curl -s -o /dev/null --max-time 2 "$URL"; then
+  open "$URL"; exit 0
+fi
+
+NPM="$(command -v npm)"
+[ -n "$NPM" ] || die "Node.js / npm was not found. Install Node 18+ from nodejs.org, then click again."
+
+# First run: install dependencies (foreground — this launcher can wait).
+if [ ! -d "$DIR/node_modules" ]; then
+  osascript -e 'display notification "Installing dependencies — first launch may take a minute." with title "Valuation Studio"' >/dev/null 2>&1
+  "$NPM" install >"$RUNDIR/install.log" 2>&1
+fi
+
+# Hand the dev server to launchd so it OUTLIVES this launcher. A plain `nohup ... &`
+# gets reaped the moment a GUI-launched .app exits (every descendant shares the app's
+# launchd job). A launchd-owned job runs independently and keeps serving.
+: >"$DEVLOG"
+cat >"$PLIST" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string><string>-c</string>
+    <string>cd '$DIR' && exec '$NPM' run dev -- --port 5173 --strictPort</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>$PATH</string></dict>
+  <key>StandardOutPath</key><string>$DEVLOG</string>
+  <key>StandardErrorPath</key><string>$DEVLOG</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><false/>
+</dict>
+</plist>
+PLIST
+
+GUI="gui/$(id -u)"
+/bin/launchctl bootout "$GUI/$LABEL" 2>/dev/null   # clear any stale job
+/bin/launchctl bootstrap "$GUI" "$PLIST" 2>>"$DEVLOG"
+
+# Wait (up to ~30s) for it to answer, then open the browser.
+for _ in $(seq 1 60); do
+  /usr/bin/curl -s -o /dev/null --max-time 2 "$URL" && break
+  sleep 0.5
+done
+
+if /usr/bin/curl -s -o /dev/null --max-time 2 "$URL"; then
+  open "$URL"
+else
+  osascript -e "display dialog \"The server did not start. See the log at:
+$DEVLOG\" buttons {\"OK\"} with icon caution with title \"Valuation Studio\"" >/dev/null 2>&1
+fi
+exit 0

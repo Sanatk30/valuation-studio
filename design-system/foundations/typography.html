@@ -1,0 +1,38 @@
+<!-- @dsCard group="Foundations" title="Typography" subtitle="JetBrains Mono for data, Inter for prose, tabular numerals" width="900" height="620" -->
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{--bg:#000;--s1:#0a0a0a;--line:#232323;--amber:#ff9f1a;--text:#f2f2f2;--muted:#9a9a9a;--faint:#6a6a6a;
+        --mono:'JetBrains Mono',monospace;--sans:'Inter',sans-serif}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);padding:26px 30px}
+  h1{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--amber);margin:0 0 4px}
+  p.lead{color:var(--muted);font-size:12.5px;margin:0 0 20px;max-width:640px}
+  .spec{display:grid;grid-template-columns:150px 1fr;gap:0 22px;border:1px solid var(--line);border-radius:3px;background:var(--s1)}
+  .spec>div{padding:14px 16px;border-bottom:1px solid var(--line)}
+  .spec>div:nth-last-child(-n+2){border-bottom:none}
+  .k{font-family:var(--mono);font-size:10px;color:var(--faint);text-transform:uppercase;letter-spacing:.1em;padding-top:18px!important}
+  .eyebrow{font-family:var(--mono);font-size:10.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--amber)}
+  .display{font-family:var(--mono);font-size:40px;font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums;line-height:1}
+  .display::after{content:'▍';color:var(--amber);animation:blink 1.1s steps(1) infinite;font-weight:400}
+  @keyframes blink{50%{opacity:0}}
+  .h3{font-size:13px;font-weight:700;letter-spacing:.02em;text-transform:uppercase;font-family:var(--mono);color:var(--text)}
+  .h3::before{content:'';display:inline-block;width:3px;height:11px;background:var(--amber);margin-right:8px}
+  .body{font-size:13px;line-height:1.6;color:var(--muted);max-width:520px}
+  .data{font-family:var(--mono);font-size:13px;font-variant-numeric:tabular-nums}
+  .data em{font-style:normal;color:#00d26a}.data s{text-decoration:none;color:#ff453a}
+  kbd{font-family:var(--mono);font-size:10px;border:1px solid #383838;border-radius:3px;padding:1px 5px;color:var(--faint)}
+  .rule{margin-top:18px;padding:10px 12px;border:1px solid var(--line);border-left:2px solid var(--amber);border-radius:3px;background:var(--s1);color:var(--muted);font-size:12px;line-height:1.55}
+</style></head><body>
+  <h1>Typography — Mono Data, Sans Prose</h1>
+  <p class="lead">Two families, strict roles. <b>JetBrains Mono</b> owns every number, label, and heading (tabular numerals so figures never jitter as they animate). <b>Inter</b> owns sentences. Base size 13px — terminal-dense.</p>
+  <div class="spec">
+    <div class="k">Eyebrow / 10.5 mono 700<br>tracking .10em upper</div><div><span class="eyebrow">Discounted cash flow — implied share price</span></div>
+    <div class="k">Display / 40 mono 700<br>tabular + live caret</div><div><span class="display">₹1,043.7</span></div>
+    <div class="k">Section title / 13 mono<br>amber tick prefix</div><div><span class="h3">FCFF build — type into amber cells</span></div>
+    <div class="k">Body / 13 Inter<br>1.6 line height</div><div class="body">FCFF discounted at 12.29% WACC; FCFE at the cost of equity. Drag any slider — every figure on the page flows to its new value.</div>
+    <div class="k">Data cell / 13 mono<br>tabular numerals</div><div class="data">5,600&nbsp;&nbsp;·&nbsp;&nbsp;<em>▲ 22.8%</em>&nbsp;&nbsp;·&nbsp;&nbsp;<s>▼ 1,200</s>&nbsp;&nbsp;·&nbsp;&nbsp;12.29%</div>
+    <div class="k">Keyboard hint</div><div><kbd>1</kbd>–<kbd>9</kbd> switch views&nbsp;&nbsp;<kbd>A</kbd> assumptions dock</div>
+  </div>
+  <div class="rule">Numbers are the interface: they get the display face, the color, and the motion. Prose stays quiet — muted gray Inter, never bold unless it names a figure.</div>
+</body></html>
