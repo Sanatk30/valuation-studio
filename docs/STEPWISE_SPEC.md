@@ -126,3 +126,8 @@ capex %, NWC %; per-year grid with paste).
   starting at 1 pp) for margin, growth, capex and tax.
 - Comps / Precedent headline: **all implied-price rows side by side**.
 - ADR / depositary receipts: **warning only**.
+- Yahoo peers follow the company rules: cash = cash & equivalents only, and a
+  negative reported effective tax rate is left NA.
+- Precedent offer price: the purchase consideration decides the legs — Cash =
+  cash offer; Stock = exchange ratio × acquirer price; Cash / Stock = both. A
+  leg the deal does not have is 0; a leg it has must be filled, else NA.

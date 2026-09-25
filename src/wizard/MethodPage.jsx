@@ -108,11 +108,11 @@ export default function MethodPage({ record, methodId, onHome }) {
             {skipped && <div className="note-bar">You skipped this step. Fill it in and press Continue to include it.</div>}
           </div>
 
-          {Extra && !step.extraBelow && <Extra data={mstate.data} setData={setData} company={company} ctx={ctx} reveal={reveal} />}
+          {Extra && !step.extraBelow && <Extra data={mstate.data} setData={setData} company={company} ctx={ctx} reveal={reveal} specs={errs.specs} />}
           {errs.specs.length > 0 && (
             <FieldGrid specs={errs.specs} data={mstate.data} onSet={onSet} company={company} reveal={reveal} />
           )}
-          {Extra && step.extraBelow && <Extra data={mstate.data} setData={setData} company={company} ctx={ctx} reveal={reveal} />}
+          {Extra && step.extraBelow && <Extra data={mstate.data} setData={setData} company={company} ctx={ctx} reveal={reveal} specs={errs.specs} />}
           {Readout && <Readout data={mstate.data} company={company} ctx={ctx} />}
 
           {(reveal || !Object.keys(errs.fields).length) && errs.step.length > 0 && (

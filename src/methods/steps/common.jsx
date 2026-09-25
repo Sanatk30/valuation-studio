@@ -29,13 +29,23 @@ function companySpecs({ tax, nol, priceRequired = false, priceHint }) {
 
 const finite = (v) => typeof v === 'number' && Number.isFinite(v);
 
-/** Fold a ListingSearch result into THIS method's data — reported facts only. */
-export function applyListing(data, mapped) {
+/** Methods whose Financing step asks for the opening PP&E and reported equity. */
+const TS_BALANCE_METHODS = ['ts', 'ratios'];
+
+/**
+ * Fold a ListingSearch result into THIS method's data — reported facts only,
+ * and only into fields this method actually asks for (`companyPaths` = the
+ * Company step's field paths). A value Yahoo does not report never clears
+ * what the user already typed.
+ */
+export function applyListing(data, mapped, { companyPaths = null, methodId = null } = {}) {
   let next = { ...data };
   const pick = (src, keys) => Object.fromEntries(keys.filter((k) => src && finite(src[k])).map((k) => [k, src[k]]));
-  const ownCompanyKeys = COMPANY_KEYS.filter((k) => k in (data.company || {}));
+  const asked = companyPaths ? COMPANY_KEYS.filter((k) => companyPaths.includes(`company.${k}`)) : COMPANY_KEYS;
+  const ownCompanyKeys = asked.filter((k) => k in (data.company || {}));
   next.company = { ...data.company, ...pick(mapped.company, ownCompanyKeys) };
   if (data.drivers) next.drivers = { ...data.drivers, ...pick(mapped.drivers, ['revenue0', 'ebitda0', 'nwc0']) };
+  if (data.ts && mapped.ts && TS_BALANCE_METHODS.includes(methodId)) next.ts = { ...data.ts, ...pick(mapped.ts, ['startingPPE', 'equity0']) };
   if (data.comps && mapped.compsTarget) {
     const t = { ...data.comps.target };
     for (const [k, v] of Object.entries(mapped.compsTarget)) {
@@ -80,7 +90,7 @@ function CopyFrom({ record, methodId, section, specsFor, onCopy, what }) {
 
 const COMPANY_SPECS_ALL = companySpecs({ tax: true, nol: true });
 
-function CompanyExtras({ data, setData, company, ctx }) {
+function CompanyExtras({ data, setData, company, ctx, specs }) {
   const onCopy = (src) => setData((d) => {
     const c = { ...d.company };
     for (const k of Object.keys(c)) if (src.company && k in src.company) c[k] = src.company[k];
@@ -97,7 +107,10 @@ function CompanyExtras({ data, setData, company, ctx }) {
           Search a name or ticker to fill the reported figures (converted into {company.currency} {company.unit} at a rate you confirm).
           Nothing changes until you press Apply.
         </div>
-        <ListingSearch company={company} onApply={(mapped) => setData((d) => applyListing(d, mapped))} />
+        <ListingSearch
+          company={company}
+          onApply={(mapped) => setData((d) => applyListing(d, mapped, { companyPaths: (specs || []).map((s) => s.path), methodId: ctx.methodId }))}
+        />
         {data.listing && (
           <div className="fld-h" style={{ marginTop: 8 }}>
             Filled from <b>{data.listing.name || data.listing.symbol}</b> ({data.listing.symbol}

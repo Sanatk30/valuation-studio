@@ -80,9 +80,9 @@ export default function FillAllDialog({ def, mstate, ctx, company, onClose, onAp
                   </div>
                   {!isSkipped && (
                     <>
-                      {Extra && !step.extraBelow && <Extra data={draft} setData={setData} company={company} ctx={dctx} />}
+                      {Extra && !step.extraBelow && <Extra data={draft} setData={setData} company={company} ctx={dctx} specs={errs.specs} />}
                       {errs.specs.length > 0 && <FieldGrid specs={errs.specs} data={draft} onSet={onSet} company={company} reveal={false} cols={3} />}
-                      {Extra && step.extraBelow && <Extra data={draft} setData={setData} company={company} ctx={dctx} />}
+                      {Extra && step.extraBelow && <Extra data={draft} setData={setData} company={company} ctx={dctx} specs={errs.specs} />}
                       {!Object.keys(errs.fields).length && errs.step.length > 0 && (
                         <ul className="step-errs">{errs.step.map((e) => <li key={e}>{e}</li>)}</ul>
                       )}

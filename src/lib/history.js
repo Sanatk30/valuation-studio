@@ -1,15 +1,14 @@
 /**
  * Reported-statement history → renderable statement sections.
  *
- * `a.history` (written by the top-bar company search) stores RAW reported values in the
- * company's reporting currency. This module aligns every line item on a
- * common set of report dates, converts to the current display currency/unit
- * at render time (so later currency switches keep working), and lays the
- * items out as banker-style IS / BS / CF sections with derived margin,
- * growth and check rows.
+ * `history.statements` (written by the Yahoo company search, see
+ * lib/yahoo.js listingHistory) holds every reported line ALREADY converted
+ * into the company's valuation currency and money unit at the rate the user
+ * confirmed — { annual: { dates, lines }, quarterly: { dates, lines }, kinds }.
+ * There is no FX here: this module only lays the lines out as banker-style
+ * IS / BS / CF sections with derived margin, growth and check rows. A line
+ * that was not reported stays null (NA) and a line never reported is hidden.
  */
-import { FX } from './format.js';
-import { UNIT_FACTOR } from './yahoo.js';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -20,10 +19,10 @@ function colLabel(date, freq) {
   return m === 12 ? String(y) : `FY${String(y).slice(-2)}`;
 }
 
-/* Row kinds: how a raw reported value converts for display.
- *   money    — currency-convert then scale into the display unit
- *   pershare — currency-convert only (EPS)
- *   shares   — scale into the display unit only (share counts)
+/* Row kinds (display format only — values arrive converted):
+ *   money    — an amount in the valuation currency and unit
+ *   pershare — per-share (EPS), in the valuation currency
+ *   shares   — a share count, in the money unit's scale
  */
 const row = (type, label, o = {}) => ({ type, label, kind: 'money', ...o });
 const ps = (type, label, o = {}) => ({ type, label, kind: 'pershare', fmt: 'ps', ...o });
@@ -145,43 +144,31 @@ const LAYOUT = [
   },
 ];
 
-export const hasQuarterly = (history) =>
-  !!history && Object.keys(history.quarterly || {}).length > 0;
+/** True when the reported statements carry a quarterly block. */
+export const hasQuarterly = (history) => !!history?.statements?.quarterly?.dates?.length;
+
+/** True when there are reported full statements to show at all. */
+export const hasStatements = (history) =>
+  !!(history?.statements?.annual?.dates?.length || history?.statements?.quarterly?.dates?.length);
 
 /**
- * Build the Past statements at freq 'Y' | 'Q'.
- * Returns null when there is no history;
- * otherwise { labels, dates, sections, fxOk, note }.
+ * Build the Past statements at freq 'Y' | 'Q' from `history.statements`.
+ * `periods` keeps only the latest N columns (all when omitted).
+ * Returns null when there are no reported statements at that frequency;
+ * otherwise { labels, dates, sections, currency, unit }.
  */
-export function buildHistoryStatements(history, settings, freq = 'Y') {
-  if (!history) return null;
-  const bucket = freq === 'Q' ? history.quarterly || {} : history.annual || {};
-  if (!Object.keys(bucket).length) return null;
+export function buildHistoryStatements(history, freq = 'Y', periods = null) {
+  const st = history?.statements;
+  const blk = freq === 'Q' ? st?.quarterly : st?.annual;
+  if (!blk?.dates?.length) return null;
 
-  // one aligned column set across all three statements
-  const dates = [...new Set(Object.values(bucket).flatMap((rows) => rows.map((r) => r.date)))].sort();
-  if (!dates.length) return null;
-  const idx = new Map(dates.map((d, i) => [d, i]));
-
-  // display conversion: reported currency → display currency (FX is units per USD)
-  const fxFrom = FX[history.currency], fxTo = FX[settings.currency];
-  const fxOk = isFinite(fxFrom) && isFinite(fxTo);
-  const fx = fxOk ? fxTo / fxFrom : 1;
-  const uf = UNIT_FACTOR[settings.unit] || 1;
-  const KIND = { money: (v) => (v * fx) / uf, pershare: (v) => v * fx, shares: (v) => v / uf };
-
-  const aligned = {}; // type → converted array on the common columns (money-converted)
-  const alignedRaw = {};
-  for (const [type, rows] of Object.entries(bucket)) {
-    const arrM = new Array(dates.length).fill(null);
-    const arrR = new Array(dates.length).fill(null);
-    for (const r of rows) { const i = idx.get(r.date); if (i != null) { arrM[i] = KIND.money(r.value); arrR[i] = r.value; } }
-    aligned[type] = arrM;
-    alignedRaw[type] = arrR;
-  }
+  const all = blk.dates;
+  const n = Number.isInteger(periods) && periods > 0 ? Math.min(periods, all.length) : all.length;
+  const first = all.length - n;
+  const dates = all.slice(first);
+  const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
   const empty = new Array(dates.length).fill(null);
-  const get = (type) => aligned[type] || empty;
-  const getRaw = (type) => alignedRaw[type] || empty;
+  const get = (type) => (blk.lines[type] ? blk.lines[type].slice(first).map(num) : empty);
 
   // y/y growth matches each column to the report ~1 year earlier (±60 days),
   // so quarterly growth is year-over-year even with missing quarters
@@ -199,23 +186,21 @@ export function buildHistoryStatements(history, settings, freq = 'Y') {
 
   const sections = LAYOUT.map(({ title, rows }) => ({
     title,
-    rows: rows(get, { yoy, getRaw })
+    rows: rows(get, { yoy })
       .map((r) => {
-        let vals = r.derived ? r.derived(get) : (r.kind === 'money' ? get(r.type) : (getRaw(r.type) || empty).map((v) => (v == null ? null : KIND[r.kind](v))));
+        let vals = r.derived ? r.derived(get) : get(r.type);
         if (r.neg) vals = vals.map((v) => (v == null ? null : -Math.abs(v)));
         return { label: r.label, vals, fmt: r.fmt || 'num', bold: !!r.bold, sub: !!r.sub };
       })
       // hide line items the company simply doesn't report
-      .filter((r) => r.vals.some((v) => v != null && isFinite(v))),
+      .filter((r) => r.vals.some((v) => v != null && Number.isFinite(v))),
   })).filter((s) => s.rows.length);
 
   return {
     labels: dates.map((d) => colLabel(d, freq)),
     dates,
     sections,
-    fxOk,
-    note: fxOk
-      ? (history.currency !== settings.currency ? `converted ${history.currency} → ${settings.currency} at the model FX` : '')
-      : `shown in reported ${history.currency} (no FX rate for ${settings.currency})`,
+    currency: st.currency,
+    unit: st.unit,
   };
 }
