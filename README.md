@@ -26,6 +26,33 @@ npm run dev        # http://localhost:5173
 The company search needs `npm run dev`: the dev server proxies Yahoo, which sends
 no CORS headers.
 
+### Double-click launcher (macOS)
+
+`Valuation Studio.app` starts the dev server and opens the app in your browser;
+clicking it again while the server runs just reopens the tab. It needs Node 18+
+from nodejs.org.
+
+- **Finding the project.** The launcher looks, in order, in the folder the `.app`
+  sits in, the folder you chose last time, and `~/Downloads/valuation-studio`. If
+  none of them holds the project, it asks you to pick the folder once and
+  remembers it.
+- **Dependencies.** It runs `npm install` on the first launch and again whenever
+  `package.json` or `package-lock.json` changes.
+- **Port.** It uses 5173, or the next free port up to 5180 if another program
+  holds 5173.
+- **Logs.** The server log, install log and remembered folder are kept in
+  `~/Library/Logs/ValuationStudio/`. If the server does not start, a dialog shows
+  the last lines of the log.
+
+A copy from a `git clone` opens directly. A copy from GitHub's "Download ZIP" is
+marked as downloaded from the internet, so macOS blocks it the first time. Either
+allow it under System Settings → Privacy & Security → "Open Anyway", or run this
+once in the project folder:
+
+```bash
+xattr -dr com.apple.quarantine "Valuation Studio.app"
+```
+
 ## How it works
 
 1. **Company** — the first launch asks which company you are valuing, the
