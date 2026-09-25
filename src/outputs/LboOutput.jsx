@@ -212,7 +212,7 @@ function LboPage({ a, set, f, lbo, sens, hold }) {
                 <thead><tr><th>Sources</th><th /><th>x LTM EBITDA</th></tr></thead>
                 <tbody>
                   <tr><td>Senior debt @ {f.pct(l.seniorRate)}</td><td>{f.num(lbo.senior0)}</td><td>{f.x(l.seniorX)}</td></tr>
-                  <tr><td>Mezzanine @ {f.pct(l.mezzRate)}{l.mezzPIK ? ' (PIK)' : ''}</td><td>{f.num(lbo.mezz0)}</td><td>{f.x(l.mezzX)}</td></tr>
+                  {lbo.mezz0 > 0 && <tr><td>Mezzanine @ {f.pct(l.mezzRate)}{l.mezzPIK ? ' (PIK)' : ''}</td><td>{f.num(lbo.mezz0)}</td><td>{f.x(l.mezzX)}</td></tr>}
                   <tr><td>Sponsor equity (plug)</td><td>{f.num(lbo.sponsorEquity)}</td><td>{x0(lbo.sponsorEquity)}</td></tr>
                   <tr className="bold"><td>Total sources</td><td>{f.num(sourcesTotal)}</td><td>{x0(sourcesTotal)}</td></tr>
                 </tbody>

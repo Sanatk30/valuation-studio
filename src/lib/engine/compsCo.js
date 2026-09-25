@@ -228,7 +228,9 @@ export function computeCompany(co) {
   const effTaxRate = ratio(is.taxes, pretax);
   // Reported EPS bridges as a flow-per-share (the standard LTM convention);
   // the denominator bridges too, matching the template.
-  const epsFY = ratio(netIncome, is.dilutedShares);
+  // A stub with no shares and no earnings is "no stub" (EPS 0), not NA.
+  const epsFY = ratio(netIncome, is.dilutedShares)
+    .map((e, i) => ((i === P.PSTUB || i === P.CSTUB) && is.dilutedShares[i] === 0 && netIncome[i] === 0 ? 0 : e));
   const eps = [...epsFY.slice(0, 5), epsFY[P.FY0] + epsFY[P.CSTUB] - epsFY[P.PSTUB]];
 
   /* ---- non-recurring adjustments (blank = none) ---- */

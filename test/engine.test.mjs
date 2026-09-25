@@ -342,6 +342,10 @@ ok(ipo.freeFloat > 0 && ipo.freeFloat < 1, `ipo: free float ${(ipo.freeFloat * 1
   const af = computeLbo(withModel({ lbo: { ...A.lbo, cashAtClose: 150, entryMultiple: fm } }));
   ok(close(af.irr, A.lbo.hurdleRate, 1e-6), 'lbo: floor solve includes the cash at close');
   ok(lc.floorLow < lc.floorPrice && lc.floorPrice < lc.floorHigh, 'lbo: floor range = hurdle ± step');
+  // no mezzanine: its rate and PIK choice are never asked, so they arrive blank
+  const nm = computeLbo(withModel({ lbo: { ...A.lbo, mezzX: 0, mezzRate: NaN, mezzPIK: null } }));
+  ok(Number.isFinite(nm.irr) && Number.isFinite(nm.floorPrice) && nm.cashInterest.every(Number.isFinite), 'lbo: no mezzanine → a blank mezz rate does not make the model NA');
+  ok(close(nm.cashInterest[0], nm.senior0 * A.lbo.seniorRate / 100), 'lbo: no mezzanine → senior interest only');
 }
 
 /* ---- ratios ---- */
