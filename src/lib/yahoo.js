@@ -6,7 +6,7 @@
  *   /v1/finance/search                      — name → listed symbols
  *   /v8/finance/chart/{sym}                 — live price, quote currency, 52-week range
  *   /ws/fundamentals-timeseries/v1/...      — annual / quarterly / trailing (TTM) statements
- *   /v6/finance/recommendationsbysymbol     — co-watched symbols (peer suggestions)
+ *   /v6/finance/recommendationsbysymbol     — co-watched symbols (the peer finder's candidate pool)
  *
  * The pipeline is split so every number can be traced:
  *   fetchListing(symbol)                 → raw Yahoo JSON, parsed by parseListing()
@@ -43,7 +43,11 @@ export async function searchSymbols(q, opts = {}) {
   return parseSearch(d);
 }
 
-/** Search response → [{ symbol, name, exchange }] (equities only). */
+/**
+ * Search response → [{ symbol, name, exchange, exchangeCode, sector, industry }]
+ * (equities only). Sector / industry are Yahoo's classification, null when the
+ * response carries none.
+ */
 export function parseSearch(d) {
   return (d?.quotes || [])
     .filter((x) => x.quoteType === 'EQUITY' && x.symbol)
@@ -51,6 +55,9 @@ export function parseSearch(d) {
       symbol: x.symbol,
       name: x.longname || x.shortname || x.symbol,
       exchange: x.exchDisp || x.exchange || '',
+      exchangeCode: x.exchange || '',
+      sector: x.sectorDisp || x.sector || null,
+      industry: x.industryDisp || x.industry || null,
     }));
 }
 
@@ -161,21 +168,16 @@ export async function fetchListingsBatch(queries, concurrency = 3, opts = {}) {
 }
 
 /**
- * Peer suggestions: resolve the company (name or ticker) to its listing, then
- * ask Yahoo for similar symbols. These are co-watched names, not a curated
- * industry screen — treat them as a starting list to prune, not gospel.
+ * Yahoo's co-watched symbols for one listing: [{ symbol, score }], best first.
+ * These are "people who watch X also watch" names, not an industry screen —
+ * lib/peerFinder.js uses them only as the candidate pool it then ranks.
  */
-export async function suggestPeers(query, count = 8, opts = {}) {
+export async function fetchRecommendations(symbol, count = 10, opts = {}) {
   const base = opts.base ?? DEFAULT_BASE;
-  const results = await searchSymbols(query, opts);
-  if (!results.length) throw new Error(`No listed company found for "${query}"`);
-  const exact = results.find((r) => r.symbol.toUpperCase() === query.trim().toUpperCase());
-  const symbol = (exact || results[0]).symbol;
   const d = await getJson(`${base}/v6/finance/recommendationsbysymbol/${encodeURIComponent(symbol)}?count=${count}`, opts.fetchImpl);
-  const rec = d?.finance?.result?.[0]?.recommendedSymbols || [];
-  const symbols = rec.map((r) => r.symbol).filter(Boolean);
-  if (!symbols.length) throw new Error(`Yahoo has no peer suggestions for ${symbol}`);
-  return { symbol, suggestions: symbols };
+  return (d?.finance?.result?.[0]?.recommendedSymbols || [])
+    .filter((r) => r && r.symbol)
+    .map((r) => ({ symbol: r.symbol, score: Number.isFinite(Number(r.score)) ? Number(r.score) : null }));
 }
 
 /* ------------------------------------------------------------ parse layer */
@@ -340,7 +342,7 @@ const effectiveTaxRate = (pTax, pPbt) => (pTax && pPbt && pPbt.value > 0 ? (pTax
  * EBITDA is treated as not reported when it equals EBIT exactly and D&A is
  * not reported for that period.
  */
-function ebitdaSuspect(blk, date) {
+export function ebitdaSuspect(blk, date) {
   const e = pointAt(blk, 'EBITDA', date), b = pointAt(blk, 'EBIT', date);
   if (!e || !b || e.value !== b.value) return false;
   return !pointAt(blk, 'ReconciledDepreciation', date) && !pointAt(blk, 'DepreciationAndAmortization', date);

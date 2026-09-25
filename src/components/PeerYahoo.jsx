@@ -1,8 +1,9 @@
 import React, { useMemo, useState } from 'react';
 import {
-  searchSymbols, fetchListing, fetchListingByQuery, fetchListingsBatch, suggestPeers,
+  searchSymbols, fetchListing, fetchListingByQuery, fetchListingsBatch,
   peerPageFromListing, requiredCurrencies,
 } from '../lib/yahoo.js';
+import PeerFinder from './PeerFinder.jsx';
 import { blankCompany } from '../lib/engine/compsCo.js';
 import { useLiveRates, rateNumbers, FxRateFields } from './FxRates.jsx';
 
@@ -119,19 +120,21 @@ export function PeerRowFetch({ name, company, onFilled }) {
 
 /**
  * Batch builder: paste tickers (comma / space separated) and fetch every peer
- * in one go, or let Yahoo suggest co-watched names first. Per-ticker chips show
- * what landed and what failed; foreign-currency peers need one confirmed rate
- * per currency before they are added.
+ * in one go, or open the peer finder (ranked, explained candidates) and fetch
+ * the ticked ones. Per-ticker chips show what landed and what failed;
+ * foreign-currency peers need one confirmed rate per currency before they are
+ * added. `finder` = { inputs, seed } — the target's figures and default seed.
  */
-export function PeerBatchAdd({ company, existingNames = [], onAddMany }) {
+export function PeerBatchAdd({ company, existingNames = [], onAddMany, finder = {} }) {
   const [text, setText] = useState('');
-  const [busy, setBusy] = useState(''); // '' | fetch | suggest
+  const [busy, setBusy] = useState(''); // '' | fetch
+  const [finding, setFinding] = useState(false);
   const [toks, setToks] = useState(null); // [{ q, state: ok|err|dup, detail }]
   const [pending, setPending] = useState(null); // raws awaiting rate confirmation
   const [err, setErr] = useState('');
 
-  const fetchAll = async () => {
-    const queries = parseTickerList(text);
+  const fetchAll = async (list) => {
+    const queries = list || parseTickerList(text);
     if (!queries.length || busy) return;
     const taken = new Set(existingNames.map((n) => String(n).toUpperCase()));
     setBusy('fetch'); setErr(''); setPending(null); setToks(queries.map((q) => ({ q, state: 'busy' })));
@@ -160,22 +163,6 @@ export function PeerBatchAdd({ company, existingNames = [], onAddMany }) {
     setText(''); setPending(null);
   };
 
-  const suggest = async () => {
-    if (!company?.name || busy) return;
-    setBusy('suggest'); setErr(''); setToks(null);
-    try {
-      const { suggestions } = await suggestPeers(company.name);
-      const taken = new Set(existingNames.map((n) => String(n).toUpperCase()));
-      const fresh = suggestions.filter((s) => !taken.has(s.toUpperCase()));
-      if (!fresh.length) { setErr('Every suggested peer is already in the set.'); return; }
-      setText(parseTickerList(`${text} ${fresh.join(' ')}`).join(', '));
-    } catch (e) {
-      setErr(e?.message || 'No suggestions — Yahoo could not match the company name to a listing.');
-    } finally {
-      setBusy('');
-    }
-  };
-
   return (
     <div className="peer-yf">
       <div className="yf-search" style={{ marginTop: 8 }}>
@@ -185,14 +172,21 @@ export function PeerBatchAdd({ company, existingNames = [], onAddMany }) {
           onChange={(e) => { setText(e.target.value); setErr(''); }}
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); fetchAll(); } }}
         />
-        <button className="btn" onClick={fetchAll} disabled={!!busy || !parseTickerList(text).length}>
+        <button className="btn" onClick={() => fetchAll()} disabled={!!busy || !parseTickerList(text).length}>
           {busy === 'fetch' ? 'Fetching…' : 'Fetch all'}
         </button>
-        <button className="btn ghost" onClick={suggest} disabled={!!busy || !company?.name}
-          title={`Ask Yahoo for companies co-watched with ${company?.name || 'the target'} — prune before fetching`}>
-          {busy === 'suggest' ? 'Suggesting…' : 'Suggest'}
+        <button className="btn ghost" onClick={() => setFinding((f) => !f)} disabled={!!busy}
+          title="Rank candidate peers on industry, market, size, margin and growth, then tick which to fetch">
+          Find peers
         </button>
       </div>
+      {finding && (
+        <PeerFinder
+          company={company} inputs={finder.inputs} defaultSeed={finder.seed || ''} exclude={existingNames}
+          onClose={() => setFinding(false)}
+          onFetch={(symbols) => { setFinding(false); fetchAll(symbols); }}
+        />
+      )}
       {err && <div className="fld-e" style={{ marginTop: 6 }}>{err}</div>}
       {toks && (
         <div className="yf-toks">
@@ -207,9 +201,6 @@ export function PeerBatchAdd({ company, existingNames = [], onAddMany }) {
         <RateConfirm raws={pending} company={company} action={`Add ${pending.length} peer${pending.length > 1 ? 's' : ''}`}
           onConfirm={(rates) => add(pending, rates)} onCancel={() => setPending(null)} />
       )}
-      <div className="fld-h" style={{ marginTop: 6 }}>
-        Suggestions are Yahoo&rsquo;s co-watched names, not an industry screen — prune the list before fetching.
-      </div>
     </div>
   );
 }

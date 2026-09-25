@@ -114,6 +114,39 @@ growth, margins and cost ratios are shown beside the forecast fields as
 reference — never copied into them. Peers are converted the same way; lines the
 feed doesn't carry stay blank (NA) until you type them.
 
+### Peer finder (comps Peer step)
+
+**Find peers** ranks candidates against the target and shows its reasons; you
+tick which ones to fetch.
+
+**Where candidates come from.** The seed is the target's ticker. If the target is
+private, type a close listed competitor instead. The finder takes Yahoo's
+co-watched names for the seed, plus the co-watched names of its top five. Funds,
+indices and anything Yahoo can't profile are dropped.
+
+**What it scores**, with points out of 100:
+
+| Signal | Points |
+|---|---|
+| Industry | 30 for the same industry, 15 for the same sector only |
+| Market | 15 for the same exchange, 10 for the same reporting currency |
+| Size | 25 at 1×, falling to 0 at 10× apart (log scale). Uses market cap, or LTM revenue if either side has no market cap, including depositary receipts. |
+| EBITDA margin | 15 at the same margin, 0 at 20 points apart |
+| Revenue growth | 15 at the same growth, 0 at 25 points apart |
+
+**Missing data.** A signal either side doesn't report is NA and isn't scored. The
+score is the points earned ÷ the points available, and the coverage (x of 5)
+shows beside it.
+
+**What it compares against.** Size, margin and growth use the target's own typed
+figures where they exist, else the seed's reported figures. The panel says which.
+
+**FX.** Foreign sizes convert at live FX for the ranking only. Ticked peers go
+through the normal fetch and rate confirmation, so nothing reaches the model
+unconfirmed.
+
+**Cost.** One run makes roughly 60–100 small Yahoo requests (four at a time).
+
 ## Excel export
 
 Each method's *Download Excel* builds one live-formula workbook (blue = input,
@@ -151,8 +184,8 @@ src/
   store/                 per-company, per-method data model (localStorage)
   lib/engine/            the valuation engines (pure functions)
   lib/excel/             the per-method workbook writers
-  lib/                   Yahoo, FX, currency conversion, history, formatting
-test/                    engine, Excel, Yahoo/FX and data-model tests (+ fixtures)
+  lib/                   Yahoo, FX, peer finder, currency conversion, history, formatting
+test/                    engine, Excel, Yahoo/FX, peer-finder and data-model tests (+ fixtures)
 docs/                    spec, contract and hand-off notes for the rebuild
 ```
 
@@ -165,5 +198,6 @@ build.
 `npm test` runs every `test/*.test.mjs`: hand-checked engine identities (NOL
 schedules, balance-sheet ties, sources = uses, IRR, regression), HyperFormula
 recalculation of each method's workbook against the engines, the Yahoo mapping
-and currency conversion on recorded fixtures, and the shell's data model
+and currency conversion on recorded fixtures, the peer finder's scoring and
+pipeline on the same fixtures, and the shell's data model
 (nothing pre-filled, blanks never read as 0).
