@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useReducer, useRef } from 'react';
+import React, { useEffect, useReducer, useRef } from 'react';
 
 /**
  * Spring-style tweening for live numbers. Exponential approach with a ~140ms
@@ -84,15 +84,3 @@ export function Anim({ value, fmt = (v) => v, tau }) {
   return <>{fmt(v)}</>;
 }
 
-/** Convenience: tween several arrays at once, preserving shape. */
-export function useTweenedSeries(arrays, tau = 0.14) {
-  const flat = useMemo(() => arrays.flat(), [arrays]);
-  const lens = arrays.map((a) => a.length);
-  const tw = useTweenedArray(flat, tau);
-  let off = 0;
-  return lens.map((len) => {
-    const out = tw.slice(off, off + len);
-    off += len;
-    return out;
-  });
-}

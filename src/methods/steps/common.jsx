@@ -138,42 +138,6 @@ export const companyStep = (opts = {}) => ({
    Historical financials (optional)
    ====================================================================== */
 
-/** Row matching for pasted history blocks: label → line key. */
-const HISTORY_SYNONYMS = {
-  revenue: ['revenue', 'sales', 'net sales', 'total revenue', 'turnover', 'income from operations'],
-  cogs: ['cogs', 'cost of goods', 'cost of revenue', 'cost of sales'],
-  ebitda: ['ebitda'],
-  da: ['d&a', 'depreciation', 'amortisation', 'amortization'],
-  interest: ['interest', 'finance cost'],
-  pbt: ['pbt', 'pre-tax', 'pretax', 'profit before tax', 'income before tax'],
-  tax: ['tax'],
-  ni: ['net income', 'net profit', 'pat', 'profit after tax'],
-  cash: ['cash'],
-  receivables: ['receivable', 'debtors'],
-  inventory: ['inventor', 'stock'],
-  ppe: ['pp&e', 'ppe', 'fixed assets', 'property'],
-  totalAssets: ['total assets'],
-  payables: ['payable', 'creditors'],
-  currentLiabilities: ['current liabilities'],
-  totalDebt: ['debt', 'borrowings'],
-  equity: ['equity', 'net worth', 'shareholders'],
-  cfo: ['cfo', 'operating cash', 'cash from operations', 'operating activities'],
-  capex: ['capex', 'capital expenditure', 'purchase of fixed', 'purchase of pp'],
-  dividends: ['dividend'],
-};
-export function matchHistoryLine(label) {
-  const l = String(label || '').toLowerCase().trim();
-  if (!l) return null;
-  // most specific first: exact key/label, then synonyms by length
-  const exact = HISTORY_LINES.find((h) => h.key.toLowerCase() === l || h.label.toLowerCase() === l);
-  if (exact) return exact.key;
-  const cands = Object.entries(HISTORY_SYNONYMS)
-    .flatMap(([k, syns]) => syns.map((s) => [k, s]))
-    .filter(([, s]) => l.includes(s))
-    .sort((a, b) => b[1].length - a[1].length);
-  return cands[0]?.[0] || null;
-}
-
 function HistoryEditor({ data, setData, company }) {
   const h = data.history;
   const yahoo = h?.source === 'yahoo';

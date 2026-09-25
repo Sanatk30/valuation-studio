@@ -42,19 +42,6 @@ export const yVal = (extra = {}) => ({
   ...extra,
 });
 
-/* Scenario overlay ghosts — Bear/Bull (and Base, when a scenario view is
-   active) drawn as thin dashed lines so the active case stays dominant.
-   Color follows the scenario, consistently on every chart. */
-export const SCEN_GHOST = { bear: '#F87171', base: '#AAB4C5', bull: '#4ADE80' };
-export const scenGhostSeries = (scenKey, name, data, { yAxisIndex = 0 } = {}) => ({
-  id: `scen:${scenKey}:${name}`,
-  name, type: 'line', smooth: true, showSymbol: false, yAxisIndex, z: 1,
-  lineStyle: { width: 1.4, type: [6, 5], color: SCEN_GHOST[scenKey], opacity: 0.75 },
-  itemStyle: { color: SCEN_GHOST[scenKey] },
-  emphasis: { disabled: true },
-  data,
-});
-
 const dot = (c) => {
   const solid = typeof c === 'string' ? c : c?.colorStops?.[0]?.color || COL.axis;
   return `<span style="display:inline-block;width:9px;height:9px;border-radius:3px;background:${solid};margin-right:8px"></span>`;

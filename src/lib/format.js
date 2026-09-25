@@ -5,14 +5,6 @@ export const CURRENCIES = {
   GBP: { symbol: '£', locale: 'en-GB', name: 'British Pound' },
 };
 
-/**
- * FX, expressed as units of each currency per 1 USD. Used to re-denominate the
- * model when the currency selector changes so the same company doesn't show
- * identical figures in ₹ and $. Spot rates from Yahoo Finance (USD{INR,EUR,GBP}=X),
- * as of 2026-06-20. Edit to your own rate.
- */
-export const FX = { USD: 1, INR: 94.31, EUR: 0.8719, GBP: 0.7555 };
-
 export const UNITS = {
   Cr: 'Cr', Lakh: 'Lakh', Mn: 'Mn', Bn: 'Bn', K: "'000",
 };

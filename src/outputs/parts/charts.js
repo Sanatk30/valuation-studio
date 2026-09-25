@@ -61,15 +61,6 @@ export function growthOption(f, labels, growth) {
   });
 }
 
-/** Margin ladder: any of EBITDA / EBIT / net margin %, as lines. */
-export function marginLadderOption(labels, series) {
-  return themed({
-    tooltip: tipBy({}, (v) => fmtPct(v, 1)),
-    xAxis: xCat(labels, { boundaryGap: false }), yAxis: pctAxis(),
-    series: series.map((s, i) => lineSeries(s.name, s.color, s.data.map((v) => rnd(v, 2)), { area: i === 0 })),
-  });
-}
-
 /**
  * Bars per company / deal with the median line and the Q1–Q3 band.
  * items: [{ name, value }] — only finite values are plotted.

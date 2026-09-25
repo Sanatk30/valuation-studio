@@ -89,8 +89,6 @@ export const STATEMENT_TYPES = {
     'EffectOfExchangeRateChanges', 'FreeCashFlow',
   ],
 };
-/** Kept for callers of the old name. */
-export const HISTORY_TYPES = STATEMENT_TYPES;
 
 /** How a line converts: money → FX + unit; shares → unit only; pershare → FX only. */
 export const LINE_KIND = {

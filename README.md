@@ -89,11 +89,49 @@ feed doesn't carry stay blank (NA) until you type them.
 
 ## Excel export
 
-Each method's *Download Excel* builds a live-formula workbook (blue = input,
-black = formula, green = cross-sheet link) containing a cover, that method's
-inputs and its calculation sheets only. Combined exports its figures, weights and
-the weighted value. The exported formulas are recalculated in the test suite and
-must match the app's engines.
+Each method's *Download Excel* builds one live-formula workbook (blue = input,
+black = formula, green = cross-sheet link) for that method only:
+
+| Method | Sheets |
+| --- | --- |
+| DCF | Cover · Inputs · DCF (reported history, LTM, projection, NOL schedule, FCFF valuation, FCFE when not skipped, sensitivity grids) · WACC (CAPM + Hamada build, beta-peer reference, WACC surface) |
+| Comps | Cover · Inputs · Benchmarking 1 · Benchmarking 2 · Comps Analysis · Implied Valuation · Regression *(when not skipped)* · List · the target page · one input page per peer |
+| Precedent | Cover · Inputs · Precedent · Deal List · one input page per transaction |
+| LBO | Cover · Inputs · Projection · LBO |
+| IPO | Cover · Inputs · Projection · 3 Statement · IPO |
+| 3-Statement | Cover · Inputs · Projection · 3 Statement (with the forecast ratio block) |
+| Ratios | as 3-Statement, plus Past Ratios when reported history was entered |
+| Combined | Cover · Combined (each figure, its range, the weights, the weighted value and the upside) |
+
+The **Inputs** sheet holds only that method's inputs, including the
+sensitivity-grid step sizes; a blank input is the text `NA` and every figure
+built from it reads NA. On company and deal pages a blank core line is NA and a
+blank adjustment line (non-recurring items, NCI, preferred, options,
+convertibles, stubs) is 0. The test suite recalculates every method's workbook
+with HyperFormula and requires it to match the app's engines cell for cell,
+on the sample model and on more than 50 edge cases (tax losses, blanks, optional steps,
+horizons, deal considerations). The DCF tornado is an on-screen analysis only.
+
+## Project layout
+
+```
+src/
+  App.jsx, main.jsx      shell entry
+  home/  wizard/         method cards, the step wizard and output frame
+  methods/               method registry, steps, validation, Combined
+  outputs/               one output page per method (+ shared parts)
+  components/            input pages, Yahoo search, FX, charts
+  store/                 per-company, per-method data model (localStorage)
+  lib/engine/            the valuation engines (pure functions)
+  lib/excel/             the per-method workbook writers
+  lib/                   Yahoo, FX, currency conversion, history, formatting
+test/                    engine, Excel, Yahoo/FX and data-model tests (+ fixtures)
+docs/                    spec, contract and hand-off notes for the rebuild
+```
+
+`backup/`, `copyright-deposit/`, `design-system/`, the `.app` bundle, the image
+and the sample `.xlsx` are kept as reference material and are not part of the
+build.
 
 ## Verification
 

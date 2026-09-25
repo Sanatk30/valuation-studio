@@ -259,14 +259,6 @@ export const OUTPUT_GROUPS = [
 
 const flatCols = (groups) => groups.flatMap((g) => g.cols);
 
-/** Statistics rows shown under each tier and for the whole set. */
-export const STAT_ROWS = [
-  { key: 'mean', label: 'Mean' },
-  { key: 'median', label: 'Median' },
-  { key: 'high', label: 'High', overallOnly: true },
-  { key: 'low', label: 'Low', overallOnly: true },
-];
-
 /** Build a { colKey: stats } block over a set of pages for one column spec. */
 function statsBlock(cols, pages) {
   const out = {};

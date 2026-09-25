@@ -37,6 +37,3 @@ export function periodLabels(settings, freq, years) {
   }
   return out;
 }
-
-/** Short freq word for headings. */
-export const freqWord = (f) => FREQS[f]?.label ?? 'Yearly';

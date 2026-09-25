@@ -40,7 +40,6 @@ export function useStore() {
     () => state,
   );
 }
-export const getState = () => state;
 
 /* ------------------------------------------------------------ companies */
 

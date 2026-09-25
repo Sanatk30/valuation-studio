@@ -29,8 +29,6 @@ export function normalizeCurrency(code) {
   return m ? { ...m } : { currency: String(code).toUpperCase(), divisor: 1 };
 }
 
-export const isSupportedCurrency = (c) => SUPPORTED_CURRENCIES.includes(c);
-
 /** Yahoo chart symbol for a pair: ('TWD','INR') → 'TWDINR=X'. */
 export const fxPairSymbol = (from, to) => `${from}${to}=X`;
 

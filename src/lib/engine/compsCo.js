@@ -32,8 +32,7 @@
  *     and what Benchmarking 2 reports.
  */
 
-/** Income-statement / cash-flow period slots. Index 5 (LTM) is derived. */
-export const PERIODS = ['FY-2', 'FY-1', 'FY0', 'Prior stub', 'Current stub', 'LTM'];
+/** Income-statement / cash-flow period slots (FY-2, FY-1, FY0, prior stub, current stub, LTM). Index 5 (LTM) is derived. */
 export const P = { FY2: 0, FY1: 1, FY0: 2, PSTUB: 3, CSTUB: 4, LTM: 5 };
 /** Balance-sheet column slots. */
 export const B = { PRIOR: 0, CURRENT: 1 };
@@ -93,13 +92,6 @@ const BS_LINES = [
 ];
 /** Balance-sheet lines that are adjustments (blank = none). */
 const BS_ADJ = new Set(['nci', 'preferred']);
-export const BS_FIELDS = BS_LINES;
-export const IS_FIELDS = IS_LINES;
-export const CF_FIELDS = CF_LINES;
-export const ADJ_FIELDS = ADJ_LINES;
-/** True for the lines whose blank means "none" rather than NA. */
-export const isAdjustmentLine = (group, key) =>
-  group === 'adj' || (group === 'is' && IS_ADJ.has(key)) || (group === 'bs' && BS_ADJ.has(key));
 
 let seq = 0;
 export const nextId = (prefix = 'co') => `${prefix}${Date.now().toString(36)}${(seq++).toString(36)}`;
