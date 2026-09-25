@@ -3,6 +3,8 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
+  // only the app is an entry — not the design-system mockups or the deposit copies in the repo
+  optimizeDeps: { entries: ['index.html'] },
   server: {
     proxy: {
       // Yahoo Finance has no CORS headers, so the dev server fronts it.

@@ -31,7 +31,7 @@ export default function CompsOutput({ a, skipped = {} }) {
   const showReg = !skipped.regression;
   const model = useMemo(() => attempt(() => ({
     comps: COMPS.computeComps(a),
-    reg: showReg && typeof REG.runRegression === 'function' ? REG.runRegression(a) : null,
+    reg: showReg ? REG.runRegression(a) : null,
   })), [a, showReg]);
   if (model.error) return <div className="qo"><EngineError what="The comparable companies analysis" error={model.error} /></div>;
   return <CompsPage a={a} f={f} comps={model.value.comps} R={model.value.reg} showReg={showReg} />;
@@ -73,8 +73,7 @@ function CompsPage({ a, f, comps, R, showReg }) {
 
   return (
     <div className="qo">
-      {/* OPEN QUESTION: comps has four implied-price rows and the spec doesn't say which one is
-          "the" comps answer, so the headline shows all four side by side instead of one big figure. */}
+      {/* every implied-price row side by side — no single headline row (the user's choice) */}
       <Headline
         eyebrow={`Trading comparables — implied share price from ${nPeers} peers' LTM multiples`}
         sub={`Peer median LTM multiple × the target's LTM metric${ltmNote}; the range is the peer 25th–75th percentile. EV multiples bridge to equity through net debt of ${f.money(netDebt)}.${hasPx ? ` Market price ${f.price(px)}.` : ''}`}
@@ -196,7 +195,7 @@ function CompsPage({ a, f, comps, R, showReg }) {
 /** Regression results, charts, worksheet and price bridge (only when the step wasn't skipped). */
 function RegressionSections({ a, f, R, px }) {
   const hasPx = fin(px) && px > 0;
-  const vars = typeof REG.allVars === 'function' ? REG.allVars(a) : [];
+  const vars = REG.allVars(a);
   const varOf = (key) => vars.find((v) => v.key === key) || { key, label: key, fmt: 'num' };
   const vFmt = (key) => {
     const kind = varOf(key).fmt;
@@ -211,7 +210,7 @@ function RegressionSections({ a, f, R, px }) {
   const fit = R?.fit;
   const yVar = R?.yVar;
   const yLabel = R?.yDef?.label || yVar;
-  const obs = useMemo(() => (typeof REG.observations === 'function' ? REG.observations(a) : []), [a]);
+  const obs = useMemo(() => REG.observations(a), [a]);
   const usedKeys = [...new Set((fit?.cols || []).map((c) => c.key))];
 
   const single = fit?.ok && fit.cols.length === 1 ? fit.cols[0] : null;

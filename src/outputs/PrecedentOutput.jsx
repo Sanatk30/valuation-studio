@@ -113,8 +113,7 @@ function PrecedentPage({ a, f, prec }) {
 
   return (
     <div className="qo">
-      {/* OPEN QUESTION: precedent has two multiple rows (plus premia) and the spec doesn't name one
-          headline figure, so every implied price is shown side by side. */}
+      {/* every implied-price row side by side — no single headline row (the user's choice) */}
       <Headline
         eyebrow={`Precedent transactions — implied takeover value from ${deals.length} deals`}
         sub={`Transaction LTM multiples (median, 25th–75th percentile) × the target's LTM revenue and EBITDA${ltmNote}, bridged to equity through net debt of ${f.money(netDebt)}. Deal multiples embed the control premium paid.${hasPx ? ` Market price ${f.price(px)}.` : ''}`}
