@@ -191,7 +191,7 @@ function HistoryEditor({ data, setData, company }) {
         <div className="tool-h">Reported history · {h.label}</div>
         <div className="tablewrap">
           <table className="fin">
-            <thead><tr><th /> {heads.map((x) => <th key={x}>{x}</th>)}</tr></thead>
+            <thead><tr><th />{heads.map((x) => <th key={x}>{x}</th>)}</tr></thead>
             <tbody>
               {HISTORY_LINES.map((l) => (
                 <tr key={l.key}>
@@ -367,7 +367,7 @@ function HistoryReference({ ref_: ref, company }) {
       </div>
       <div className="tablewrap">
         <table className="fin compact">
-          <thead><tr><th /> {ref.rows.map((r) => <th key={r.date}>{r.label}</th>)}</tr></thead>
+          <thead><tr><th />{ref.rows.map((r) => <th key={r.date}>{r.label}</th>)}</tr></thead>
           <tbody>
             <tr><td>Revenue growth</td>{ref.rows.map((r) => <td key={r.date}>{p(r.growth)}</td>)}</tr>
             <tr><td>EBITDA margin</td>{ref.rows.map((r) => <td key={r.date}>{p(r.ebitdaMargin)}</td>)}</tr>

@@ -88,7 +88,7 @@ export default function CompanyPageEditor({ co, settings, tiers, onChange, onDel
   );
   /** A derived line across all six periods. */
   const calcRow = (label, vals, fmt = money, bold, indent) => (
-    <tr key={label + (bold ? 'b' : '')} className={bold ? 'bold' : indent ? 'sub' : ''}>
+    <tr className={bold ? 'bold' : indent ? 'sub' : ''}>
       <td>{label}</td>
       {(vals || []).map((v, i) => <td key={i} className="calc">{fmt(v)}</td>)}
     </tr>
@@ -174,7 +174,7 @@ export default function CompanyPageEditor({ co, settings, tiers, onChange, onDel
       <h4 className="cp-h">Reported income statement <span className="cp-note">LTM = FY0 + current stub − prior stub</span></h4>
       <div className="tablewrap">
         <table className="fin cp-per">
-          <thead><tr><th /> {PERIOD_HEADS.map((h) => <th key={h}>{h}</th>)}</tr></thead>
+          <thead><tr><th />{PERIOD_HEADS.map((h) => <th key={h}>{h}</th>)}</tr></thead>
           <tbody>
             {inRow('Sales', 'is', 'sales')}
             {inRow('COGS (incl. D&A)', 'is', 'cogs')}
@@ -199,7 +199,7 @@ export default function CompanyPageEditor({ co, settings, tiers, onChange, onDel
       <h4 className="cp-h">Adjusted income statement <span className="cp-note">non-recurring items added back, tax-effected at the marginal rate</span></h4>
       <div className="tablewrap">
         <table className="fin cp-per">
-          <thead><tr><th /> {PERIOD_HEADS.map((h) => <th key={h}>{h}</th>)}</tr></thead>
+          <thead><tr><th />{PERIOD_HEADS.map((h) => <th key={h}>{h}</th>)}</tr></thead>
           <tbody>
             {inRow('Non-recurring items in COGS', 'adj', 'nrCogs')}
             {calcRow('Adj. gross profit', page.adjGrossProfit, money, true, false)}
@@ -222,7 +222,7 @@ export default function CompanyPageEditor({ co, settings, tiers, onChange, onDel
       <h4 className="cp-h">Cash flow statement data</h4>
       <div className="tablewrap">
         <table className="fin cp-per">
-          <thead><tr><th /> {PERIOD_HEADS.map((h) => <th key={h}>{h}</th>)}</tr></thead>
+          <thead><tr><th />{PERIOD_HEADS.map((h) => <th key={h}>{h}</th>)}</tr></thead>
           <tbody>
             {inRow('Cash from operations', 'cf', 'cfo')}
             {inRow('Capital expenditures', 'cf', 'capex')}
