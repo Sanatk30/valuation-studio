@@ -73,22 +73,26 @@ export function betaPeerStats(a) {
   };
 }
 
+/** The debt-weight band the WACC surface rows are clamped to (%). */
+export const WD_MIN = 0;
+export const WD_MAX = 90;
+
 /**
  * WACC surface: target debt weight (rows) × pre-tax cost of debt (cols), 5×5,
  * steps from `a.sens.wacc`. Each cell relevers beta at that capital structure
  * (asset beta from the base structure) before rebuilding the cost of equity.
- * A debt weight outside [0 %, 100 %) is not a capital structure → NA.
+ * Debt-weight rows are clamped to the 0–90 % band (the user's choice, as in the
+ * original grid), so a row that would fall outside it repeats the band edge.
  */
 export function waccSensitivity(a) {
   const base = computeWacc(a);
   const wdStep = sensStep(a, 'wacc', 'wdStep', SENS_DEFAULTS.wacc.wdStep);
   const kdStep = sensStep(a, 'wacc', 'kdStep', SENS_DEFAULTS.wacc.kdStep);
   const t = a.company.taxRate / 100;
-  const wdSteps = fivePoints(a.wacc.debtWeight, wdStep);      // %
+  const wdSteps = fivePoints(a.wacc.debtWeight, wdStep).map((v) => Math.min(WD_MAX, Math.max(WD_MIN, v)));   // %
   const kdSteps = fivePoints(a.wacc.costDebt, kdStep);        // %
   const grid = wdSteps.map((wdPct) => kdSteps.map((kdPct) => {
     const wd = wdPct / 100;
-    if (!(wd >= 0 && wd < 1)) return NaN;
     const de = wd / (1 - wd);
     const bl = base.unleveredBeta * (1 + (1 - t) * de);
     const coe = a.wacc.riskFree + bl * a.wacc.erp + a.wacc.sizePremium;

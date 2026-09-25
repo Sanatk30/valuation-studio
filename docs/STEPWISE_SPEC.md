@@ -107,3 +107,22 @@ capex %, NWC %; per-year grid with paste).
 - Forecast views are **annual only**; half-yearly/quarterly only for past
   (reported) data.
 - Regression size variables use the valuation currency (no static USD FX).
+
+## Round 3 decisions (2026-09-25) — the handoff's open questions
+- Yahoo: a negative reported effective tax rate → tax rate left **NA** (warning
+  says why); the user types it.
+- Yahoo, TTM LTM: comps target prior-FY revenue / EBITDA = the **latest completed
+  fiscal year** before the TTM period.
+- Yahoo: cash = **cash & equivalents only**. Short-term investments are dropped
+  (opening NWC still excludes cash + ST investments); shown in the preview for
+  reference.
+- Yahoo peers with TTM: stub columns hold **12-month figures** (labelled).
+- Yahoo peers: SG&A = **balancing line** (gross profit − EBIT) so EBIT / EBITDA
+  equal Yahoo's reported figures.
+- DCF FCFE: **opening cash is added** to the FCFE equity value.
+- DCF WACC-vs-leverage surface: D/(D+E) rows **clamped to 0–90 %** (old
+  behaviour).
+- DCF tornado: back, with **editable bump sizes** (step inputs above it, each
+  starting at 1 pp) for margin, growth, capex and tax.
+- Comps / Precedent headline: **all implied-price rows side by side**.
+- ADR / depositary receipts: **warning only**.

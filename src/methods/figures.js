@@ -1,7 +1,7 @@
 import { toEngineInput } from '../store/methodModel.js';
 import { computeDcf, dcfSensitivity } from '../lib/engine/dcf.js';
 import { computeComps } from '../lib/engine/comps.js';
-import { computeRegression } from '../lib/engine/regression.js';
+import { runRegression } from '../lib/engine/regressionModel.js';
 import { computePrecedent } from '../lib/engine/precedent.js';
 import { computeLbo } from '../lib/engine/lbo.js';
 import { computeIpo } from '../lib/engine/ipo.js';
@@ -47,8 +47,14 @@ const FIGURES = {
       value: r.impliedMedian, low: r.impliedLow, high: r.impliedHigh, rangeNote: 'peer 25th–75th percentile',
     }));
     if (!skipped.regression) {
-      const reg = computeRegression(a);
-      if (reg?.ok) out.push({ key: 'regression', label: 'Comps — regression', value: reg.impliedPrice, low: reg.impliedLow, high: reg.impliedHigh, rangeNote: '±1 standard error' });
+      const reg = runRegression(a);
+      if (reg?.price) {
+        out.push({
+          key: 'regression', label: `Comps — regression (${reg.yDef.label})`,
+          value: reg.price.mid, low: Math.min(reg.price.lo, reg.price.hi), high: Math.max(reg.price.lo, reg.price.hi),
+          rangeNote: '±1 standard error of the predicted multiple',
+        });
+      }
     }
     return out;
   },
@@ -65,14 +71,11 @@ const FIGURES = {
   },
   lbo: (a) => {
     const l = computeLbo(a);
-    const step = a.sens?.lbo?.hurdleStep;
-    const lo = fin(step) ? l.floorAt(a.lbo.hurdleRate + step) : NaN;
-    const hi = fin(step) ? l.floorAt(a.lbo.hurdleRate - step) : NaN;
-    return [{ key: 'lboFloor', label: 'LBO — floor price at the hurdle IRR', value: l.floorPrice, low: lo, high: hi, rangeNote: `hurdle ± ${step} pts` }];
+    return [{ key: 'lboFloor', label: 'LBO — floor price at the hurdle IRR', value: l.floorPrice, low: l.floorLow, high: l.floorHigh, rangeNote: `hurdle ± ${l.hurdleStep} pts` }];
   },
   ipo: (a) => {
     const i = computeIpo(a);
-    return [{ key: 'ipoOffer', label: 'IPO — offer price', value: i.offerPrice, low: i.rangeLow, high: i.rangeHigh ?? i.fairPricePost, rangeNote: 'bookbuild low → fair value post-listing' }];
+    return [{ key: 'ipoOffer', label: 'IPO — offer price', value: i.offerPrice, low: i.rangeLow, high: i.rangeHigh, rangeNote: 'bookbuild low → fair value post-listing' }];
   },
 };
 

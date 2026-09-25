@@ -1,21 +1,27 @@
-import { DEFAULT_ASSUMPTIONS as A } from '../src/lib/defaults.js';
+import { SAMPLE_MODEL as A, withModel } from './fixtures/model.mjs';
 import { projectOperations, buildPerYearGrid } from '../src/lib/engine/drivers.js';
-import { computeWacc, unleverBeta } from '../src/lib/engine/wacc.js';
-import { computeDcf, dcfSensitivity } from '../src/lib/engine/dcf.js';
+import { computeWacc, unleverBeta, betaPeerStats, waccSensitivity } from '../src/lib/engine/wacc.js';
+import { computeDcf, dcfSensitivity, dcfTornado, dcfReportedHistory } from '../src/lib/engine/dcf.js';
 import { computeThreeStatement } from '../src/lib/engine/threeStatement.js';
 import { computeLbo, lboSensitivity, lboHoldSensitivity } from '../src/lib/engine/lbo.js';
 import { computeComps } from '../src/lib/engine/comps.js';
-import { computeRegression } from '../src/lib/engine/regression.js';
+import { runRegression, targetValues } from '../src/lib/engine/regressionModel.js';
 import { computePrecedent } from '../src/lib/engine/precedent.js';
-import { mergeAssumptions } from '../src/lib/defaults.js';
 import { computeIpo } from '../src/lib/engine/ipo.js';
-import { applyScenario } from '../src/lib/engine/scenario.js';
+import { nolSchedule } from '../src/lib/engine/tax.js';
+import { computeForecastRatios, computeHistoryRatios } from '../src/lib/engine/ratios.js';
+import { blankManualHistory } from '../src/lib/historyModel.js';
 
 let failures = 0;
 const ok = (cond, msg) => {
   if (!cond) { failures++; console.error('FAIL:', msg); } else console.log('ok  :', msg);
 };
 const close = (a, b, tol = 1e-6) => Math.abs(a - b) < tol;
+const med = (arr) => {
+  const v = arr.filter(Number.isFinite).sort((x, y) => x - y);
+  if (!v.length) return NaN;
+  return v.length % 2 ? v[(v.length - 1) / 2] : (v[v.length / 2 - 1] + v[v.length / 2]) / 2;
+};
 
 /* ---- drivers ---- */
 const ops = projectOperations(A);
@@ -53,7 +59,8 @@ ok(close(ops.deltaNwc[0], ops.nwcBalance[0] - ops.nwc0), 'drivers: deltaNWC cons
   ok(close(opsAbs.da[3], 310), 'grid: absolute D&A passes through');
   ok(close(opsAbs.ebit[1], 1380 - 270), 'grid: EBIT from absolute lines');
   ok(close(opsAbs.capex[0], 5600 * 0.06), 'grid: % rows still work alongside absolute rows');
-  ok(close(opsAbs.nwc0, 0.12 * 5000), 'grid: Year-0 NWC anchored by the scalar %');
+  ok(close(opsAbs.nwc0, A.drivers.nwc0), 'grid: Year-0 NWC is the explicit opening balance');
+  ok(close(opsAbs.ebitda0, A.drivers.ebitda0), 'grid: LTM EBITDA is the explicit input');
 }
 
 /* ---- WACC / Hamada ---- */
@@ -72,7 +79,8 @@ ok(k.wacc > 8 && k.wacc < 16, `wacc: WACC = ${k.wacc.toFixed(2)}%`);
 const dcf = computeDcf(A);
 ok(dcf.gordon.price > 0, `dcf: FCFF gordon price = ${dcf.gordon.price.toFixed(1)}`);
 ok(dcf.exit.price > 0, `dcf: FCFF exit price = ${dcf.exit.price.toFixed(1)}`);
-ok(close(dcf.gordon.ev, dcf.pvSum + dcf.pvTvGordon), 'dcf: EV = PV(FCFF) + PV(TV)');
+ok(close(dcf.gordon.ev, dcf.pvSum + dcf.pvTvGordon + dcf.pvNolFcff), 'dcf: EV = PV(FCFF) + PV(TV) + PV(remaining NOL)');
+ok(dcf.pvNolFcff === 0, 'dcf: no losses → no NOL value');
 ok(close(dcf.gordon.equity, dcf.gordon.ev - (1200 - 400)), 'dcf: equity bridge uses net debt');
 const f1 = ops.ebit[0] * (1 - t) + ops.da[0] - ops.capex[0] - ops.deltaNwc[0];
 ok(close(dcf.fcff[0], f1), `dcf: Y1 FCFF hand-check = ${f1.toFixed(1)}`);
@@ -147,46 +155,65 @@ ok(close(hsens.grid[hr][2], lbo.irr, 1e-6), 'lbo: hold x exit grid center = base
 ok(lbo.levGross[0] > lbo.levGross[4], 'lbo: gross leverage declines');
 ok(lbo.coverage[4] > lbo.coverage[0], 'lbo: interest coverage improves');
 
-/* ---- comps ---- */
+/* ---- comps (LTM only) ---- */
 const comps = computeComps(A);
-ok(comps.rows.length === 3, 'comps: 3 multiples');
-// peer multiples are now computed from each peer's input page, so assert the
-// bridge identity rather than a typed number (compsCo.test.mjs checks the build)
+ok(comps.rows.length === 4, 'comps: four LTM implied-price rows');
+ok(comps.rows.map((r) => r.key).join() === 'evSales,evEbitda,evEbit,pe', 'comps: EV/Sales, EV/EBITDA, EV/EBIT, P/E');
 ok(comps.rows[1].q1 <= comps.rows[1].median && comps.rows[1].median <= comps.rows[1].q3, 'comps: quartiles ordered');
-ok(close(comps.rows[1].impliedMedian, (comps.rows[1].median * ops.ebitda[0] - 800) / 10),
-  'comps: EV/EBITDA median bridges to price via net debt and shares');
+ok(close(comps.rows[1].median, med(comps.pages.map((p) => p.multiples.evEbitda.values[0]))), 'comps: EV/EBITDA median over the peers\' LTM multiples');
+ok(close(comps.rows[1].impliedMedian, (comps.rows[1].median * A.comps.target.ebitda - 800) / 10),
+  'comps: EV/LTM EBITDA median × target LTM EBITDA, bridged via net debt and shares');
+ok(close(comps.rows[3].impliedMedian, (comps.rows[3].median * A.comps.target.netIncome) / 10), 'comps: P/E × target LTM net income ÷ shares');
+ok(close(comps.rows[2].impliedLow, (comps.rows[2].q1 * A.comps.target.ebit - 800) / 10), 'comps: EV/EBIT low = 25th percentile');
+{
+  const tp = comps.targetPage;
+  ok(close(tp.adjEbitda[5], 1100) && close(tp.adjEbit[5], 875) && close(tp.adjNetIncome[5], 560), 'comps: target page carries the LTM inputs as reported');
+  ok(close(tp.growth.sales.hist1, 5000 / 4500 - 1), 'comps: target growth from the prior fiscal year input');
+  ok(close(tp.growth.ebitda.hist1, 1100 / 960 - 1), 'comps: target EBITDA growth from prior EBITDA');
+  ok(Number.isNaN(tp.grossProfit[5]), 'comps: target gross profit blank → NA');
+  const noPrior = computeComps(withModel({ comps: { ...A.comps, target: { ...A.comps.target, priorRevenue: NaN, priorEbitda: NaN } } }));
+  ok(Number.isNaN(noPrior.targetPage.growth.sales.hist1), 'comps: no prior-year input → growth NA (no back-cast)');
+  ok(!comps.cols.output.flatMap((g) => g.cols).some((c) => /NFY/.test(c.label)), 'comps: no forward (NFY) columns');
+}
 
-/* ---- regression ---- */
-const reg = computeRegression(A);
-ok(reg.ok, `regression: fits with ${A.comps.peers.length} peers`);
-// OLS recomputed by hand over whatever the peer pages produce
-const xs = reg.pts.map((p) => p.x), ys = reg.pts.map((p) => p.y);
-const mean = (v) => v.reduce((s2, x) => s2 + x, 0) / v.length;
-const mx = mean(xs), my = mean(ys);
-let sxx = 0, sxy = 0, syy = 0;
-for (let i = 0; i < xs.length; i++) { sxx += (xs[i] - mx) ** 2; sxy += (xs[i] - mx) * (ys[i] - my); syy += (ys[i] - my) ** 2; }
-ok(close(reg.slope, sxy / sxx), `regression: slope = ${reg.slope.toFixed(4)}`);
-ok(close(reg.intercept, my - (sxy / sxx) * mx), `regression: intercept = ${reg.intercept.toFixed(3)}`);
-ok(close(reg.r2, sxy ** 2 / (sxx * syy)), `regression: R² = ${reg.r2.toFixed(3)}`);
-ok(close(reg.impliedMultiple, reg.intercept + reg.slope * ops.growth[0]), 'regression: target multiple on the line');
-ok(reg.impliedLow <= reg.impliedPrice && reg.impliedPrice <= reg.impliedHigh, 'regression: ±1 SE band brackets the point estimate');
-const noReg = computeRegression({ ...A, comps: { peers: A.comps.peers.slice(0, 2) } });
-ok(!noReg.ok, 'regression: refuses to fit with <3 peers');
+/* ---- regression workbench ---- */
+{
+  const reg = runRegression(A);
+  ok(reg.fit?.ok, `regression: fits with ${A.comps.peers.length} peers`);
+  const obs = comps.peers.filter((p) => Number.isFinite(p.growth) && Number.isFinite(p.evEbitda));
+  const xs = obs.map((p) => p.growth), ys = obs.map((p) => p.evEbitda);
+  const mean = (v) => v.reduce((s2, x) => s2 + x, 0) / v.length;
+  const mx = mean(xs), my = mean(ys);
+  let sxx = 0, sxy = 0, syy = 0;
+  for (let i = 0; i < xs.length; i++) { sxx += (xs[i] - mx) ** 2; sxy += (xs[i] - mx) * (ys[i] - my); syy += (ys[i] - my) ** 2; }
+  ok(close(reg.fit.beta[1], sxy / sxx), `regression: slope = ${reg.fit.beta[1].toFixed(4)}`);
+  ok(close(reg.fit.beta[0], my - (sxy / sxx) * mx), 'regression: intercept');
+  ok(close(reg.fit.r2, sxy ** 2 / (sxx * syy)), `regression: R² = ${reg.fit.r2.toFixed(3)}`);
+  ok(close(reg.target.growth, (5000 / 4500 - 1) * 100), 'regression: target growth from the LTM inputs (reported, not projected)');
+  ok(close(reg.pred.yHat, reg.fit.beta[0] + reg.fit.beta[1] * reg.target.growth), 'regression: prediction on the line');
+  ok(close(reg.price.mid, (reg.pred.yHat * A.comps.target.ebitda - 800) / 10), 'regression: implied price on target LTM EBITDA');
+  ok(comps.peers.every((p) => Number.isFinite(p.revSize) && Number.isFinite(p.mktCapSize)), 'regression: size variables in the valuation currency (no FX)');
+  const cleared = targetValues(withModel({ regression: { ...A.regression, targetOverrides: { growth: null } } }));
+  ok(close(cleared.values.growth, (5000 / 4500 - 1) * 100), 'regression: a cleared override falls back (null never reads as 0)');
+  const nullCustom = runRegression(withModel({
+    comps: { ...A.comps, peers: A.comps.peers.map((p) => ({ ...p, c_x: null })) },
+    regression: { ...A.regression, customVars: [{ key: 'c_x', label: 'X' }], xVars: [{ key: 'c_x', transform: 'lin', degree: 1 }] },
+  }));
+  ok(!nullCustom.fit?.ok, 'regression: blank custom variable values are missing, not 0');
+  const noReg = runRegression(withModel({ comps: { ...A.comps, peers: A.comps.peers.slice(0, 2) } }));
+  ok(!noReg.fit?.ok, 'regression: refuses to fit with too few peers');
+}
 
 /* ---- precedent: bottom-up deal pages ---- */
 const prec = computePrecedent(A);
-const med = (arr) => {
-  const v = arr.filter(isFinite).sort((x, y) => x - y);
-  if (!v.length) return NaN;
-  return v.length % 2 ? v[(v.length - 1) / 2] : (v[v.length / 2 - 1] + v[v.length / 2]) / 2;
-};
 ok(prec.deals.length > 0, `precedent: ${prec.deals.length} deal pages`);
 
 // every deal page re-derived by hand from its own inputs
 for (const d of prec.deals) {
   const n = `${d.deal.acquirer} / ${d.page.co.name}`;
-  const offer = (Number(d.deal.cashOffer) || 0) + (Number(d.deal.exchangeRatio) || 0) * (Number(d.deal.acquirerPrice) || 0);
-  ok(close(d.offerPrice, offer), `${n}: offer = cash + exchange ratio x acquirer price`);
+  const legs = { Cash: [1, 0], Stock: [0, 1], 'Cash / Stock': [1, 1] }[d.deal.consideration];
+  const offer = legs[0] * d.deal.cashOffer + legs[1] * d.deal.exchangeRatio * d.deal.acquirerPrice;
+  ok(close(d.offerPrice, offer), `${n}: offer = cash + exchange ratio x acquirer price (legs per consideration)`);
   ok(close(d.equityValue, d.offerPrice * d.page.shares.fullyDiluted), `${n}: equity value = offer x fully diluted shares`);
   const bs = d.page.bs;
   ok(close(d.enterpriseValue, d.equityValue + bs.debt[1] + bs.preferred[1] + bs.nci[1] - bs.cash[1]),
@@ -195,7 +222,7 @@ for (const d of prec.deals) {
   ok(close(d.evSales, d.enterpriseValue / d.ltmSales), `${n}: EV/Sales = EV / its own LTM sales`);
   ok(close(d.ebitdaMargin, d.ltmEbitda / d.ltmSales), `${n}: LTM EBITDA margin`);
   for (const w of [1, 7, 30]) {
-    const un = Number(d.deal.unaffected?.[w]);
+    const un = d.deal.unaffected?.[w] ?? NaN;
     const expected = un > 0 ? d.offerPrice / un - 1 : NaN;
     ok(close(d.premiums[w], expected) || (!isFinite(d.premiums[w]) && !isFinite(expected)),
       `${n}: ${w}-day premium over the unaffected price`);
@@ -206,62 +233,136 @@ for (const d of prec.deals) {
 ok(close(prec.rows[1].median, med(prec.deals.map((d) => d.evEbitda))), 'precedent: EV/EBITDA median over the deal pages');
 ok(close(prec.premia.median, med(prec.deals.map((d) => d.premiums[1] * 100))), 'precedent: median 1-day premium');
 ok(close(prec.premia.impliedMedian, 850 * (1 + prec.premia.median / 100)), 'precedent: premia-implied price = current x (1+median)');
-ok(close(prec.rows[1].impliedMedian, (prec.rows[1].median * ops.ebitda0 - 800) / 10), 'precedent: applied to LTM EBITDA');
-// a deal with no unaffected price drops out of the premium statistic
-ok(prec.premiaByWindow[1].n === prec.deals.filter((d) => isFinite(d.premiums[1])).length,
-  'precedent: deals without an unaffected price are excluded from the premium stats');
-
-/* ---- precedent: legacy migration preserves the multiples ---- */
+ok(close(prec.rows[1].impliedMedian, (prec.rows[1].median * A.precedent.target.ebitda - 800) / 10), 'precedent: applied to the method\'s own target LTM EBITDA');
+ok(close(prec.rows[0].impliedMedian, (prec.rows[0].median * A.precedent.target.revenue - 800) / 10), 'precedent: EV/Sales applied to target LTM revenue');
 {
-  const legacy = [
-    { name: 'Acquirer One / Target A', year: 2025, evSales: 3.9, evEbitda: 16.0, premium: 32 },
-    { name: 'Acquirer Two / Target B', year: 2024, evSales: 3.4, evEbitda: 14.5, premium: 24 },
-  ];
-  const migrated = mergeAssumptions({ precedent: { deals: legacy } });
-  ok(migrated.precedent.legacyDeals?.length === 2, 'precedent: legacy rows are parked on legacyDeals');
-  const mp = computePrecedent(migrated);
-  ok(mp.deals.length === 2, 'precedent: both legacy deals migrate to input pages');
-  legacy.forEach((row, i) => {
-    const d = mp.deals[i];
-    ok(close(d.evSales, row.evSales), `precedent migration: ${row.name} keeps EV/Sales ${row.evSales}x`);
-    ok(close(d.evEbitda, row.evEbitda), `precedent migration: ${row.name} keeps EV/EBITDA ${row.evEbitda}x`);
-    ok(close(d.premiums[1] * 100, row.premium), `precedent migration: ${row.name} keeps its ${row.premium}% premium`);
-  });
+  const noPx = computePrecedent(withModel({ company: { ...A.company, currentPrice: NaN } }));
+  ok(Number.isNaN(noPx.premia.impliedMedian), 'precedent: no market price → premia analysis NA');
 }
+// a deal with no unaffected price drops out of the premium statistic
+ok(prec.premiaByWindow[1].n === prec.deals.filter((d) => Number.isFinite(d.premiums[1])).length,
+  'precedent: deals without an unaffected price are excluded from the premium stats');
 
 /* ---- IPO ---- */
 const ipo = computeIpo(A);
-ok(close(ipo.fairEquityPre, A.ipo.offerPE * ipo.ntm.netIncome), 'ipo: fair pre-money = P/E x NTM NI');
+ok(close(ipo.fairEquityPre, A.ipo.offerPE * ipo.ntm.netIncome), 'ipo: fair pre-money = P/E x Year-1 NI');
 ok(close(ipo.offerPrice, (ipo.fairEquityPre * (1 - 0.12)) / 10), `ipo: offer price = ${ipo.offerPrice.toFixed(1)}`);
-ok(close(ipo.postShares, 10 + ipo.primaryShares + ipo.greenshoeShares), 'ipo: post shares = existing + primary + greenshoe');
+ok(close(ipo.greenshoeShares, ipo.baseDealShares * 0.15 * 1.0), 'ipo: greenshoe = base deal × size × % exercised');
+ok(close(ipo.postShares, 10 + ipo.primaryShares + ipo.greenshoeShares), 'ipo: primary greenshoe — post shares = existing + primary + greenshoe');
 ok(close(ipo.netPrimary, ipo.grossPrimary * 0.95), 'ipo: net = gross primary less 5% fees');
 ok(close(ipo.netDebtPost, ipo.netDebt - ipo.netPrimary), 'ipo: net debt falls by exactly the net primary raise');
 ok(close(ipo.mktCapAtOffer, ipo.offerPrice * ipo.postShares), 'ipo: market cap = offer x post shares');
 ok(ipo.uplift > 0, `ipo: fair-value uplift ${ipo.uplift.toFixed(1)}% (discount unwinds)`);
-ok(ipo.epsDilution < 0, `ipo: EPS dilution ${ipo.epsDilution.toFixed(1)}% (new shares outrun interest savings)`);
 ok(ipo.freeFloat > 0 && ipo.freeFloat < 1, `ipo: free float ${(ipo.freeFloat * 100).toFixed(1)}%`);
-const ipoEv = computeIpo({ ...A, ipo: { ...A.ipo, basis: 'evEbitda' } });
-ok(close(ipoEv.fairEquityPre, 13 * ipoEv.ntm.ebitda - 800), 'ipo: EV/EBITDA basis bridges via net debt');
-
-/* ---- scenarios ---- */
 {
-  const mk = (sc) => ({ ...A, settings: { ...A.settings, scenario: sc } });
-  ok(applyScenario(mk('base')) === mk('base') || applyScenario(mk('base')).drivers.growthStart === A.drivers.growthStart, 'scenario: base is identity');
-  const bear = computeDcf(applyScenario(mk('bear')));
-  const base = computeDcf(A);
-  const bull = computeDcf(applyScenario(mk('bull')));
-  ok(bear.gordon.price < base.gordon.price && base.gordon.price < bull.gordon.price,
-    `scenario: DCF ordering bear ${bear.gordon.price.toFixed(0)} < base ${base.gordon.price.toFixed(0)} < bull ${bull.gordon.price.toFixed(0)}`);
-  const lboBear = computeLbo(applyScenario(mk('bear')));
-  const lboBull = computeLbo(applyScenario(mk('bull')));
-  ok(lboBear.irr < lbo.irr && lbo.irr < lboBull.irr, `scenario: LBO IRR ordering ${lboBear.irr.toFixed(1)} < ${lbo.irr.toFixed(1)} < ${lboBull.irr.toFixed(1)}`);
-  // per-year abs rows scale under scenarios
-  const absA = {
-    ...mk('bull'),
-    drivers: { ...A.drivers, perYear: { revenueMode: 'abs', revenue: [5600, 6100, 6700, 7200, 7800], ebitdaMode: 'abs', ebitda: [1250, 1380, 1540, 1700, 1900], daMode: 'pct', da: [4.5, 4.5, 4.5, 4.5, 4.5], capexMode: 'pct', capex: [6, 6, 6, 6, 6], nwcMode: 'pct', nwc: [12, 12, 12, 12, 12] } },
-  };
-  const absOps = projectOperations(applyScenario(absA));
-  ok(absOps.revenue[0] > 5600, 'scenario: bull scales absolute revenue rows up');
+  const t = A.company.taxRate / 100;
+  const ebtPost = ipo.ts.ebt[0] + ipo.debtRepaid * 0.09 + ipo.cashAdded * 0.04;
+  ok(close(ipo.niPost, ebtPost * (1 - t)), 'ipo: pro-forma NI = (EBT + interest saved + cash income) taxed (no NOL)');
+  const half = computeIpo(withModel({ ipo: { ...A.ipo, greenshoeExercisedPct: 50 } }));
+  ok(close(half.greenshoeShares, ipo.greenshoeShares / 2), 'ipo: 50 % exercised halves the greenshoe');
+  const sec = computeIpo(withModel({ ipo: { ...A.ipo, greenshoeType: 'secondary' } }));
+  ok(close(sec.postShares, 10 + sec.primaryShares), 'ipo: secondary greenshoe — share count unchanged');
+  ok(close(sec.grossSecondary, (sec.secondaryShares + sec.greenshoeShares) * sec.offerPrice), 'ipo: secondary greenshoe proceeds go to selling holders');
+  ok(close(sec.grossPrimary, sec.primaryShares * sec.offerPrice), 'ipo: secondary greenshoe adds nothing to company proceeds');
+  ok(close(sec.existingPost, (10 - sec.secondaryShares - sec.greenshoeShares) / sec.postShares), 'ipo: existing holders sell the greenshoe shares');
+  const unchosen = computeIpo(withModel({ ipo: { ...A.ipo, greenshoeType: null } }));
+  ok(Number.isNaN(unchosen.postShares), 'ipo: greenshoe sold but type not chosen → NA');
+  const none = computeIpo(withModel({ ipo: { ...A.ipo, greenshoeType: null, greenshoeExercisedPct: 0 } }));
+  ok(Number.isFinite(none.postShares), 'ipo: no greenshoe exercised → type not needed');
+  const ipoEv = computeIpo(withModel({ ipo: { ...A.ipo, basis: 'evEbitda' } }));
+  ok(close(ipoEv.fairEquityPre, 13 * ipoEv.ntm.ebitda - 800), 'ipo: EV/EBITDA basis bridges via net debt');
+}
+
+/* ---- NOL carryforward ---- */
+{
+  const s1 = nolSchedule([-100, 30, 50, 200], 0.25, 20);
+  ok(s1.tax.every((x) => x >= 0), 'nol: tax never negative');
+  ok(close(s1.close[0], 120) && close(s1.used[1], 30) && close(s1.close[1], 90) && close(s1.tax[1], 0), 'nol: losses build the balance, profits use it');
+  ok(close(s1.used[3], 40) && close(s1.tax[3], (200 - 40) * 0.25), 'nol: partial use then fully taxed');
+  // a loss-making start: FCFF tax is zero while losses build, and the remaining NOL is valued once
+  const loss = withModel({ drivers: { ...A.drivers, marginStart: 2, marginEnd: 24 }, company: { ...A.company, nol0: 500 } });
+  const dl = computeDcf(loss);
+  ok(dl.fcffTax.every((x) => x >= 0), 'nol: FCFF tax never negative (NOPAT on negative EBIT)');
+  ok(close(dl.nopat[0], dl.ops.ebit[0] - dl.fcffTax[0]), 'nol: NOPAT = EBIT − tax after losses');
+  ok(close(dl.pvNolFcff, dl.nolCloseU[4] * 0.252 * Math.pow(1 + dl.wacc / 100, -5)), 'nol: remaining NOL valued at year N (FCFF)');
+  ok(close(dl.gordon.ev, dl.pvSum + dl.pvTvGordon + dl.pvNolFcff), 'nol: EV includes the NOL line');
+  ok(close(dl.fcffNormN, dl.ops.ebit[4] * (1 - 0.252) + dl.ops.da[4] - dl.ops.capex[4] - dl.ops.deltaNwc[4]), 'nol: Gordon TV on a fully-taxed normalised flow');
+  const tl = computeThreeStatement(loss);
+  ok(tl.taxAmt.every((x) => x >= 0) && Math.max(...tl.check.map(Math.abs)) < 1e-6, 'nol: 3-statement tax ≥ 0 and still balances');
+  const ll = computeLbo(loss);
+  ok(ll.taxAmt.every((x) => x >= 0), 'nol: LBO tax never negative');
+}
+
+/* ---- DCF: FCFE opening cash, tornado, WACC surface, history, beta peers ---- */
+{
+  ok(close(dcf.fcfeGordon.equity, dcf.pvSumE + dcf.pvTvFcfeGordon + dcf.pvNolFcfe + A.company.cash), 'dcf: FCFE equity = PV(FCFE) + PV(TV) + NOL + opening cash');
+  ok(close(dcf.fcfeCash, 400), 'dcf: opening cash line');
+  const tor = dcfTornado(A);
+  ok(tor.rows.length === 6 && close(tor.base, dcf.gordon.price), 'dcf tornado: six levers around the Gordon price');
+  ok(tor.rows.every((r) => r.low <= tor.base + 1e-9 && tor.base <= r.high + 1e-9), 'dcf tornado: base sits inside every bar');
+  const w = tor.rows.find((r) => r.key === 'wacc');
+  ok(close(w.up, computeDcf(A, null, dcf.wacc + 1).gordon.price), 'dcf tornado: WACC +1 pp');
+  const tor2 = dcfTornado(withModel({ sens: { ...A.sens, tornado: { ...A.sens.tornado, waccBump: 2 } } }));
+  ok(close(tor2.rows.find((r) => r.key === 'wacc').up, computeDcf(A, null, dcf.wacc + 2).gordon.price), 'dcf tornado: editable bump size');
+  const ws = waccSensitivity(withModel({ wacc: { ...A.wacc, debtWeight: 85 } }));
+  ok(ws.wdSteps.every((v) => v >= 0 && v <= 90) && ws.wdSteps[4] === 90, 'wacc surface: rows clamped to 0–90 %');
+  ok(ws.grid.flat().every(Number.isFinite), 'wacc surface: every clamped row computes');
+  ok(dcfReportedHistory(A) === null, 'dcf history: none reported → null (no back-cast)');
+  const h = blankManualHistory(4, '2025-12-31');
+  h.annual.lines.revenue = [4000, 4300, 4650, 5000];
+  h.annual.lines.ebitda = [800, 880, null, 1100];
+  const rh = dcfReportedHistory(withModel({ history: h }));
+  ok(rh && rh.n === 3 && rh.labels.join() === '2022,2023,2024', 'dcf history: only fiscal years before the base year');
+  ok(Number.isNaN(rh.ebitda[2]) && Number.isNaN(rh.margin[2]), 'dcf history: unreported line stays NA');
+  ok(close(rh.growth[1], (4300 / 4000 - 1) * 100), 'dcf history: reported growth');
+  const bp = betaPeerStats(withModel({ wacc: { ...A.wacc, betaPeers: [
+    { id: 'a', name: 'A', leveredBeta: 1.2, de: 0.5, taxRate: 25 },
+    { id: 'b', name: 'B', leveredBeta: 0.9, de: 0.2, taxRate: 30 },
+    { id: 'c', name: 'C', leveredBeta: null, de: 0.3, taxRate: 25 },
+  ] } }));
+  ok(bp.n === 2 && close(bp.rows[0].unleveredBeta, 1.2 / (1 + 0.75 * 0.5)), 'beta peers: Hamada with each peer\'s own tax; blank row excluded');
+}
+
+/* ---- 3-statement: reported opening equity ---- */
+{
+  const oe = computeThreeStatement(withModel({ ts: { ...A.ts, equity0: 2600 } }));
+  ok(close(oe.otherNetAssets, 300), '3s: other net assets = reported equity − (cash + NWC + PP&E − debt)');
+  ok(close(oe.equity0, 2600) && Math.max(...oe.check.map(Math.abs)) < 1e-6, '3s: ties to reported equity every year');
+}
+
+/* ---- LBO: cash left at close ---- */
+{
+  const lc = computeLbo(withModel({ lbo: { ...A.lbo, cashAtClose: 150 } }));
+  ok(close(lc.uses, lc.entryEV + lc.feesTxn + lc.feesFin + 150), 'lbo: uses include the cash left at close');
+  ok(close(lc.sponsorEquity, lbo.sponsorEquity + 150), 'lbo: the sponsor funds the cash at close');
+  ok(close(lc.ndEntry, lc.totalDebt0 - 150), 'lbo: entry net debt nets the cash at close');
+  const lb = lc.bridge;
+  ok(close(lb.entryEquity + lb.fees + lb.ebitdaGrowth + lb.multipleChange + lb.deleveraging, lb.exitEquity, 1e-6), 'lbo: bridge ties with cash at close');
+  const fm = lc.entryEvMax / lc.ebitda0;
+  const af = computeLbo(withModel({ lbo: { ...A.lbo, cashAtClose: 150, entryMultiple: fm } }));
+  ok(close(af.irr, A.lbo.hurdleRate, 1e-6), 'lbo: floor solve includes the cash at close');
+  ok(lc.floorLow < lc.floorPrice && lc.floorPrice < lc.floorHigh, 'lbo: floor range = hurdle ± step');
+}
+
+/* ---- ratios ---- */
+{
+  const fr = computeForecastRatios(A);
+  const roe = fr.sections[1].rows[0].vals;
+  const ts0 = computeThreeStatement(A);
+  ok(close(roe[0], ts0.netIncome[0] / ((ts0.equity0 + ts0.equity[0]) / 2) * 100), 'ratios: forecast ROE off the 3-statement (avg equity)');
+  ok(fr.balanceOk && fr.labels.length === 5, 'ratios: forecast is annual and balances');
+  ok(computeHistoryRatios(A, 'Y') === null, 'ratios: no history → no past ratios');
+  const h = blankManualHistory(3, '2025-12-31');
+  h.annual.lines.revenue = [4000, 4400, 5000];
+  h.annual.lines.ebitda = [800, 900, 1100];
+  h.annual.lines.ni = [300, null, 420];
+  h.annual.lines.equity = [2000, 2200, 2400];
+  const hr = computeHistoryRatios(withModel({ history: h }), 'Y', 2);
+  ok(hr.labels.join() === '2024,2025', 'ratios past: latest N reported years');
+  const margin = hr.sections[0].rows.find((r) => r.label === 'EBITDA margin').vals;
+  ok(close(margin[1], 22), 'ratios past: reported EBITDA margin');
+  const hroe = hr.sections[1].rows[0].vals;
+  ok(Number.isNaN(hroe[0]) && close(hroe[1], 420 / 2300 * 100), 'ratios past: missing NI → NA; ROE on average equity');
 }
 
 console.log(failures ? `\n${failures} FAILURES` : '\nALL ENGINE TESTS PASSED');

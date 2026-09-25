@@ -19,7 +19,7 @@
  * paid against the unaffected share price at 1 / 7 / 30 days, and the deal
  * identity (acquirer, target, dates, transaction type, consideration).
  */
-import { blankCompany, computeCompany, nextId, sd, P } from './compsCo.js';
+import { blankCompany, computeCompany, nextId, P } from './compsCo.js';
 
 /** Premium look-back windows the 3E output page reports, in days. */
 export const PREMIUM_DAYS = [1, 7, 30];
@@ -30,37 +30,60 @@ export const TRANSACTION_TYPES = [
 ];
 export const CONSIDERATION_TYPES = ['Cash', 'Stock', 'Cash / Stock'];
 
-/** An empty precedent transaction. */
+/** A blank / non-numeric input → NaN (NA); never lets null read as 0. */
+const val = (v) => {
+  if (v === null || v === undefined || v === '') return NaN;
+  const x = typeof v === 'number' ? v : Number(v);
+  return Number.isFinite(x) ? x : NaN;
+};
+
+/** An empty precedent transaction — fully blank: nothing typed, nothing assumed. */
 export function blankDeal(over = {}) {
   return {
     id: nextId('deal'),
     // identity
-    acquirer: 'New Acquirer',
+    acquirer: '',
     acquirerTicker: '',
-    acquirerFyEnd: '2025-12-31',
-    acquirerPrice: 0,
-    dateAnnounced: '2025-06-30',
-    dateEffective: 'Pending',
-    transactionType: 'Public / Public',
-    consideration: 'Cash',
+    dateAnnounced: '',
+    dateEffective: '',
+    transactionType: '',
+    consideration: '',     // 'Cash' | 'Stock' | 'Cash / Stock' — decides which offer legs apply
     targetDescription: '',
     acquirerDescription: '',
     comments: '',
     // offer terms
-    cashOffer: 0,          // cash per target share
-    exchangeRatio: 0,      // acquirer shares per target share
+    cashOffer: null,       // cash per target share
+    exchangeRatio: null,   // acquirer shares per target share
+    acquirerPrice: null,   // acquirer share price (for the stock leg)
     // unaffected target share price, by look-back window
-    unaffected: { 1: 0, 7: 0, 30: 0 },
+    unaffected: { 1: null, 7: null, 30: null },
     // the target's reported financials — the same shape as a comps input page
-    target: blankCompany({ name: 'New Target' }),
+    target: blankCompany(),
     ...over,
   };
 }
 
-/** Offer price per share = cash consideration + the stock leg at the acquirer's price. */
+/** Which offer legs a consideration type carries. Unchosen → none known (NA). */
+export function offerLegs(consideration) {
+  if (consideration === 'Cash') return { cash: true, stock: false };
+  if (consideration === 'Stock') return { cash: false, stock: true };
+  if (consideration === 'Cash / Stock') return { cash: true, stock: true };
+  return null;
+}
+
+/** Stock leg per target share = exchange ratio × acquirer share price (NA if either is blank). */
+export const stockOfferPerShare = (deal) => val(deal?.exchangeRatio) * val(deal?.acquirerPrice);
+
+/**
+ * Offer price per share = cash consideration + the stock leg at the acquirer's
+ * price. The purchase consideration says which legs exist: a leg the deal does
+ * not have is 0; a leg it has must be filled, or the offer price is NA.
+ */
 export const offerPricePerShare = (deal) => {
-  const cash = Number(deal?.cashOffer) || 0;
-  const stock = (Number(deal?.exchangeRatio) || 0) * (Number(deal?.acquirerPrice) || 0);
+  const legs = offerLegs(deal?.consideration);
+  if (!legs) return NaN;
+  const cash = legs.cash ? val(deal?.cashOffer) : 0;
+  const stock = legs.stock ? stockOfferPerShare(deal) : 0;
   return cash + stock;
 };
 
@@ -72,20 +95,22 @@ export const offerPricePerShare = (deal) => {
  */
 export function computeDeal(deal) {
   const offerPrice = offerPricePerShare(deal);
-  const stockOffer = (Number(deal?.exchangeRatio) || 0) * (Number(deal?.acquirerPrice) || 0);
+  const legs = offerLegs(deal?.consideration);
+  const stockOffer = !legs ? NaN : legs.stock ? stockOfferPerShare(deal) : 0;
+  const cashOffer = !legs ? NaN : legs.cash ? val(deal?.cashOffer) : 0;
   // price the target's page at the offer — everything downstream follows
   const page = computeCompany({ ...deal.target, price: offerPrice });
 
   const premiums = {};
   for (const d of PREMIUM_DAYS) {
-    const px = Number(deal?.unaffected?.[d]);
+    const px = val(deal?.unaffected?.[d]);
     premiums[d] = px > 0 ? offerPrice / px - 1 : NaN;
   }
 
   return {
     deal, page,
     offerPrice,
-    cashOffer: Number(deal?.cashOffer) || 0,
+    cashOffer,
     stockOffer,
     equityValue: page.equityValue,
     enterpriseValue: page.enterpriseValue,
@@ -110,72 +135,19 @@ export function computeDeal(deal) {
  */
 export function validateDeal(d) {
   const issues = [];
-  if (!(d.offerPrice > 0)) issues.push({ level: 'error', field: 'offer', msg: 'No offer price — equity value and every transaction multiple are NA' });
+  if (!offerLegs(d.deal?.consideration)) issues.push({ level: 'error', field: 'offer', msg: 'Choose the purchase consideration (cash, stock or both) — it decides which offer terms apply' });
+  else if (!(d.offerPrice > 0)) issues.push({ level: 'error', field: 'offer', msg: 'No offer price — fill the offer terms; equity value and every transaction multiple are NA' });
   if (!(d.page.shares.fullyDiluted > 0)) issues.push({ level: 'error', field: 'shares', msg: 'No share count — implied equity value is NA' });
   if (!(d.ltmSales > 0)) issues.push({ level: 'error', field: 'is', msg: 'No LTM sales — EV/Sales and the margins are NA' });
-  if (!(d.ltmEbitda > 0)) issues.push({ level: 'warn', field: 'is', msg: 'No LTM EBITDA — EV/EBITDA is NM' });
+  if (!Number.isFinite(d.page.bs.debt[1]) || !Number.isFinite(d.page.bs.cash[1])) issues.push({ level: 'error', field: 'bs', msg: 'No current debt or cash — the implied enterprise value is NA' });
+  if (!Number.isFinite(d.ltmEbitda)) issues.push({ level: 'warn', field: 'is', msg: 'LTM EBITDA is NA — EV/EBITDA is NA' });
+  else if (!(d.ltmEbitda > 0)) issues.push({ level: 'warn', field: 'is', msg: 'LTM EBITDA is not positive — EV/EBITDA is NM' });
   const bal = d.page.bs.check;
-  const scale = Math.max(1, Math.abs(d.page.bs.totalAssets[1]));
-  if (Math.abs(bal[1]) > scale * 1e-6) issues.push({ level: 'warn', field: 'bs', msg: `Balance sheet is out by ${bal[1].toFixed(1)} — the EV bridge reads debt, preferred, NCI and cash off it` });
-  const missing = PREMIUM_DAYS.filter((k) => !(Number(d.deal?.unaffected?.[k]) > 0));
+  const scale = Math.max(1, Math.abs(Number.isFinite(d.page.bs.totalAssets[1]) ? d.page.bs.totalAssets[1] : 0));
+  if (Number.isFinite(bal[1]) && Math.abs(bal[1]) > scale * 1e-6) issues.push({ level: 'warn', field: 'bs', msg: `Balance sheet is out by ${bal[1].toFixed(1)} — the EV bridge reads debt, preferred, NCI and cash off it` });
+  const missing = PREMIUM_DAYS.filter((k) => !(val(d.deal?.unaffected?.[k]) > 0));
   if (missing.length === PREMIUM_DAYS.length) issues.push({ level: 'warn', field: 'premium', msg: 'No unaffected share prices — every premiums-paid column is NA' });
   else if (missing.length) issues.push({ level: 'info', field: 'premium', msg: `No unaffected price ${missing.join(', ')} day(s) prior — those columns read NA` });
   if (!d.deal.targetDescription) issues.push({ level: 'info', field: 'desc', msg: 'No target business description — the List page will read [to come]' });
   return issues;
-}
-
-/**
- * Migrate a legacy typed-multiple deal ({ name, year, evSales, evEbitda, premium })
- * onto the bottom-up shape. What maps, maps; the rest starts blank and the page
- * badge says what is still needed. The original rows are kept on `legacyDeals`.
- *
- * The old set carried multiples, not financials, so the metrics are back-solved
- * from an assumed LTM sales of 1,000 units: that reproduces the SAME multiples
- * (which is what the valuation actually used) while giving the page a coherent
- * income statement to show. The badge flags it as reconstructed.
- */
-export function migrateLegacyDeal(row) {
-  const evSales = Number(row?.evSales);
-  const evEbitda = Number(row?.evEbitda);
-  const sales = 1000;
-  const ev = isFinite(evSales) && evSales > 0 ? evSales * sales : NaN;
-  const ebitda = isFinite(ev) && isFinite(evEbitda) && evEbitda > 0 ? ev / evEbitda : NaN;
-  const parts = String(row?.name || 'Legacy transaction').split('/');
-  const acquirer = (parts[0] || 'Acquirer').trim();
-  const target = (parts[1] || parts[0] || 'Target').trim();
-  const year = Number(row?.year) || new Date().getFullYear();
-
-  const shares = 100;
-  const offer = isFinite(ev) ? ev / shares : 0;   // no debt/cash known: EV == equity value
-  // FY0 only, both stubs zero — the LTM bridge (FY0 + current stub − prior stub)
-  // then lands exactly on FY0, so the reconstructed multiples equal the originals
-  const five = (v) => [0, 0, isFinite(v) ? v : 0, 0, 0];
-  const co = blankCompany({
-    name: target,
-    fyEnd: `${year - 1}-12-31`,
-    stubEnd: `${year}-06-30`,
-    basicShares: shares,
-    grossKnown: false,
-    is: {
-      sales: five(sales),
-      // no COGS/SG&A split is recoverable, so all operating cost sits in COGS
-      cogs: five(isFinite(ebitda) ? sales - ebitda : sales),
-      sga: [0, 0, 0, 0, 0], otherExp: [0, 0, 0, 0, 0],
-      interest: [0, 0, 0, 0, 0], taxes: [0, 0, 0, 0, 0],
-      nci: [0, 0, 0, 0, 0], prefDiv: [0, 0, 0, 0, 0],
-      dilutedShares: five(shares),
-    },
-  });
-
-  return blankDeal({
-    acquirer,
-    dateAnnounced: `${year}-06-30`,
-    cashOffer: offer,
-    unaffected: {
-      1: isFinite(Number(row?.premium)) && offer > 0 ? offer / (1 + Number(row.premium) / 100) : 0,
-      7: 0, 30: 0,
-    },
-    target: co,
-    _reconstructed: true,
-  });
 }

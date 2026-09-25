@@ -73,8 +73,10 @@ export function designColumns(xVars) {
 
 /** Transform one raw x value for a design column (NaN when undefined, e.g. ln of ≤0). */
 export const xTransform = (raw, col) => {
-  let v = col.transform === 'ln' ? (raw > 0 ? ln(raw) : NaN) : raw;
-  return isFinite(v) ? Math.pow(v, col.power) : NaN;
+  // a blank (null) value is missing, never 0
+  const x = typeof raw === 'number' ? raw : NaN;
+  const v = col.transform === 'ln' ? (x > 0 ? ln(x) : NaN) : x;
+  return Number.isFinite(v) ? Math.pow(v, col.power) : NaN;
 };
 
 /** Gauss-Jordan solve of [A | B] → returns transformed B (solution columns). */
@@ -112,10 +114,10 @@ export function fitOLS(observations, spec) {
   const rows = [];
   const dropped = [];
   for (const ob of observations) {
-    const yRaw = ob.values[spec.yVar];
+    const yRaw = typeof ob.values[spec.yVar] === 'number' ? ob.values[spec.yVar] : NaN;
     const y = spec.yLog ? (yRaw > 0 ? ln(yRaw) : NaN) : yRaw;
     const xs = cols.map((c) => xTransform(ob.values[c.key], c));
-    if (isFinite(y) && xs.every(isFinite)) rows.push({ name: ob.name, y, yRaw, xs });
+    if (Number.isFinite(y) && xs.every(Number.isFinite)) rows.push({ name: ob.name, y, yRaw, xs });
     else dropped.push(ob.name);
   }
   const n = rows.length, k = cols.length;
@@ -178,7 +180,7 @@ export function fitOLS(observations, spec) {
 export function predictOLS(fit, targetValues) {
   if (!fit?.ok) return null;
   const xs = fit.cols.map((c) => xTransform(targetValues[c.key], c));
-  if (!xs.every(isFinite)) return { ok: false, reason: 'target is missing a variable used by the model' };
+  if (!xs.every(Number.isFinite)) return { ok: false, reason: 'target is missing a variable used by the model' };
   const z = [1, ...xs];
   const yHat = z.reduce((s, v, i) => s + v * fit.beta[i], 0);
   let q = 0;

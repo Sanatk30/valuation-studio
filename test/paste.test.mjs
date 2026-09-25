@@ -5,7 +5,7 @@
  */
 import { parseNum, splitBlock, parseGrid, applyGrid, parseWide, matchField, matchScalar } from '../src/lib/compsPaste.js';
 import { computeCompany, blankCompany, P } from '../src/lib/engine/compsCo.js';
-import { DEFAULT_ASSUMPTIONS as A, mergeAssumptions } from '../src/lib/defaults.js';
+import { SAMPLE_MODEL as A } from './fixtures/model.mjs';
 import { computeComps } from '../src/lib/engine/comps.js';
 
 let failures = 0, checks = 0;
@@ -46,7 +46,7 @@ ok(matchField('Less: COGS').key === 'cogs', 'a "Less:" prefix is ignored');
 ok(matchField('Sales (₹ Cr)').key === 'sales', 'a parenthetical unit note is ignored');
 ok(matchField("Shareholders' Equity").key === 'bsEquity', 'punctuation and case are ignored');
 ok(matchField('SG&A').group === 'is' && matchField('Total debt').group === 'bs', 'rows route to the right block');
-ok(matchField('Estimated EBITDA').group === 'est', 'estimate rows route to the estimates block');
+ok(matchField('Estimated EBITDA') === null, 'comps is LTM only — estimate rows are not recognised');
 ok(matchField('Something else') === null, 'an unknown label does not match');
 ok(matchScalar('Ticker').key === 'ticker' && matchScalar('Share price').key === 'price', 'scalar labels match');
 
@@ -103,12 +103,9 @@ console.log('\n=== grid paste (line items down, periods across) ===');
   const cob = applyGrid(blankCompany({}), gb);
   ok(cob.bs.cash[1] === 150 && cob.bs.equity[0] === 1500, 'balance-sheet values land in the right column');
 
-  // estimates
-  const est = ['Estimated sales\t5,800\t6,400\t7,050', 'Estimated EBITDA\t1,220\t1,350\t1,490'].join('\n');
-  const ge = parseGrid(est);
-  ok(ge.ok && ge.target === 'est' && ge.periods.length === 3, 'estimates parse into three forward years');
-  const coe = applyGrid(blankCompany({}), ge);
-  ok(coe.est.sales[2] === 7050, 'NFY+2 estimate landed');
+  // blank cells on a fresh page stay blank (NA / none), never 0
+  const coBlank = applyGrid(blankCompany(), parseGrid('Sales\t\t\t500\t\t'));
+  ok(coBlank.is.sales[2] === 500 && coBlank.is.sales[0] === null && coBlank.is.sales[3] === null, 'unpasted cells stay blank');
 
   // nothing recognisable
   const junk = parseGrid('Foo\t1\t2\nBar\t3\t4');
@@ -131,13 +128,13 @@ console.log('\n=== wide paste (one row per company) ===');
     ['Company', 'Ticker', 'Exchange', 'Tier', 'Price', '52-week high', 'Basic shares outstanding', 'Marginal tax rate (%)',
       'Sales FY-1', 'Sales FY0', 'COGS FY0', 'SG&A FY0', 'Interest expense FY0', 'Income taxes FY0',
       'Weighted avg. diluted shares FY0', 'Cash from operations FY0', 'Capital expenditures FY0', 'Depreciation & amortization FY0',
-      'Cash Current', 'Total debt Current', "Shareholders' equity Current", 'Estimated sales NFY'].join('\t'),
+      'Cash Current', 'Total debt Current', "Shareholders' equity Current"].join('\t'),
     ['Northgate Materials', 'NGM', 'NSE', 'Tier I: Specialty Chemicals', '842.50', '1,040.00', '6.20', '25.2',
       '3,100.0', '3,472.0', '2,290.0', '347.2', '62.0', '190.0', '6.20', '520.0', '215.0', '175.0',
-      '280.0', '760.0', '2,150.0', '3,820.0'].join('\t'),
+      '280.0', '760.0', '2,150.0'].join('\t'),
     ['Ravensworth Chem', 'RVC', 'BSE', 'Tier II: Commodity', '318.20', '402.00', '14.80', '25.2',
       '6,900.0', '7,245.0', '5,510.0', '724.5', '158.0', '260.0', '14.80', '880.0', '470.0', '395.0',
-      '410.0', '2,240.0', '3,100.0', '7,610.0'].join('\t'),
+      '410.0', '2,240.0', '3,100.0'].join('\t'),
   ].join('\n');
 
   const w = parseWide(wide, { tiers });
@@ -151,29 +148,30 @@ console.log('\n=== wide paste (one row per company) ===');
   ok(c1.co.price === 842.5 && c1.co.basicShares === 6.2, 'scalars landed');
   ok(c1.co.is.sales[1] === 3100 && c1.co.is.sales[2] === 3472, 'an explicit period suffix targets the right column');
   ok(c1.co.bs.debt[1] === 760 && c1.co.bs.cash[1] === 280, '"Current" targets the current balance-sheet column');
-  ok(c1.co.est.sales[0] === 3820, '"NFY" targets the first estimate year');
+  ok(c1.co.is.sales[0] === null && c1.co.bs.debt[0] === null, 'columns not pasted stay blank');
 
   const pg = computeCompany(c1.co);
   ok(near(pg.is.sales[P.LTM], 3472), 'with no stub data, LTM equals FY0');
   ok(near(pg.equityValue, 6.2 * 842.5), 'equity value computes from the pasted shares and price');
   ok(near(pg.enterpriseValue, 6.2 * 842.5 + 760 - 280), 'EV bridges off the pasted balance sheet');
-  ok(near(pg.adjEbitda[P.LTM], 3472 - 2290 - 347.2 + 175), 'EBITDA builds from the pasted lines');
+  ok(!Number.isFinite(pg.adjEbitda[P.LTM]), 'Other expense not pasted → EBITDA is NA (a blank core line is never 0)');
+  const pg2 = computeCompany({ ...c1.co, is: { ...c1.co.is, otherExp: [null, null, 0, null, null] } });
+  ok(near(pg2.adjEbitda[P.LTM], 3472 - 2290 - 347.2 + 175), 'EBITDA builds from the pasted lines once every cost line is given');
 
   // bare (unsuffixed) field columns fall back to the block default
-  const bare = ['Company\tPrice\tSales\tTotal debt\tEstimated sales', 'Bare Co\t50\t1000\t400\t1100'].join('\n');
+  const bare = ['Company\tPrice\tSales\tTotal debt', 'Bare Co\t50\t1000\t400'].join('\n');
   const wb = parseWide(bare, { tiers });
   ok(wb.companies[0].co.is.sales[2] === 1000, 'a bare income-statement column defaults to FY0');
   ok(wb.companies[0].co.bs.debt[1] === 400, 'a bare balance-sheet column defaults to Current');
-  ok(wb.companies[0].co.est.sales[0] === 1100, 'a bare estimate column defaults to NFY');
 
-  // basic shares fall back to the diluted series when not given
-  const noShares = ['Company\tPrice\tWeighted avg. diluted shares FY0', 'Fallback Co\t10\t7.5'].join('\n');
-  ok(parseWide(noShares).companies[0].co.basicShares === 7.5, 'basic shares fall back to the diluted count');
+  // basic shares are never filled from the diluted series — blank stays NA
+  const noShares = ['Company\tPrice\tWeighted avg. diluted shares FY0', 'No Basic Co\t10\t7.5'].join('\n');
+  ok(parseWide(noShares).companies[0].co.basicShares === null, 'basic shares not pasted stay blank (no fallback)');
 
   // gross profit is NA when no COGS was pasted, rather than a wrong number
   const noCogs = ['Company\tPrice\tSales FY0\tBasic shares outstanding', 'No COGS Co\t10\t500\t5'].join('\n');
   const pgNoCogs = computeCompany(parseWide(noCogs).companies[0].co);
-  ok(!isFinite(pgNoCogs.grossMargin[P.LTM]), 'no COGS pasted → gross margin reports NA');
+  ok(!Number.isFinite(pgNoCogs.grossMargin[P.LTM]), 'no COGS pasted → gross margin reports NA');
 
   // failures are explained
   ok(!parseWide('Company\tPrice').ok, 'a header with no data rows fails');
@@ -188,10 +186,9 @@ console.log('\n=== JSON round-trip ===');
 {
   const before = computeComps(A);
   const json = JSON.stringify(A);
-  const back = mergeAssumptions(JSON.parse(json));
+  const back = JSON.parse(json);
   ok(back.comps.peers.length === A.comps.peers.length, 'every peer survives a JSON round-trip');
   ok(back.comps.tiers.length === A.comps.tiers.length, 'tiers survive');
-  ok(!back.comps.legacyPeers, 'the new shape is not mistaken for the legacy one and re-seeded');
 
   const after = computeComps(back);
   let worst = 0;
@@ -205,17 +202,13 @@ console.log('\n=== JSON round-trip ===');
 
   // a hand-built private company survives too
   const priv = blankCompany({
-    name: 'Kestrel Private Ltd', ticker: '', exchange: 'Private', price: 0, basicShares: 4.5,
-    is: { ...blankCompany({}).is, sales: [900, 1010, 1140, 570, 630], cogs: [600, 670, 750, 375, 410] },
+    name: 'Kestrel Private Ltd', ticker: '', exchange: 'Private', price: null, basicShares: 4.5,
+    is: { ...blankCompany().is, sales: [900, 1010, 1140, 570, 630], cogs: [600, 670, 750, 375, 410] },
   });
   const privBack = JSON.parse(JSON.stringify(priv));
   ok(JSON.stringify(computeCompany(priv).is.sales) === JSON.stringify(computeCompany(privBack).is.sales),
     'a private company with no ticker round-trips unchanged');
 
-  // legacy flat peers are still detected and parked, not silently kept
-  const legacy = mergeAssumptions({ comps: { peers: [{ name: 'Old Peer', evSales: 3, evEbitda: 13, pe: 24, growth: 10 }] } });
-  ok(Array.isArray(legacy.comps.legacyPeers) && legacy.comps.legacyPeers.length === 1, 'a legacy peer set is preserved on legacyPeers');
-  ok(legacy.comps.peers.every((p) => p.is), 'legacy peers are replaced by full input pages');
 }
 
 console.log(`\n${checks} checks`);
