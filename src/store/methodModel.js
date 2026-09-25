@@ -21,6 +21,8 @@ export const SENS_DEFAULTS = {
   dcf: { waccStep: 0.5, gStep: 0.5, multStep: 1, coeStep: 0.5 },   // % pts, % pts, turns, % pts
   wacc: { wdStep: 5, kdStep: 0.5 },                                // % pts of D/(D+E), % pts of Kd
   lbo: { entryStep: 0.5, exitStep: 0.5, hurdleStep: 2.5 },         // turns, turns, % pts (floor range)
+  // DCF tornado: each lever moved down and up by its bump (% pts)
+  tornado: { waccBump: 1, gBump: 1, marginBump: 1, growthBump: 1, capexBump: 1, taxBump: 1 },
 };
 
 const blankCompanySection = () => ({
@@ -169,7 +171,8 @@ export function toEngineInput(company, data) {
     },
     history: d.history || null,
     listing: d.listing || null,
-    sens: { ...sens(), ...(d.sens || {}) },
+    // per-group merge: a group added later (e.g. the tornado) still gets its display defaults
+    sens: Object.fromEntries(Object.entries(sens()).map(([g, v]) => [g, { ...v, ...(d.sens?.[g] || {}) }])),
     ratio: d.ratio || null,
   };
   for (const key of Object.keys(NAN_SECTIONS)) {

@@ -2,8 +2,6 @@ import React, { useMemo } from 'react';
 import StatementTable from '../components/StatementTable.jsx';
 import Heatmap from '../components/Heatmap.jsx';
 import Waterfall from '../components/Waterfall.jsx';
-// Namespace imports: fields / functions Stream 1 is still adding read as
-// `undefined` (→ NA / hidden line) instead of failing the module link.
 import * as DCF from '../lib/engine/dcf.js';
 import * as WACC from '../lib/engine/wacc.js';
 import { periodLabels } from '../lib/period.js';
@@ -12,7 +10,7 @@ import Collapsible, { Sections } from './parts/Collapsible.jsx';
 import SensStepInputs from './parts/SensStepInputs.jsx';
 import ChartBox, { EngineError } from './parts/ChartBox.jsx';
 import {
-  makeFmt, fin, upsidePct, upsideText, cagrPct, cumsum, allFinite, rnd, axis5, tone, attempt,
+  makeFmt, fin, upsidePct, upsideText, cagrPct, cumsum, allFinite, rnd, tone, attempt,
 } from './parts/format.js';
 import {
   themed, xCat, yVal, tipBy, vgrad, COL, barSeries, lineSeries, moneyAxis,
@@ -45,24 +43,24 @@ export default function DcfOutput({ a, set, skipped = {} }) {
     const dcf = DCF.computeDcf(a);
     const sens = DCF.dcfSensitivity(a);
     // reported history only — never back-cast (null when there is none)
-    const hist = typeof DCF.dcfReportedHistory === 'function' ? DCF.dcfReportedHistory(a) : null;
-    const peers = (a.wacc.betaPeers || []).length && typeof WACC.betaPeerStats === 'function'
-      ? WACC.betaPeerStats(a) : null;
-    return { dcf, sens, hist, peers };
+    const hist = DCF.dcfReportedHistory(a);
+    const peers = (a.wacc.betaPeers || []).length ? WACC.betaPeerStats(a) : null;
+    const waccGrid = WACC.waccSensitivity(a);
+    const tornado = DCF.dcfTornado(a);
+    return { dcf, sens, hist, peers, waccGrid, tornado };
   }), [a]);
 
   if (model.error) return <div className="qo"><EngineError what="The DCF" error={model.error} /></div>;
-  const { dcf, sens, hist, peers } = model.value;
-  return <DcfPage a={a} set={set} f={f} s={s} dcf={dcf} sens={sens} hist={hist} peers={peers} showFcfe={showFcfe} />;
+  const { dcf, sens, hist, peers, waccGrid, tornado } = model.value;
+  return <DcfPage a={a} set={set} f={f} s={s} dcf={dcf} sens={sens} hist={hist} peers={peers} waccGrid={waccGrid} tornado={tornado} showFcfe={showFcfe} />;
 }
 
-function DcfPage({ a, set, f, s, dcf, sens, hist, peers, showFcfe }) {
+function DcfPage({ a, set, f, s, dcf, sens, hist, peers, waccGrid, tornado, showFcfe }) {
   const ops = dcf.ops;
   const n = ops.n;
   const labels = useMemo(() => periodLabels(s, 'Y', n), [s, n]);
   const px = a.company.currentPrice;
   const hasPx = fin(px) && px > 0;
-  const t = a.company.taxRate / 100;
   const primary = a.dcf.primaryTV === 'exit' ? 'exit' : 'gordon';
   const g = a.dcf.terminalGrowth;
   const hasHist = !!(hist && hist.n > 0);
@@ -118,25 +116,6 @@ function DcfPage({ a, set, f, s, dcf, sens, hist, peers, showFcfe }) {
       mult: cells.map((row) => row.map((d) => (fin(ltmEbitda) && ltmEbitda > 0 ? d.exit.ev / ltmEbitda : NaN))),
     };
   }, [sens, a, ops]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // WACC surface: capital structure × pre-tax cost of debt, beta relevered in every cell
-  const waccGrid = useMemo(() => {
-    const wdSteps = axis5(a.wacc.debtWeight, a.sens.wacc.wdStep);
-    const kdSteps = axis5(a.wacc.costDebt, a.sens.wacc.kdStep);
-    const bu = dcf.unleveredBeta;
-    // the size / alpha premium exactly as the engine applied it
-    const premium = dcf.costEquity - a.wacc.riskFree - dcf.leveredBeta * a.wacc.erp;
-    const grid = wdSteps.map((wd) => kdSteps.map((kd) => {
-      // OPEN QUESTION: a row outside 0 % ≤ D/(D+E) < 100 % is shown n/m; the old grid
-      // clamped it to 0–90 % (a hard-coded band) — confirm n/m is wanted.
-      if (!(wd >= 0 && wd < 100)) return NaN;
-      const de = (wd / 100) / (1 - wd / 100);
-      const bl = bu * (1 + (1 - t) * de);
-      const coe = a.wacc.riskFree + bl * a.wacc.erp + premium;
-      return (wd / 100) * kd * (1 - t) + (1 - wd / 100) * coe;
-    }));
-    return { wdSteps, kdSteps, grid };
-  }, [a, dcf, t]);
 
   /* ------------------------------------------------ extra charts */
   const charts = useMemo(() => buildDcfCharts({ a, f, dcf, ops, labels, primary, pvTvPrimary, at, n }),
@@ -312,6 +291,7 @@ function DcfPage({ a, set, f, s, dcf, sens, hist, peers, showFcfe }) {
                   <tr><td>Terminal value</td><td>{f.num(dcf.tvFcfeGordon)}</td><td>{f.num(dcf.tvFcfePE)}</td></tr>
                   <tr><td>PV of terminal value</td><td>{f.num(dcf.pvTvFcfeGordon)}</td><td>{f.num(dcf.pvTvFcfePE)}</td></tr>
                   <tr><td>PV of remaining tax losses (NOL × t @ CoE)</td>{cell(pvNolFcfe, f.num)}{cell(pvNolFcfe, f.num)}</tr>
+                  <tr><td>Add: opening cash</td>{cell(dcf.fcfeCash, f.num)}{cell(dcf.fcfeCash, f.num)}</tr>
                   <tr className="bold"><td>Equity value</td><td>{f.num(dcf.fcfeGordon.equity)}</td><td>{f.num(dcf.fcfeExit.equity)}</td></tr>
                   <tr className="sub"><td>÷ Shares outstanding</td><td>{f.shares(a.company.sharesOut)}</td><td>{f.shares(a.company.sharesOut)}</td></tr>
                   <tr className="bold"><td>Implied share price</td><td>{f.price(dcf.fcfeGordon.price)}</td><td>{f.price(dcf.fcfeExit.price)}</td></tr>
@@ -324,6 +304,7 @@ function DcfPage({ a, set, f, s, dcf, sens, hist, peers, showFcfe }) {
               The debt and cash schedules use the FCFE financing inputs: interest on opening balances, mandatory
               repayment of {f.pct0(a.ts.debtRepayPct)} of opening debt a year. The Gordon terminal value capitalises a
               normalised, fully-taxed year-{n} flow; any tax-loss balance still unused at year {n} is valued on its own line.
+              The FCFE flow earns no interest on the opening cash balance, so that balance is added to the equity value.
             </div>
           </Collapsible>
         )}
@@ -435,7 +416,7 @@ function DcfPage({ a, set, f, s, dcf, sens, hist, peers, showFcfe }) {
             ]} />
             <Heatmap corner="D/(D+E) \ Kd" rowLabels={waccGrid.wdSteps} colLabels={waccGrid.kdSteps} grid={waccGrid.grid}
               fmt={(v) => f.pct2(v)} fmtRow={(v) => f.pct(v)} fmtCol={(v) => f.pct2(v)} />
-            <div className="qo-note" style={{ marginTop: 6 }}>Beta is relevered at every capital structure before the cost of equity is rebuilt, so each cell is a full WACC.</div>
+            <div className="qo-note" style={{ marginTop: 6 }}>Beta is relevered at every capital structure before the cost of equity is rebuilt, so each cell is a full WACC. Debt-weight rows are kept inside 0–90 %; a step that would leave that band repeats its edge.</div>
           </div>
         </Collapsible>
 
@@ -506,8 +487,36 @@ function DcfPage({ a, set, f, s, dcf, sens, hist, peers, showFcfe }) {
             <ChartBox title={`Implied share price vs WACC (${f.sym}) — ±2 WACC steps`} option={charts.priceVsWacc} />
             <ChartBox title={`Implied share price vs terminal growth (${f.sym}) — WACC ± 1 step`} option={charts.priceVsGrowth} />
           </div>
-          {/* OPEN QUESTION: the old gallery's DCF "tornado" moved margin, growth, capex and tax by a
-              fixed ±1 pp — a hard-coded band with no step input. Left out until the user picks the bump sizes. */}
+        </Collapsible>
+
+        <Collapsible title="Tornado — which input moves the price most" tag="TORNADO" note="bumps editable">
+          <SensStepInputs a={a} set={set} items={[
+            { path: 'sens.tornado.waccBump', label: 'WACC ±', suffix: '% pts' },
+            { path: 'sens.tornado.gBump', label: 'Terminal growth ±', suffix: '% pts' },
+            { path: 'sens.tornado.marginBump', label: 'EBITDA margin ±', suffix: '% pts' },
+            { path: 'sens.tornado.growthBump', label: 'Revenue growth ±', suffix: '% pts' },
+            { path: 'sens.tornado.capexBump', label: 'Capex % of revenue ±', suffix: '% pts' },
+            { path: 'sens.tornado.taxBump', label: 'Tax rate ±', suffix: '% pts' },
+          ]} />
+          <ChartBox title={`FCFF Gordon share price (${f.sym}) — each input moved down and up by its bump`} option={tornadoOption(tornado, f)} height={300} />
+          <div className="tablewrap">
+            <table className="fin">
+              <thead><tr><th>Input</th><th>Bump</th><th>Price, input down</th><th>Price, input up</th><th>Swing</th></tr></thead>
+              <tbody>
+                {tornado.rows.map((r) => (
+                  <tr key={r.key}>
+                    <td>{r.label}</td><td>± {f.dec(r.bump, 2)} pts</td>
+                    <td>{f.price(r.down)}</td><td>{f.price(r.up)}</td><td>{f.price(r.swing)}</td>
+                  </tr>
+                ))}
+                <tr className="bold"><td>Base case</td><td /><td colSpan={3}>{f.price(tornado.base)}</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div className="qo-note">
+            Margin, growth and capex move every forecast year by the bump (growth rescales the other lines with revenue);
+            WACC, terminal growth and the tax rate move the single input. Widest swing on top.
+          </div>
         </Collapsible>
       </Sections>
     </div>
@@ -526,10 +535,6 @@ function BetaPeers({ a, f, dcf, peers }) {
         </table>
       </div>
     );
-  }
-  if (!peers) {
-    // betaPeerStats(a) is not available from the engine yet
-    return <div className="sec-note">The peer beta statistics are not available yet.</div>;
   }
   const relever = (bu) => (fin(bu) && fin(dcf.de) ? bu * (1 + (1 - t) * dcf.de) : NaN);
   return (
@@ -671,4 +676,31 @@ function buildDcfCharts({ a, f, dcf, ops, labels, primary, pvTvPrimary, at, n })
     growth: growthOption(f, labels, ops.growth),
     fcfBuild, conversion, pvByYear, pvShare, evSplit, cumulative, priceVsWacc, priceVsGrowth,
   };
+}
+
+/** Horizontal tornado: each bar spans the price at the input's down and up bump, around the base. */
+function tornadoOption(tornado, f) {
+  const rows = tornado.rows.filter((r) => fin(r.low) && fin(r.high)).slice().reverse();   // widest on top
+  if (!rows.length || !fin(tornado.base)) return null;
+  const base = tornado.base;
+  return themed({
+    tooltip: {
+      trigger: 'axis', axisPointer: { type: 'shadow' },
+      formatter: (ps) => {
+        const r = rows.find((x) => x.label === ps[0].name);
+        return r ? `<b>${r.label}</b> ± ${f.dec(r.bump, 2)} pts<br>${f.price(r.low)} → ${f.price(r.high)}<br>swing ${f.price(r.swing)}` : '';
+      },
+    },
+    legend: { show: false }, grid: { left: 8, right: 24, top: 24, bottom: 14, containLabel: true },
+    xAxis: yVal({ scale: true, axisLabel: { color: COL.axis, formatter: f.short } }),
+    yAxis: xCat(rows.map((r) => r.label), { axisLabel: { color: COL.axisStrong, fontSize: 11.5 } }),
+    series: [
+      { name: 'pad', type: 'bar', stack: 't', itemStyle: { color: 'transparent' }, data: rows.map((r) => rnd(r.low, 2)), silent: true },
+      { name: 'down', type: 'bar', stack: 't', itemStyle: { color: vgrad(COL.outflow2) }, data: rows.map((r) => rnd(Math.min(r.high, base) - r.low, 2)) },
+      {
+        name: 'up', type: 'bar', stack: 't', itemStyle: { color: vgrad(COL.green) }, data: rows.map((r) => rnd(r.high - Math.min(r.high, base), 2)),
+        markLine: { silent: true, symbol: 'none', lineStyle: { color: COL.gold, type: 'dashed', width: 1.4 }, label: { formatter: `base ${f.gridPrice(base)}`, color: COL.gold, fontSize: 11, position: 'insideEndTop' }, data: [{ xAxis: rnd(base, 2) }] },
+      },
+    ],
+  });
 }

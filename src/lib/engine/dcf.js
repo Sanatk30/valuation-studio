@@ -67,7 +67,8 @@ const NA_VALUE = { ev: NaN, equity: NaN, price: NaN };
  * Two-method DCF:
  *  FCFF = EBIT − tax_U + D&A − capex − dNWC, discounted at WACC → EV → equity.
  *  FCFE = NI_L + D&A − capex − dNWC + net borrowing, discounted at the cost of
- *         equity → equity directly (NI_L = EBIT − interest − tax_L).
+ *         equity → equity directly (NI_L = EBIT − interest − tax_L), plus the
+ *         opening cash balance (the FCFE flow carries no interest income on it).
  *
  * Tax runs through a tax-loss carryforward (see tax.js), so a loss year pays
  * no tax and builds a balance used against later profits — never a negative tax:
@@ -178,11 +179,9 @@ export function computeDcf(a, opsIn = null, waccOverridePct = null, coeOverrideP
     cPrev = cc;
   }
 
-  // FCFE flow: levered NOL schedule on EBIT − interest (cash is not part of the
-  // FCFE flow, so its interest income is not either)
-  // OPEN QUESTION: the FCFE equity value neither adds the opening cash balance
-  // nor counts interest income on it (unchanged from the previous model).
-  // Should opening cash be added to FCFE equity?
+  // FCFE flow: levered NOL schedule on EBIT − interest. Cash is not part of the
+  // FCFE flow (so neither is its interest income); the opening cash balance is
+  // added to the FCFE equity value instead, as its own line (fcfeCash).
   const ebtFcfe = ops.ebit.map((e, i) => e - interest[i]);
   const L = nolSchedule(ebtFcfe, t, nol0);
   const fcfeTax = L.tax;
@@ -203,8 +202,9 @@ export function computeDcf(a, opsIn = null, waccOverridePct = null, coeOverrideP
   const pvTvFcfePE = tvFcfePE * Math.pow(1 + coe, -n);
   const pvNolFcfe = L.close[last] * t * Math.pow(1 + coe, -n);
 
+  const fcfeCash = a.company.cash;
   const mkE = (pvTv) => {
-    const equity = pvSumE + pvTv + pvNolFcfe;
+    const equity = pvSumE + pvTv + pvNolFcfe + fcfeCash;
     const price = a.company.sharesOut > 0 ? equity / a.company.sharesOut : NaN;
     return { equity, price };
   };
@@ -236,7 +236,7 @@ export function computeDcf(a, opsIn = null, waccOverridePct = null, coeOverrideP
     // FCFE
     openDebt, interest, repay, netBorrow, fcfe, dfE, pvE, pvSumE,
     ebtFcfe, fcfeTax, niFcfe, nolOpenL: L.open, nolUsedL: L.used, nolCloseL: L.close,
-    fcfeN, fcfeNormN, pvNolFcfe,
+    fcfeN, fcfeNormN, pvNolFcfe, fcfeCash,
     // 3-statement-basis net income behind the exit P/E
     openCash, interestInc, dividends, closeCash, niDcf,
     ebtNi, taxNi, nolOpenNi, nolUsedNi, nolCloseNi, niNormN,
@@ -293,4 +293,69 @@ export function dcfSensitivity(a) {
     exitGrid: waccSteps.map((w) => mSteps.map((m) => dcfPriceWaccExit(a, ops, w, m))),
     fcfeGrid: coeSteps.map((c) => gSteps.map((g) => dcfPriceCoeGrowth(a, ops, c, g))),
   };
+}
+
+/**
+ * DCF tornado: the FCFF Gordon share price with each lever moved down and up
+ * by its own bump (% points, from `a.sens.tornado`, editable on the output).
+ * Operating levers perturb the PROJECTED operations directly, so the result is
+ * the same whether the forecast came from fades or the year-by-year grid:
+ *   WACC        — discount rate ± bump
+ *   terminal g  — perpetuity growth ± bump
+ *   margin      — every year's EBITDA (and EBIT) ± bump × revenue
+ *   growth      — every year's growth ± bump; the other lines scale with revenue
+ *   capex       — every year's capex ± bump × revenue
+ *   tax rate    — ± bump
+ * Rows come sorted by swing (widest first). `low` / `high` are the prices at
+ * the lever's value that lowers / raises the price.
+ */
+export function dcfTornado(a) {
+  const ops = projectOperations(a);
+  const base = computeDcf(a, ops);
+  const w = base.wacc, g = a.dcf.terminalGrowth;
+  const D = SENS_DEFAULTS.tornado;
+  const bump = (key) => sensStep(a, 'tornado', key, D[key]);
+  const price = (aa, o, waccPct = null) => computeDcf(aa, o, waccPct).gordon.price;
+  const withG = (gg) => ({ ...a, dcf: { ...a.dcf, terminalGrowth: gg } });
+
+  const marginOps = (d) => ({
+    ...ops,
+    ebitda: ops.ebitda.map((e, i) => e + (d / 100) * ops.revenue[i]),
+    ebit: ops.ebit.map((e, i) => e + (d / 100) * ops.revenue[i]),
+  });
+  const capexOps = (d) => ({ ...ops, capex: ops.capex.map((c, i) => c + (d / 100) * ops.revenue[i]) });
+  const growthOps = (d) => {
+    const rev = [];
+    let prev = ops.revenue0;
+    for (let i = 0; i < ops.n; i++) { prev *= 1 + (ops.growth[i] + d) / 100; rev.push(prev); }
+    const k = rev.map((r, i) => (ops.revenue[i] ? r / ops.revenue[i] : NaN));
+    const nwcBalance = ops.nwcBalance.map((v, i) => v * k[i]);
+    return {
+      ...ops, revenue: rev,
+      ebitda: ops.ebitda.map((v, i) => v * k[i]), da: ops.da.map((v, i) => v * k[i]),
+      ebit: ops.ebit.map((v, i) => v * k[i]), capex: ops.capex.map((v, i) => v * k[i]),
+      nwcBalance, deltaNwc: nwcBalance.map((v, i) => v - (i === 0 ? ops.nwc0 : nwcBalance[i - 1])),
+    };
+  };
+  const withTax = (d) => ({ ...a, company: { ...a.company, taxRate: a.company.taxRate + d } });
+
+  const levers = [
+    { key: 'wacc', label: 'WACC', bumpKey: 'waccBump', at: (d) => price(a, ops, w + d) },
+    { key: 'g', label: 'Terminal growth', bumpKey: 'gBump', at: (d) => price(withG(g + d), ops) },
+    { key: 'margin', label: 'EBITDA margin', bumpKey: 'marginBump', at: (d) => price(a, marginOps(d)) },
+    { key: 'growth', label: 'Revenue growth', bumpKey: 'growthBump', at: (d) => price(a, growthOps(d)) },
+    { key: 'capex', label: 'Capex (% of revenue)', bumpKey: 'capexBump', at: (d) => price(a, capexOps(d)) },
+    { key: 'tax', label: 'Tax rate', bumpKey: 'taxBump', at: (d) => price(withTax(d), ops) },
+  ];
+  const rows = levers.map((l) => {
+    const b = bump(l.bumpKey);
+    const down = l.at(-b), up = l.at(b);
+    return {
+      key: l.key, label: l.label, bumpKey: l.bumpKey, bump: b, down, up,
+      low: Math.min(down, up), high: Math.max(down, up),
+      swing: Math.abs(up - down),
+    };
+  });
+  rows.sort((x, y) => (Number.isFinite(y.swing) ? y.swing : -1) - (Number.isFinite(x.swing) ? x.swing : -1));
+  return { base: base.gordon.price, rows };
 }

@@ -1,3 +1,16 @@
+# Status — rebuild complete (2026-09-25)
+
+Every stream below is finished and integrated: all eight methods run end to
+end in the browser (wizard, Fill-all, edit-from-output, Start over, Combined,
+currency / unit conversion), each exports its own live-formula Excel file, and
+`npm test` (engines, Excel recalculation on the sample model + 55 edge cases,
+structure, Yahoo / FX, data model) and `npm run build` pass. Superseded code
+(old tabs, panels, dock / rail / ticker shell, their libs and CSS) is deleted.
+The round-3 answers are recorded at the end of `docs/STEPWISE_SPEC.md`.
+The notes below are the history of how the work was split.
+
+---
+
 # Handoff — Quant Value stepwise rebuild (state at 2026-09-24 ~16:20 IST)
 
 Read in this order: `docs/STEPWISE_SPEC.md` (the user's agreed spec — every

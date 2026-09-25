@@ -2,39 +2,85 @@
 # Valuation Studio launcher — double-click to start the dev server and open the app.
 # Idempotent: if it's already running, this just reopens the browser tab.
 
-DIR="/Users/sanatkumar/Downloads/valuation-studio"
-URL="http://localhost:5173"
+APP="$(cd "$(dirname "$0")/../.." && pwd)"   # …/Valuation Studio.app
 LABEL="com.sanatk.valuationstudio.server"
-# Logs + the launchd plist MUST live outside ~/Downloads: Downloads is TCC-protected,
-# and launchd cannot open a StandardOutPath there (it fails the job with EX_CONFIG/78).
+MARK="<title>Quant Value</title>"            # how we recognise our own page on a port
+# Logs, the launchd plist and the remembered folder MUST live outside ~/Downloads:
+# Downloads is TCC-protected, and launchd cannot open a StandardOutPath there
+# (it fails the job with EX_CONFIG/78).
 RUNDIR="$HOME/Library/Logs/ValuationStudio"
 PLIST="$RUNDIR/server.plist"
 DEVLOG="$RUNDIR/dev.log"
+SAVED="$RUNDIR/folder"
 
 # GUI-launched apps don't load your shell profile, so make node/npm findable.
-export PATH="/usr/local/bin:/opt/homebrew/bin:$HOME/.npm-global/bin:/usr/bin:/bin:$PATH"
+export PATH="/usr/local/bin:/opt/homebrew/bin:$HOME/.volta/bin:$HOME/.npm-global/bin:/usr/bin:/bin:$PATH"
 [ -s "$HOME/.nvm/nvm.sh" ] && . "$HOME/.nvm/nvm.sh" >/dev/null 2>&1
 
-die() {
-  osascript -e "display dialog \"$1\" buttons {\"OK\"} with icon stop with title \"Valuation Studio\"" >/dev/null 2>&1
-  exit 1
+# $1 = message, $2 = stop | caution. Passed as an argument so quotes in it are safe.
+dialog() {
+  /usr/bin/osascript - "$1" "${2:-stop}" >/dev/null 2>&1 <<'OSA'
+on run argv
+  if item 2 of argv is "caution" then
+    display dialog (item 1 of argv) buttons {"OK"} default button 1 with icon caution with title "Valuation Studio"
+  else
+    display dialog (item 1 of argv) buttons {"OK"} default button 1 with icon stop with title "Valuation Studio"
+  end if
+end run
+OSA
 }
+die() { dialog "$1" stop; exit 1; }
+notify() { /usr/bin/osascript -e "display notification \"$1\" with title \"Valuation Studio\"" >/dev/null 2>&1; }
 
-cd "$DIR" 2>/dev/null || die "Valuation Studio folder not found at ~/Downloads/valuation-studio."
 mkdir -p "$RUNDIR"
 
-# Already serving? Just bring it up.
-if /usr/bin/curl -s -o /dev/null --max-time 2 "$URL"; then
-  open "$URL"; exit 0
+# ---- find the project folder ---------------------------------------------------
+# 1. the folder this .app sits in (it ships inside the project)  2. the folder picked
+# last time  3. the original default location  4. ask.
+is_project() {
+  [ -n "$1" ] && [ -f "$1/package.json" ] && [ -f "$1/index.html" ] &&
+    grep -q '"name": *"valuation-studio"' "$1/package.json" 2>/dev/null
+}
+DIR=""
+for c in "$(dirname "$APP")" "$(cat "$SAVED" 2>/dev/null)" "$HOME/Downloads/valuation-studio"; do
+  if is_project "$c"; then DIR="$c"; break; fi
+done
+if [ -z "$DIR" ]; then
+  PICK="$(/usr/bin/osascript -e 'POSIX path of (choose folder with prompt "Where is the Valuation Studio project folder? (the one that contains package.json)")' 2>/dev/null)"
+  [ -n "$PICK" ] || exit 0                        # cancelled
+  PICK="${PICK%/}"
+  is_project "$PICK" || die "That folder is not the Valuation Studio project (no package.json for valuation-studio in it). Click the app again and choose the project folder."
+  DIR="$PICK"
 fi
+printf '%s\n' "$DIR" >"$SAVED"
+cd "$DIR" || die "Cannot open the project folder: $DIR"
 
+# ---- already serving? just bring it up -----------------------------------------
+ours()    { /usr/bin/curl -s --max-time 2 "http://localhost:$1/" 2>/dev/null | grep -q "$MARK"; }
+answers() { /usr/bin/curl -s -o /dev/null --max-time 2 "http://localhost:$1/"; }
+PORT=""
+for p in 5173 5174 5175 5176 5177 5178 5179 5180; do
+  if ours "$p"; then open "http://localhost:$p"; exit 0; fi
+  [ -z "$PORT" ] && ! answers "$p" && PORT="$p"   # first port nothing else is using
+done
+[ -n "$PORT" ] || die "Ports 5173 to 5180 are all in use by other programs. Close one of them and click again."
+URL="http://localhost:$PORT"
+
+# ---- Node.js ------------------------------------------------------------------
 NPM="$(command -v npm)"
-[ -n "$NPM" ] || die "Node.js / npm was not found. Install Node 18+ from nodejs.org, then click again."
+NODE="$(command -v node)"
+[ -n "$NPM" ] && [ -n "$NODE" ] || die "Node.js / npm was not found. Install Node 18 or newer from nodejs.org, then click again."
+MAJOR="$("$NODE" -p 'process.versions.node.split(".")[0]' 2>/dev/null)"
+[ "${MAJOR:-0}" -ge 18 ] 2>/dev/null || die "Valuation Studio needs Node 18 or newer, but found $("$NODE" -v 2>/dev/null). Update Node from nodejs.org, then click again."
 
-# First run: install dependencies (foreground — this launcher can wait).
-if [ ! -d "$DIR/node_modules" ]; then
-  osascript -e 'display notification "Installing dependencies — first launch may take a minute." with title "Valuation Studio"' >/dev/null 2>&1
-  "$NPM" install >"$RUNDIR/install.log" 2>&1
+# ---- dependencies: first run, or package files changed since the last install ---
+STAMP="$DIR/node_modules/.package-lock.json"
+if [ ! -x "$DIR/node_modules/.bin/vite" ] || [ ! -f "$STAMP" ] ||
+   [ "$DIR/package.json" -nt "$STAMP" ] || [ "$DIR/package-lock.json" -nt "$STAMP" ]; then
+  notify "Installing dependencies — this may take a minute."
+  "$NPM" install >"$RUNDIR/install.log" 2>&1 ||
+    die "Installing dependencies failed. See the log at: $RUNDIR/install.log"
+  touch "$STAMP"
 fi
 
 # Hand the dev server to launchd so it OUTLIVES this launcher. A plain `nohup ... &`
@@ -50,7 +96,10 @@ cat >"$PLIST" <<PLIST
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string><string>-c</string>
-    <string>cd '$DIR' && exec '$NPM' run dev -- --port 5173 --strictPort</string>
+    <string>cd "\$0" &amp;&amp; exec "\$1" run dev -- --port "\$2" --strictPort</string>
+    <string>$(printf '%s' "$DIR" | sed 's/&/\&amp;/g; s/</\&lt;/g')</string>
+    <string>$NPM</string>
+    <string>$PORT</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict><key>PATH</key><string>$PATH</string></dict>
@@ -66,16 +115,17 @@ GUI="gui/$(id -u)"
 /bin/launchctl bootout "$GUI/$LABEL" 2>/dev/null   # clear any stale job
 /bin/launchctl bootstrap "$GUI" "$PLIST" 2>>"$DEVLOG"
 
-# Wait (up to ~30s) for it to answer, then open the browser.
-for _ in $(seq 1 60); do
-  /usr/bin/curl -s -o /dev/null --max-time 2 "$URL" && break
+# Wait (up to ~60s) for our page to answer, then open the browser.
+for _ in $(seq 1 120); do
+  ours "$PORT" && break
   sleep 0.5
 done
 
-if /usr/bin/curl -s -o /dev/null --max-time 2 "$URL"; then
+if ours "$PORT"; then
   open "$URL"
 else
-  osascript -e "display dialog \"The server did not start. See the log at:
-$DEVLOG\" buttons {\"OK\"} with icon caution with title \"Valuation Studio\"" >/dev/null 2>&1
+  dialog "The server did not start. Last lines of the log ($DEVLOG):
+
+$(tail -n 8 "$DEVLOG" 2>/dev/null)" caution
 fi
 exit 0

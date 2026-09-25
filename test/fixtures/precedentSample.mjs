@@ -8,11 +8,10 @@
  * EV/EBITDA, and the unaffected prices are back-solved from the premiums, so
  * every multiple and premium on the output page ties to the input page.
  *
- * These are the shipped defaults and the fixture the verification suite runs
- * against; nothing here is used once a user enters their own deals.
+ * Test fixture only — the app itself ships no sample data.
  */
-import { blankCompany } from './compsCo.js';
-import { blankDeal } from './precedentDeal.js';
+import { blankCompany } from '../../src/lib/engine/compsCo.js';
+import { blankDeal } from '../../src/lib/engine/precedentDeal.js';
 
 const r2 = (v) => Math.round(v * 100) / 100;
 
@@ -57,7 +56,7 @@ export function expandDeal(s) {
   const ev = ltmEbitda * s.evEbitda;
   const equity = ev - debt + cash;
   const offer = r2(equity / s.basicShares);
-  const unaff = (p) => (isFinite(p) ? r2(offer / (1 + p / 100)) : 0);
+  const unaff = (p) => (Number.isFinite(p) ? r2(offer / (1 + p / 100)) : null);
 
   const bsSales = [salesFY[1], ltmSales];
   const asset = (pct, i) => r2(bsSales[i] * pct);

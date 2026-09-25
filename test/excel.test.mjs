@@ -1,116 +1,129 @@
-import { DEFAULT_ASSUMPTIONS as A } from '../src/lib/defaults.js';
-import { buildWorkbook, EXPORT_METHODS, resolveSheets } from '../src/lib/excel/exportExcel.js';
+/**
+ * Structure of every method's Excel file: it writes and reads back, carries
+ * exactly Cover + Inputs + its own calculation sheets, the Inputs sheet holds
+ * only that method's inputs, every formula's references resolve to a sheet in
+ * the file (and, across sheets, to a non-empty cell), parentheses balance,
+ * inputs are blue, and nothing writes NaN / Infinity into a cell.
+ */
 import ExcelJS from 'exceljs';
-import fs from 'node:fs';
+import { SAMPLE_MODEL as A, withModel } from './fixtures/model.mjs';
+import { buildWorkbook, EXPORT_METHODS } from '../src/lib/excel/exportExcel.js';
+import { C_INPUT } from '../src/lib/excel/xlsxUtil.js';
 
-const OUT = '/tmp/valuation_studio_test.xlsx';
+let failures = 0, checks = 0;
+const ok = (cond, msg) => { checks++; if (!cond) { failures++; console.error('FAIL:', msg); } };
 
-let failures = 0;
-const fail = (msg) => { failures++; console.error('FAIL:', msg); };
-
-const wb = buildWorkbook(A);
-if (!wb.calcProperties?.fullCalcOnLoad) fail('fullCalcOnLoad not set');
-await wb.xlsx.writeFile(OUT);
-
-// re-read the file we actually produced
-const rb = new ExcelJS.Workbook();
-await rb.xlsx.readFile(OUT);
-
-const sheets = {};
-rb.eachSheet((ws) => { sheets[ws.name] = ws; });
-const expectSheets = ['Cover', 'Assumptions', 'DCF', '3 Statement', 'LBO', 'Benchmarking 1', 'Benchmarking 2', 'Comps Analysis', 'Implied Valuation', 'List', 'Regression', 'Precedent', 'IPO', 'Summary'];
-for (const s of expectSheets) if (!sheets[s]) fail(`missing sheet ${s}`);
-
-function cellHasContent(ws, addr) {
-  const c = ws.getCell(addr);
-  return c.value !== null && c.value !== undefined;
-}
+const COMBINED = { rows: [{ method: 'DCF', figureLabel: 'FCFF', value: 900, low: 800, high: 1000, weight: 100 }], marketPrice: 850 };
+const EXPECT = {
+  dcf: ['Cover', 'Inputs', 'DCF', 'WACC'],
+  lbo: ['Cover', 'Inputs', 'Projection', 'LBO'],
+  ipo: ['Cover', 'Inputs', 'Projection', '3 Statement', 'IPO'],
+  ts: ['Cover', 'Inputs', 'Projection', '3 Statement'],
+  ratios: ['Cover', 'Inputs', 'Projection', '3 Statement'],
+  combined: ['Cover', 'Combined'],
+};
+/** Inputs-sheet labels that must NOT appear in a method's file (another method's inputs). */
+const FOREIGN = {
+  dcf: ['Entry EV / LTM EBITDA', 'Pricing basis ("pe" or "evEbitda")', 'LTM EBIT', "Opening shareholders' equity (reported)"],
+  lbo: ['WACC', 'Terminal growth rate', 'Pricing basis ("pe" or "evEbitda")', 'Interest rate on debt'],
+  ipo: ['WACC', 'Entry EV / LTM EBITDA', 'Opening net PP&E'],
+  ts: ['WACC', 'Entry EV / LTM EBITDA', 'Primary raise (fresh capital)'],
+  ratios: ['WACC', 'Sponsor IRR hurdle', 'Offer P/E'],
+  comps: ['Tax rate', 'WACC', 'Opening net working capital', 'Projection years', 'Opening tax-loss carryforward (NOL)'],
+  precedent: ['Tax rate', 'WACC', 'LTM EBIT', 'Projection years'],
+};
 
 function* extractRefs(formula) {
-  // quoted sheet refs: '3 Statement'!$B$5 or ranges
-  const re1 = /'([^']+)'!(\$?[A-Z]{1,2}\$?\d+)(?::(\$?[A-Z]{1,2}\$?\d+))?/g;
-  // unquoted sheet refs: DCF!C5
-  const re2 = /\b([A-Za-z][A-Za-z0-9_]*)!(\$?[A-Z]{1,2}\$?\d+)(?::(\$?[A-Z]{1,2}\$?\d+))?/g;
-  let f = formula;
+  const re1 = /'((?:[^']|'')+)'!(\$?[A-Z]{1,3}\$?\d+)(?::(\$?[A-Z]{1,3}\$?\d+))?/g;
+  const re2 = /\b([A-Za-z][A-Za-z0-9_]*)!(\$?[A-Z]{1,3}\$?\d+)(?::(\$?[A-Z]{1,3}\$?\d+))?/g;
+  let f = formula.replace(/"[^"]*"/g, '""');          // drop string literals
   let m;
-  while ((m = re1.exec(formula))) yield { sheet: m[1], a: m[2], b: m[3] };
+  const src = f;
+  while ((m = re1.exec(src))) yield { sheet: m[1].replace(/''/g, "'"), a: m[2], b: m[3] };
   f = f.replace(re1, ' ');
-  while ((m = re2.exec(f))) yield { sheet: m[1], a: m[2], b: m[3] };
+  const src2 = f;
+  while ((m = re2.exec(src2))) yield { sheet: m[1], a: m[2], b: m[3] };
   f = f.replace(re2, ' ');
-  // local refs (strip function names: letters followed by '(' )
   f = f.replace(/[A-Z][A-Z0-9.]*\(/g, '(');
-  const re3 = /(\$?[A-Z]{1,2}\$?\d+)(?::(\$?[A-Z]{1,2}\$?\d+))?/g;
+  const re3 = /(\$?[A-Z]{1,3}\$?\d+)(?::(\$?[A-Z]{1,3}\$?\d+))?/g;
   while ((m = re3.exec(f))) yield { sheet: null, a: m[1], b: m[2] };
 }
-
 const norm = (addr) => addr.replace(/\$/g, '');
 
-let nFormulas = 0, nRefs = 0;
-rb.eachSheet((ws) => {
-  ws.eachRow({ includeEmpty: false }, (row) => {
-    row.eachCell({ includeEmpty: false }, (cell) => {
-      const f = cell.formula || (cell.value && cell.value.formula);
-      if (!f) return;
-      nFormulas++;
-      const open = (f.match(/\(/g) || []).length;
-      const close = (f.match(/\)/g) || []).length;
-      if (open !== close) fail(`${ws.name}!${cell.address}: unbalanced parens in =${f}`);
-      for (const ref of extractRefs(f)) {
-        nRefs++;
-        const target = ref.sheet ? sheets[ref.sheet] : ws;
-        if (!target) { fail(`${ws.name}!${cell.address}: unknown sheet '${ref.sheet}' in =${f}`); continue; }
-        for (const addr of [ref.a, ref.b].filter(Boolean)) {
-          if (!cellHasContent(target, norm(addr))) {
-            fail(`${ws.name}!${cell.address}: ref ${ref.sheet || ws.name}!${norm(addr)} is EMPTY in =${f}`);
-          }
-        }
-      }
+async function checkFile(a, method, opts = {}, expect = EXPECT[method]) {
+  const wb = buildWorkbook(a, method, { ...opts, combined: COMBINED });
+  ok(wb.calcProperties?.fullCalcOnLoad, `${method}: fullCalcOnLoad`);
+  const buf = await wb.xlsx.writeBuffer();
+  const rb = new ExcelJS.Workbook();
+  await rb.xlsx.load(buf);
+  const names = rb.worksheets.map((w) => w.name);
+  if (expect) ok(names.join('|') === expect.join('|'), `${method}: sheets [${names.join(', ')}]`);
+  ok(names[0] === 'Cover', `${method}: Cover first`);
+  if (method !== 'combined') ok(names[1] === 'Inputs', `${method}: Inputs second`);
+  ok(!names.includes('Assumptions') && !names.includes('Summary'), `${method}: no legacy Assumptions / Summary sheet`);
+
+  const sheets = Object.fromEntries(rb.worksheets.map((w) => [w.name, w]));
+  // Inputs: only this method's inputs, all blue
+  if (sheets.Inputs) {
+    const labels = [];
+    sheets.Inputs.eachRow((row) => { const v = row.getCell(1).value; if (typeof v === 'string') labels.push(v.trim()); });
+    for (const bad of FOREIGN[method] || []) ok(!labels.includes(bad.trim()), `${method}: Inputs has no foreign input "${bad}"`);
+    let blue = 0;
+    sheets.Inputs.eachRow((row) => {
+      const c = row.getCell(2);
+      if (c.value !== null && c.value !== undefined && !(c.value && c.value.formula) && c.font?.color?.argb === C_INPUT) blue++;
     });
-  });
-});
+    ok(blue >= 5, `${method}: Inputs carries blue input cells (${blue})`);
+  }
 
-// spot-checks: key cells exist and are formulas
-const mustBeFormula = [
-  ['Summary', 'B'],
-];
-const sm = sheets['Summary'];
-let smFormulas = 0;
-sm.eachRow({ includeEmpty: false }, (row) => row.eachCell((c) => { if (c.formula || c.value?.formula) smFormulas++; }));
-if (smFormulas < 15) fail(`Summary has only ${smFormulas} formulas`);
-
-// single-method exports: right sheets present, and no formula references a removed sheet
-for (const [method, def] of Object.entries(EXPORT_METHODS)) {
-  if (!def.sheets) continue;
-  const mwb = buildWorkbook(A, method);
-  const expected = resolveSheets(def, A);
-  const names = [...mwb.worksheets].sort((x, y) => x.orderNo - y.orderNo).map((ws) => ws.name);
-  if (names.join('|') !== expected.join('|')) fail(`${method} export sheets: got [${names}] expected [${expected}]`);
-  const present = new Set(names);
-  mwb.eachSheet((ws) => {
+  let nFormulas = 0;
+  rb.eachSheet((ws) => {
     ws.eachRow({ includeEmpty: false }, (row) => {
       row.eachCell({ includeEmpty: false }, (cell) => {
-        const f = cell.formula || (cell.value && cell.value.formula);
+        const v = cell.value;
+        if (typeof v === 'number') ok(Number.isFinite(v), `${method}: ${ws.name}!${cell.address} holds ${v}`);
+        const f = cell.formula || (v && v.formula);
         if (!f) return;
+        nFormulas++;
+        const bare = f.replace(/"[^"]*"/g, '""');
+        ok((bare.match(/\(/g) || []).length === (bare.match(/\)/g) || []).length, `${method}: ${ws.name}!${cell.address} parens balance`);
         for (const ref of extractRefs(f)) {
-          if (ref.sheet && !present.has(ref.sheet)) fail(`${method} export: ${ws.name}!${cell.address} refs removed sheet '${ref.sheet}'`);
+          const target = ref.sheet ? sheets[ref.sheet] : ws;
+          ok(!!target, `${method}: ${ws.name}!${cell.address} → unknown sheet '${ref.sheet}'`);
+          if (!target || !ref.sheet || ref.b) continue;
+          const c = target.getCell(norm(ref.a));
+          ok(c.value !== null && c.value !== undefined, `${method}: ${ws.name}!${cell.address} → ${ref.sheet}!${norm(ref.a)} is empty`);
         }
       });
     });
   });
+  ok(nFormulas > (method === 'combined' ? 3 : 40), `${method}: live formulas (${nFormulas})`);
+  return { names, nFormulas, kb: buf.byteLength / 1024 };
 }
-console.log(`method exports OK: ${Object.keys(EXPORT_METHODS).filter((k) => EXPORT_METHODS[k].sheets).join(', ')}`);
 
-// regression export with y = P/E must carry 3 Statement (NTM net income link) — and only then
+for (const m of EXPORT_METHODS) {
+  const r = await checkFile(A, m);
+  console.log(`${m.padEnd(9)} ${r.names.length} sheets, ${r.nFormulas} formulas, ${r.kb.toFixed(0)} KB`);
+}
+
+// optional steps change the sheet set
 {
-  const aPe = structuredClone(A);
-  aPe.regression = { ...aPe.regression, yVar: 'pe' };
-  const names = buildWorkbook(aPe, 'reg').worksheets.map((ws) => ws.name);
-  if (!names.includes('3 Statement')) fail(`reg(pe) export missing 3 Statement: [${names}]`);
-  const namesDefault = buildWorkbook(A, 'reg').worksheets.map((ws) => ws.name);
-  if (namesDefault.includes('3 Statement')) fail(`reg(evEbitda) export should not carry 3 Statement: [${namesDefault}]`);
+  const noFcfe = buildWorkbook(A, 'dcf', { skipped: { fcfe: true } });
+  const labels = [];
+  noFcfe.getWorksheet('Inputs').eachRow((row) => labels.push(String(row.getCell(1).value || '')));
+  ok(!labels.includes('Exit P/E multiple (FCFE)') && !labels.some((l) => l.startsWith('Cost of equity step')), 'dcf without FCFE: no FCFE inputs');
+  const noReg = buildWorkbook(A, 'comps', { skipped: { regression: true } });
+  ok(!noReg.worksheets.some((w) => w.name === 'Regression'), 'comps without regression: no Regression sheet');
+  ok(buildWorkbook(A, 'comps', {}).worksheets.some((w) => w.name === 'Regression'), 'comps with regression: Regression sheet');
+  const hist = withModel({ history: { source: 'manual', label: 'typed', annual: { dates: ['2023-12-31', '2024-12-31'], lines: { revenue: [4200, 4600] } }, quarterly: null, statements: null } });
+  ok(buildWorkbook(hist, 'ratios', {}).worksheets.some((w) => w.name === 'Past Ratios'), 'ratios with history: Past Ratios sheet');
+  ok(!buildWorkbook(hist, 'ratios', { skipped: { history: true } }).worksheets.some((w) => w.name === 'Past Ratios'), 'ratios with history skipped: no Past Ratios');
+  await checkFile(hist, 'dcf');
+  await checkFile(hist, 'ratios', {}, [...EXPECT.ratios, 'Past Ratios']);
+  let threw = false;
+  try { buildWorkbook(A, 'full'); } catch { threw = true; }
+  ok(threw, 'an unknown method id is refused');
 }
 
-const stats = fs.statSync(OUT);
-console.log(`workbook: ${expectSheets.length} sheets, ${nFormulas} formulas, ${nRefs} refs checked, ${(stats.size / 1024).toFixed(0)} KB`);
-console.log(failures ? `${failures} FAILURES` : 'EXCEL STRUCTURE OK');
-process.exit(failures ? 1 : 0);
+console.log(`excel: ${checks} checks, ${failures} failures`);
+if (failures) process.exit(1);

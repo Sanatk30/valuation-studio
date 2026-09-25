@@ -40,15 +40,12 @@ function LboPage({ a, set, f, lbo, sens, hold }) {
   const ey = lbo.exitYear;
   const px = a.company.currentPrice;
   const hasPx = fin(px) && px > 0;
-  const hasCashAtClose = lbo.cashAtClose !== undefined;
-  const hasNol = Array.isArray(lbo.nolOpen);
   const leverage = lbo.totalDebt0 / lbo.ebitda0;
 
-  // LBO floor range: the floor at the hurdle ± one step
-  const hStep = a.sens.lbo.hurdleStep;
-  const floorAt = typeof lbo.floorAt === 'function' ? lbo.floorAt : null;
-  const floorLo = floorAt && fin(hStep) ? floorAt(l.hurdleRate + hStep) : NaN;
-  const floorHi = floorAt && fin(hStep) ? floorAt(l.hurdleRate - hStep) : NaN;
+  // LBO floor range: the floor at the hurdle ± one step (engine)
+  const hStep = lbo.hurdleStep;
+  const floorLo = lbo.floorLow;
+  const floorHi = lbo.floorHigh;
 
   const netDebtArr = lbo.closeSenior.map((v, i) => v + lbo.closeMezz[i] - lbo.cashBal[i]);
   const exitEqArr = ops.ebitda.map((e, i) => l.exitMultiple * e - netDebtArr[i]);
@@ -112,7 +109,7 @@ function LboPage({ a, set, f, lbo, sens, hold }) {
         { name: 'Enterprise value', type: 'bar', stack: 's', itemStyle: { color: vgrad(COL.tealDeep) }, data: [rnd(lbo.entryEV), '-'] },
         { name: 'Transaction fees', type: 'bar', stack: 's', itemStyle: { color: vgrad(COL.outflow) }, data: [rnd(lbo.feesTxn), '-'] },
         { name: 'Financing fees', type: 'bar', stack: 's', itemStyle: { color: vgrad(COL.outflow2) }, data: [rnd(lbo.feesFin), '-'] },
-        ...(hasCashAtClose ? [{ name: 'Cash at close', type: 'bar', stack: 's', itemStyle: { color: vgrad(COL.cyan) }, data: [rnd(lbo.cashAtClose), '-'] }] : []),
+        { name: 'Cash at close', type: 'bar', stack: 's', itemStyle: { color: vgrad(COL.cyan) }, data: [rnd(lbo.cashAtClose), '-'] },
         { name: 'Senior debt', type: 'bar', stack: 's', itemStyle: { color: vgrad(COL.rose) }, data: ['-', rnd(lbo.senior0)] },
         { name: 'Mezzanine', type: 'bar', stack: 's', itemStyle: { color: vgrad(COL.violet) }, data: ['-', rnd(lbo.mezz0)] },
         { name: 'Sponsor equity', type: 'bar', stack: 's', itemStyle: { color: vgrad(COL.green) }, data: ['-', rnd(lbo.sponsorEquity)] },
@@ -128,7 +125,7 @@ function LboPage({ a, set, f, lbo, sens, hold }) {
       ],
     });
     return { irrByHold, equityByYear, su, credit };
-  }, [lbo, hold, labels, f, l.hurdleRate, ey, hasCashAtClose]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [lbo, hold, labels, f, l.hurdleRate, ey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const amortRow = ops.years.map((_, i) => (i < ey ? lbo.feeAmort : 0));
   const scheduleRows = [
@@ -140,7 +137,7 @@ function LboPage({ a, set, f, lbo, sens, hold }) {
     { label: 'Less: PIK interest (non-cash)', values: lbo.pikAccrual.map((v) => -v), fmt: f.num, sub: true },
     { label: 'Less: financing-fee amortisation', values: amortRow.map((v) => -v), fmt: f.num, sub: true },
     { label: 'Pre-tax income', values: lbo.ebt, fmt: f.num },
-    ...(hasNol ? [
+    ...(lbo.nolOpen ? [
       { label: 'Memo: tax-loss (NOL) balance — opening', values: lbo.nolOpen, fmt: f.num, sub: true },
       { label: 'Memo: NOL used', values: lbo.nolUsed, fmt: f.num, sub: true },
       { label: 'Memo: NOL balance — closing', values: lbo.nolClose, fmt: f.num, sub: true },
@@ -157,8 +154,8 @@ function LboPage({ a, set, f, lbo, sens, hold }) {
     { label: 'Cash sweep — mezzanine', values: lbo.sweepMezz.map((v) => -v), fmt: f.num, sub: true },
     { label: 'Closing senior debt', values: lbo.closeSenior, year0: lbo.senior0, fmt: f.num },
     { label: 'Closing mezzanine', values: lbo.closeMezz, year0: lbo.mezz0, fmt: f.num },
-    { label: `Cash balance (floor ${f.num(l.minCash)})`, values: lbo.cashBal, year0: hasCashAtClose ? lbo.cashAtClose : undefined, fmt: f.num },
-    { label: 'Net debt', values: netDebtArr, year0: hasCashAtClose ? lbo.senior0 + lbo.mezz0 - lbo.cashAtClose : undefined, fmt: f.num, bold: true },
+    { label: `Cash balance (floor ${f.num(l.minCash)})`, values: lbo.cashBal, year0: lbo.cashAtClose, fmt: f.num },
+    { label: 'Net debt', values: netDebtArr, year0: lbo.senior0 + lbo.mezz0 - lbo.cashAtClose, fmt: f.num, bold: true },
   ];
 
   const x0 = (v) => f.x(v / lbo.ebitda0);
@@ -205,7 +202,7 @@ function LboPage({ a, set, f, lbo, sens, hold }) {
                   <tr><td>Enterprise value @ {f.x(l.entryMultiple)}</td><td>{f.num(lbo.entryEV)}</td><td>{x0(lbo.entryEV)}</td></tr>
                   <tr><td>Transaction fees ({f.pct(l.feesPctEV)} of EV)</td><td>{f.num(lbo.feesTxn)}</td><td>{x0(lbo.feesTxn)}</td></tr>
                   <tr><td>Financing fees ({f.pct(l.finFeesPct)} of debt)</td><td>{f.num(lbo.feesFin)}</td><td>{x0(lbo.feesFin)}</td></tr>
-                  {hasCashAtClose && <tr><td>Cash left on the balance sheet at close</td><td>{f.num(lbo.cashAtClose)}</td><td>{x0(lbo.cashAtClose)}</td></tr>}
+                  <tr><td>Cash left on the balance sheet at close</td><td>{f.num(lbo.cashAtClose)}</td><td>{x0(lbo.cashAtClose)}</td></tr>
                   <tr className="bold"><td>Total uses</td><td>{f.num(lbo.uses)}</td><td>{x0(lbo.uses)}</td></tr>
                 </tbody>
               </table>
@@ -215,7 +212,7 @@ function LboPage({ a, set, f, lbo, sens, hold }) {
                 <thead><tr><th>Sources</th><th /><th>x LTM EBITDA</th></tr></thead>
                 <tbody>
                   <tr><td>Senior debt @ {f.pct(l.seniorRate)}</td><td>{f.num(lbo.senior0)}</td><td>{f.x(l.seniorX)}</td></tr>
-                  <tr><td>Mezzanine @ {f.pct(l.mezzRate)}{l.mezzPIK ? ' (PIK)' : ''}</td><td>{f.num(lbo.mezz0)}</td><td>{f.x(l.mezzX)}</td></tr>
+                  {lbo.mezz0 > 0 && <tr><td>Mezzanine @ {f.pct(l.mezzRate)}{l.mezzPIK ? ' (PIK)' : ''}</td><td>{f.num(lbo.mezz0)}</td><td>{f.x(l.mezzX)}</td></tr>}
                   <tr><td>Sponsor equity (plug)</td><td>{f.num(lbo.sponsorEquity)}</td><td>{x0(lbo.sponsorEquity)}</td></tr>
                   <tr className="bold"><td>Total sources</td><td>{f.num(sourcesTotal)}</td><td>{x0(sourcesTotal)}</td></tr>
                 </tbody>

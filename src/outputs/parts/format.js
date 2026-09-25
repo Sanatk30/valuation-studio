@@ -52,9 +52,6 @@ export const upsidePct = (value, market) =>
 export const cagrPct = (from, to, years) =>
   (fin(from) && fin(to) && from > 0 && to > 0 && years > 0 ? ((to / from) ** (1 / years) - 1) * 100 : NaN);
 
-/** Sum of an array; NaN if any element is missing. */
-export const sumAll = (arr) => (arr || []).reduce((s, v) => s + v, 0);
-
 /** Running cumulative sum. */
 export const cumsum = (arr) => {
   let run = 0;
@@ -66,9 +63,6 @@ export const allFinite = (arr) => Array.isArray(arr) && arr.length > 0 && arr.ev
 
 /** Round for chart data; missing → null so ECharts leaves a gap instead of plotting 0. */
 export const rnd = (v, dp = 0) => (fin(v) ? +v.toFixed(dp) : null);
-
-/** Five-point axis around a base: −2..+2 steps (the sensitivity-grid convention). */
-export const axis5 = (base, step) => [-2, -1, 0, 1, 2].map((k) => base + k * step);
 
 /** Tone for a signed figure: 'pos' / 'neg' / undefined. */
 export const tone = (v) => (fin(v) ? (v >= 0 ? 'pos' : 'neg') : undefined);

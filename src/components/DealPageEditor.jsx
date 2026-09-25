@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
-import CompanyPageEditor from './CompanyPageEditor.jsx';
-import { computeDeal, validateDeal, TRANSACTION_TYPES, CONSIDERATION_TYPES, PREMIUM_DAYS } from '../lib/engine/precedentDeal.js';
+import CompanyPageEditor, { CpNum, CpTxt } from './CompanyPageEditor.jsx';
+import { computeDeal, validateDeal, offerLegs, TRANSACTION_TYPES, CONSIDERATION_TYPES, PREMIUM_DAYS } from '../lib/engine/precedentDeal.js';
 import { fmtNum, fmtPct, fmtPrice, fmtX, CURRENCIES, UNITS } from '../lib/format.js';
 
 /**
@@ -8,6 +8,10 @@ import { fmtNum, fmtPct, fmtPrice, fmtX, CURRENCIES, UNITS } from '../lib/format
  * terms and the offer-price build, then the target's reported financials on the
  * shared comparable-company page (so the LTM bridge, adjustments and treasury
  * share count are the same code the comps peers run on).
+ *
+ * Blank inputs stay blank (null): a blank offer term the deal's consideration
+ * needs, or a blank unaffected price, reads NA — never 0. The purchase
+ * consideration decides which offer terms apply.
  */
 export default function DealPageEditor({ deal, settings, onChange, onDelete }) {
   const d = useMemo(() => computeDeal(deal), [deal]);
@@ -22,18 +26,15 @@ export default function DealPageEditor({ deal, settings, onChange, onDelete }) {
   const x = (v) => (isFinite(v) ? fmtX(v, 2) : 'NM');
   const pct = (v) => (isFinite(v) ? fmtPct(v * 100, 1) : 'NA');
 
-  const Num = ({ value, onSet, step = 1 }) => (
-    <input className="cp-in" type="number" step={step} value={Number.isFinite(value) ? value : 0}
-      onChange={(e) => onSet(e.target.value === '' ? 0 : parseFloat(e.target.value) || 0)} />
-  );
-  const Txt = ({ value, onSet, ph }) => (
-    <input className="cp-in txt" value={value ?? ''} placeholder={ph} onChange={(e) => onSet(e.target.value)} />
-  );
+  const Num = ({ value, onSet, disabled }) => <CpNum value={value ?? null} onSet={onSet} disabled={disabled} />;
+  const Txt = ({ value, onSet, ph }) => <CpTxt value={value} onSet={onSet} ph={ph} />;
   const Sel = ({ value, onSet, options }) => (
-    <select className="cp-in txt" value={value} onChange={(e) => onSet(e.target.value)}>
+    <select className="cp-in txt" value={value || ''} onChange={(e) => onSet(e.target.value)}>
+      <option value="">choose…</option>
       {options.map((o) => <option key={o} value={o}>{o}</option>)}
     </select>
   );
+  const legs = offerLegs(deal.consideration);
 
   const errs = issues.filter((i) => i.level === 'error');
   const warns = issues.filter((i) => i.level === 'warn');
@@ -42,14 +43,13 @@ export default function DealPageEditor({ deal, settings, onChange, onDelete }) {
     <div className="cp">
       <div className="cp-head">
         <div>
-          <div className="cp-title">Acquisition of {deal.target.name || 'Target'} by {deal.acquirer || 'Acquirer'}</div>
+          <div className="cp-title">Acquisition of {deal.target.name || 'the target'} by {deal.acquirer || 'the acquirer'}</div>
           <div className="cp-sub">Transaction input page · {sym} in {unit}, except per share data</div>
         </div>
         <div className="cp-badges">
           {errs.length > 0 && <span className="cp-badge err">{errs.length} error{errs.length > 1 ? 's' : ''}</span>}
           {warns.length > 0 && <span className="cp-badge warn">{warns.length} incomplete</span>}
           {!errs.length && !warns.length && <span className="cp-badge ok">complete</span>}
-          {deal._reconstructed && <span className="cp-badge warn" title="Rebuilt from a typed multiple in an older saved model — the financials are reconstructed to reproduce that multiple, not reported">reconstructed</span>}
           {onDelete && <button className="peer-del" title="Remove this transaction" onClick={onDelete}>×</button>}
         </div>
       </div>
@@ -65,8 +65,8 @@ export default function DealPageEditor({ deal, settings, onChange, onDelete }) {
             <tr><td>Acquirer</td><td><Txt value={deal.acquirer} onSet={(v) => set({ acquirer: v })} /></td></tr>
             <tr><td>Acquirer ticker</td><td><Txt value={deal.acquirerTicker} onSet={(v) => set({ acquirerTicker: v })} /></td></tr>
             <tr><td>Target</td><td><Txt value={deal.target.name} onSet={(v) => set({ target: { ...deal.target, name: v } })} /></td></tr>
-            <tr><td>Date announced</td><td><input className="cp-in txt" type="date" value={deal.dateAnnounced} onChange={(e) => set({ dateAnnounced: e.target.value })} /></td></tr>
-            <tr><td>Date effective</td><td><Txt value={deal.dateEffective} onSet={(v) => set({ dateEffective: v })} ph="Pending" /></td></tr>
+            <tr><td>Date announced</td><td><input className="cp-in txt" type="date" value={deal.dateAnnounced || ''} onChange={(e) => set({ dateAnnounced: e.target.value })} /></td></tr>
+            <tr><td>Date effective</td><td><Txt value={deal.dateEffective} onSet={(v) => set({ dateEffective: v })} ph="date or Pending" /></td></tr>
             <tr><td>Transaction type</td><td><Sel value={deal.transactionType} onSet={(v) => set({ transactionType: v })} options={TRANSACTION_TYPES} /></td></tr>
             <tr><td>Purchase consideration</td><td><Sel value={deal.consideration} onSet={(v) => set({ consideration: v })} options={CONSIDERATION_TYPES} /></td></tr>
             <tr><td>Target description</td><td><Txt value={deal.targetDescription} onSet={(v) => set({ targetDescription: v })} ph="[to come]" /></td></tr>
@@ -76,9 +76,9 @@ export default function DealPageEditor({ deal, settings, onChange, onDelete }) {
         <div>
           <h4 className="cp-h">Offer price &amp; enterprise value</h4>
           <table className="fin cp-kv"><tbody>
-            <tr><td>Cash offer per share</td><td><Num value={deal.cashOffer} step={0.5} onSet={(v) => set({ cashOffer: v })} /></td></tr>
-            <tr><td>Exchange ratio</td><td><Num value={deal.exchangeRatio} step={0.01} onSet={(v) => set({ exchangeRatio: v })} /></td></tr>
-            <tr><td>Acquirer share price</td><td><Num value={deal.acquirerPrice} step={1} onSet={(v) => set({ acquirerPrice: v })} /></td></tr>
+            <tr><td>Cash offer per share</td><td>{legs && !legs.cash ? <span className="muted">none ({deal.consideration})</span> : <Num value={deal.cashOffer} onSet={(v) => set({ cashOffer: v })} />}</td></tr>
+            <tr><td>Exchange ratio (acquirer shares per target share)</td><td>{legs && !legs.stock ? <span className="muted">none ({deal.consideration})</span> : <Num value={deal.exchangeRatio} onSet={(v) => set({ exchangeRatio: v })} />}</td></tr>
+            <tr><td>Acquirer share price</td><td>{legs && !legs.stock ? <span className="muted">none ({deal.consideration})</span> : <Num value={deal.acquirerPrice} onSet={(v) => set({ acquirerPrice: v })} />}</td></tr>
             <tr className="sub"><td>Stock offer per share</td><td className="calc">{px(d.stockOffer)}</td></tr>
             <tr className="bold"><td>Offer price per share</td><td className="calc">{px(d.offerPrice)}</td></tr>
             <tr className="sub"><td>× Fully diluted shares</td><td className="calc">{fmtNum(d.page.shares.fullyDiluted, 3, locale)}</td></tr>
@@ -114,7 +114,7 @@ export default function DealPageEditor({ deal, settings, onChange, onDelete }) {
               {PREMIUM_DAYS.map((w) => (
                 <tr key={w}>
                   <td>{w} day{w > 1 ? 's' : ''}</td>
-                  <td><Num value={deal.unaffected?.[w]} step={0.5}
+                  <td><Num value={deal.unaffected?.[w]}
                     onSet={(v) => set({ unaffected: { ...deal.unaffected, [w]: v } })} /></td>
                   <td className="calc">{pct(d.premiums[w])}</td>
                 </tr>
@@ -128,6 +128,7 @@ export default function DealPageEditor({ deal, settings, onChange, onDelete }) {
       <CompanyPageEditor
         co={deal.target}
         settings={settings}
+        offerPrice={d.offerPrice}
         onChange={(next) => set({ target: next })}
       />
     </div>

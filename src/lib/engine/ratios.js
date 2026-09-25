@@ -1,10 +1,56 @@
+import { projectOperations } from './drivers.js';
+import { computeThreeStatement } from './threeStatement.js';
+import { nolSchedule, openingNol } from './tax.js';
+import { periodLabels } from '../period.js';
+import { hasHistory, historyLine, fyLabel } from '../historyModel.js';
+
 /**
- * Comprehensive ratio analysis over the sub-annual projection. Flow-based
+ * Ratio analysis — Future (the annual forecast, off the linked 3-statement
+ * model) or Past (reported history only, never back-cast).
+ *
+ * computeRatios(pm) works on a period model `pm` (see forecastPeriods). Flow
  * metrics that compare to a balance (returns, turnover, yields, EPS, EV/EBITDA,
- * P/E) are ANNUALISED (× m) and use average balances, so they read the same
- * whether you view yearly, half-yearly or quarterly.
+ * P/E) are ANNUALISED (× m) and use average balances.
  */
-const g = (n, d) => (isFinite(n) && isFinite(d) && d !== 0 ? n / d : NaN);
+const g = (n, d) => (Number.isFinite(n) && Number.isFinite(d) && d !== 0 ? n / d : NaN);
+
+/**
+ * The annual forecast as a period model (m = 1), straight off the 3-statement
+ * engine — so the ratios see the same NOL-aware tax, other net assets and
+ * balance sheet as the 3-Statement output. NOPAT / FCFF use the unlevered NOL
+ * schedule on EBIT (as the DCF does); FCFE is on the 3-statement net income.
+ */
+export function forecastPeriods(a) {
+  const ops = projectOperations(a);
+  const ts = computeThreeStatement(a, ops);
+  const n = ops.n;
+  const t = a.company.taxRate / 100;
+  const U = nolSchedule(ops.ebit, t, openingNol(a));
+  const nopat = ops.ebit.map((e, i) => e - U.tax[i]);
+  const open = (v0, arr) => [v0, ...arr.slice(0, n - 1)];
+  return {
+    m: 1, freq: 'Y', N: n, ny: n, labels: periodLabels(a.settings, 'Y', n),
+    rev: ops.revenue, ebitda: ops.ebitda, ebit: ops.ebit, da: ops.da, capex: ops.capex,
+    nwcClose: ops.nwcBalance, openNwc: open(ops.nwc0, ops.nwcBalance), dNWC: ops.deltaNwc,
+    openDebt: ts.openDebt, closeDebt: ts.closeDebt, repay: ts.repay,
+    openCash: ts.openCash, closeCash: ts.closeCash,
+    openEquity: open(ts.equity0, ts.equity), closeEquity: ts.equity,
+    openAssets: open(ts.assets0, ts.assets), closeAssets: ts.assets,
+    openPpe: open(ts.ppe0, ts.ppe), closePpe: ts.ppe,
+    interestExp: ts.interestExp, interestInc: ts.interestInc,
+    ebt: ts.ebt, tax: ts.taxAmt, ni: ts.netIncome, div: ts.dividends,
+    cfo: ts.cfo, cfi: ts.cfi, cff: ts.cff,
+    nopat,
+    fcff: nopat.map((np, i) => np + ops.da[i] - ops.capex[i] - ops.deltaNwc[i]),
+    fcfe: ts.netIncome.map((ni, i) => ni + ops.da[i] - ops.capex[i] - ops.deltaNwc[i] - ts.repay[i]),
+    netDebtClose: ts.closeDebt.map((d, i) => d - ts.closeCash[i]),
+    check: ts.check,
+    company: a.company, settings: a.settings,
+  };
+}
+
+/** Future ratios: the annual forecast. */
+export const computeForecastRatios = (a) => computeRatios(forecastPeriods(a));
 
 export function computeRatios(pm) {
   const m = pm.m, N = pm.N;
@@ -124,4 +170,110 @@ export function computeRatios(pm) {
   }
 
   return { sections, labels: pm.labels, m, N, balanceOk: pm.check.every((c) => Math.abs(c) < 1e-6) };
+}
+
+/**
+ * Past ratios over REPORTED history (`a.history`, Yahoo or typed) — never
+ * back-cast. `freq` 'Y' reads the annual lines, 'Q' the quarterly ones (Yahoo
+ * only); quarterly flows are annualised (× 4) where they meet a balance.
+ * `periods` = how many of the latest periods to show (all when omitted).
+ * Balance-based ratios use the average of the opening and closing balance; the
+ * opening balance is the reported period before (NA for the first reported
+ * period). Any ratio whose line was not reported is NA. Only ratios the
+ * reported lines support are listed — no per-share or market ratios (the
+ * history carries no share counts), no DSCR (no repayments).
+ * Returns the same { labels, sections, m, N } shape as computeRatios.
+ */
+export function computeHistoryRatios(a, freq = 'Y', periods = null) {
+  const h = a?.history;
+  if (!hasHistory(h)) return null;
+  const blockKey = freq === 'Q' ? 'quarterly' : 'annual';
+  const blk = h[blockKey];
+  if (!blk?.dates?.length) return null;
+  const m = freq === 'Q' ? 4 : 1;
+  const all = blk.dates.length;
+  const N = Number.isInteger(periods) && periods > 0 ? Math.min(periods, all) : all;
+  const first = all - N;
+  const L = (key) => historyLine(h, key, blockKey);
+  const lines = Object.fromEntries(['revenue', 'cogs', 'ebitda', 'da', 'interest', 'pbt', 'tax', 'ni', 'cash', 'receivables',
+    'inventory', 'ppe', 'totalAssets', 'payables', 'currentLiabilities', 'totalDebt', 'equity', 'cfo', 'capex', 'dividends']
+    .map((k) => [k, L(k)]));
+  const idx = Array.from({ length: N }, (_, k) => first + k);   // indices into the full reported series
+  const map = (fn) => idx.map(fn);
+  const avg = (arr) => idx.map((i) => (i > 0 ? (arr[i - 1] + arr[i]) / 2 : NaN));
+  const {
+    revenue: rev, cogs, ebitda, da, interest, pbt, tax, ni, cash, receivables: rec, inventory: inv, ppe,
+    totalAssets: ta, payables: pay, totalDebt: debt, equity: eq, cfo, capex, dividends: div,
+  } = lines;
+  const ebit = ebitda.map((e, i) => e - da[i]);
+  const netDebt = debt.map((d, i) => d - cash[i]);
+  const fcf = cfo.map((c, i) => c - capex[i]);
+  const effTax = tax.map((x, i) => g(x, pbt[i]));
+  const avgEq = avg(eq), avgTa = avg(ta), avgPpe = avg(ppe);
+  const avgCapEmp = avg(debt.map((d, i) => d + eq[i]));
+  const avgInvCap = avg(debt.map((d, i) => d - cash[i] + eq[i]));
+  const days = freq === 'Q' ? 91.25 : 365;
+  const yoy = (arr) => idx.map((i) => (i >= m ? g(arr[i], arr[i - m]) * 100 - 100 : NaN));
+
+  const sec = (title, rows) => ({ title, rows });
+  const row = (label, fmt, vals, note) => ({ label, fmt, vals, note });
+  const sections = [
+    sec('Profitability & margins', [
+      row('Gross margin', 'pct', map((i) => g(rev[i] - cogs[i], rev[i]) * 100)),
+      row('EBITDA margin', 'pct', map((i) => g(ebitda[i], rev[i]) * 100)),
+      row('EBIT (operating) margin', 'pct', map((i) => g(ebit[i], rev[i]) * 100), 'EBIT = EBITDA − D&A'),
+      row('Pre-tax margin', 'pct', map((i) => g(pbt[i], rev[i]) * 100)),
+      row('Net profit margin', 'pct', map((i) => g(ni[i], rev[i]) * 100)),
+      row('Effective tax rate', 'pct', map((i) => effTax[i] * 100)),
+    ]),
+    sec(`Returns${m > 1 ? ' (annualised)' : ''} & DuPont`, [
+      row('Return on equity (ROE)', 'pct', map((k, j) => g(ni[k] * m, avgEq[j]) * 100)),
+      row('Return on assets (ROA)', 'pct', map((k, j) => g(ni[k] * m, avgTa[j]) * 100)),
+      row('Return on invested capital (ROIC)', 'pct', map((k, j) => g(ebit[k] * (1 - effTax[k]) * m, avgInvCap[j]) * 100), 'NOPAT at the reported effective tax rate'),
+      row('Return on capital employed (ROCE)', 'pct', map((k, j) => g(ebit[k] * m, avgCapEmp[j]) * 100)),
+      row('DuPont · net margin', 'pct', map((i) => g(ni[i], rev[i]) * 100)),
+      row('DuPont · asset turnover', 'x', map((k, j) => g(rev[k] * m, avgTa[j]))),
+      row('DuPont · equity multiplier', 'x', map((k, j) => g(avgTa[j], avgEq[j]))),
+    ]),
+    sec('Leverage & solvency', [
+      row('Debt / Equity', 'x', map((i) => g(debt[i], eq[i]))),
+      row('Net debt / Equity', 'x', map((i) => g(netDebt[i], eq[i]))),
+      row(`Net debt / EBITDA${m > 1 ? ' (ann.)' : ''}`, 'x', map((i) => g(netDebt[i], ebitda[i] * m))),
+      row(`Debt / EBITDA${m > 1 ? ' (ann.)' : ''}`, 'x', map((i) => g(debt[i], ebitda[i] * m))),
+      row('Net debt / Capital', 'pct', map((i) => g(netDebt[i], netDebt[i] + eq[i]) * 100)),
+      row('Equity ratio (equity / assets)', 'pct', map((i) => g(eq[i], ta[i]) * 100)),
+      row('Financial leverage (assets / equity)', 'x', map((i) => g(ta[i], eq[i]))),
+    ]),
+    sec('Coverage', [
+      row('Interest coverage (EBIT / int.)', 'x', map((i) => g(ebit[i], interest[i]))),
+      row('EBITDA / interest', 'x', map((i) => g(ebitda[i], interest[i]))),
+      row('(EBITDA − capex) / interest', 'x', map((i) => g(ebitda[i] - capex[i], interest[i]))),
+    ]),
+    sec('Efficiency & liquidity', [
+      row(`Asset turnover${m > 1 ? ' (ann.)' : ''}`, 'x', map((k, j) => g(rev[k] * m, avgTa[j]))),
+      row(`Fixed-asset turnover${m > 1 ? ' (ann.)' : ''}`, 'x', map((k, j) => g(rev[k] * m, avgPpe[j]))),
+      row('Receivable days', 'num', map((i) => g(rec[i], rev[i]) * days), 'closing receivables ÷ revenue × days'),
+      row('Inventory days', 'num', map((i) => g(inv[i], cogs[i]) * days), 'closing inventory ÷ COGS × days'),
+      row('Payable days', 'num', map((i) => g(pay[i], cogs[i]) * days), 'closing payables ÷ COGS × days'),
+      row('Trade NWC / revenue', 'pct', map((i) => g(rec[i] + inv[i] - pay[i], rev[i] * m) * 100)),
+      row('Cash / debt', 'x', map((i) => g(cash[i], debt[i]))),
+    ]),
+    sec('Cash flow & payout', [
+      row('Operating cash flow (CFO)', 'num', map((i) => cfo[i])),
+      row('Free cash flow (CFO − capex)', 'num', map((i) => fcf[i])),
+      row('FCF conversion (FCF / EBITDA)', 'pct', map((i) => g(fcf[i], ebitda[i]) * 100)),
+      row('Cash conversion (CFO / net income)', 'x', map((i) => g(cfo[i], ni[i]))),
+      row('Cash-flow margin (CFO / rev.)', 'pct', map((i) => g(cfo[i], rev[i]) * 100)),
+      row('Capex / D&A', 'x', map((i) => g(capex[i], da[i]))),
+      row('Dividend payout', 'pct', map((i) => g(div[i], ni[i]) * 100)),
+    ]),
+    sec('Growth', [
+      row(`Revenue growth (${m > 1 ? 'YoY' : 'year on year'})`, 'pct', yoy(rev)),
+      row('EBITDA growth', 'pct', yoy(ebitda)),
+      row('Net income growth', 'pct', yoy(ni)),
+      ...(m > 1 ? [row('Revenue growth (quarter on quarter)', 'pct', idx.map((i) => (i > 0 ? g(rev[i], rev[i - 1]) * 100 - 100 : NaN)))] : []),
+    ]),
+  ];
+  const labels = idx.map((i) => (freq === 'Q' ? blk.dates[i].slice(0, 7) : fyLabel(blk.dates[i])));
+  return { sections, labels, m, N, dates: idx.map((i) => blk.dates[i]), available: all, balanceOk: true };
 }

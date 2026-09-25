@@ -9,11 +9,10 @@
  *             High / Low beneath
  *
  * Deal multiples embed the control premium, so they are applied to the
- * target's LTM metrics (convention: precedents on LTM, trading comps on NTM).
+ * target's LTM metrics — the method's own inputs (`a.precedent.target`).
  * A separate premia analysis applies the observed acquisition premia straight
  * to the current share price.
  */
-import { projectOperations } from './drivers.js';
 import { computeDeal, PREMIUM_DAYS } from './precedentDeal.js';
 
 function percentile(sorted, p) {
@@ -24,7 +23,7 @@ function percentile(sorted, p) {
 }
 /** Mean / median / quartiles / high / low over the finite values only. */
 export function stats(values) {
-  const v = values.filter((x) => isFinite(x)).sort((a, b) => a - b);
+  const v = values.filter((x) => Number.isFinite(x)).sort((a, b) => a - b);
   if (!v.length) return { mean: NaN, median: NaN, q1: NaN, q3: NaN, min: NaN, max: NaN, high: NaN, low: NaN, n: 0 };
   return {
     mean: v.reduce((s, x) => s + x, 0) / v.length,
@@ -101,13 +100,13 @@ const flatCols = (groups) => groups.flatMap((g) => g.cols);
 /* ------------------------------------------------------------------- main */
 
 export function computePrecedent(a) {
-  const ops = projectOperations(a);
   const netDebt = a.company.grossDebt - a.company.cash;
   const shares = a.company.sharesOut;
 
   const pages = (a.precedent?.deals || []).map((d) => computeDeal(d));
 
-  const target = { revenue: ops.revenue0, ebitda: ops.ebitda0 }; // LTM
+  const tIn = a.precedent?.target || {};
+  const target = { revenue: tIn.revenue, ebitda: tIn.ebitda, ltmLabel: tIn.ltmLabel || '' }; // LTM
   const evToPrice = (ev) => (shares > 0 ? (ev - netDebt) / shares : NaN);
 
   /* ---- implied takeover value per share, by multiple ---- */
@@ -126,7 +125,7 @@ export function computePrecedent(a) {
 
   /* ---- premia analysis on the current share price (1-day window) ---- */
   const premStats = stats(pages.map((d) => d.premiums[1] * 100));
-  const px = a.company.currentPrice;
+  const px = a.company.currentPrice;   // optional: blank → the premia analysis is NA
   const premia = {
     ...premStats,
     impliedMedian: px > 0 ? px * (1 + premStats.median / 100) : NaN,

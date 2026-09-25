@@ -29,13 +29,23 @@ function companySpecs({ tax, nol, priceRequired = false, priceHint }) {
 
 const finite = (v) => typeof v === 'number' && Number.isFinite(v);
 
-/** Fold a ListingSearch result into THIS method's data — reported facts only. */
-export function applyListing(data, mapped) {
+/** Methods whose Financing step asks for the opening PP&E and reported equity. */
+const TS_BALANCE_METHODS = ['ts', 'ratios'];
+
+/**
+ * Fold a ListingSearch result into THIS method's data — reported facts only,
+ * and only into fields this method actually asks for (`companyPaths` = the
+ * Company step's field paths). A value Yahoo does not report never clears
+ * what the user already typed.
+ */
+export function applyListing(data, mapped, { companyPaths = null, methodId = null } = {}) {
   let next = { ...data };
   const pick = (src, keys) => Object.fromEntries(keys.filter((k) => src && finite(src[k])).map((k) => [k, src[k]]));
-  const ownCompanyKeys = COMPANY_KEYS.filter((k) => k in (data.company || {}));
+  const asked = companyPaths ? COMPANY_KEYS.filter((k) => companyPaths.includes(`company.${k}`)) : COMPANY_KEYS;
+  const ownCompanyKeys = asked.filter((k) => k in (data.company || {}));
   next.company = { ...data.company, ...pick(mapped.company, ownCompanyKeys) };
   if (data.drivers) next.drivers = { ...data.drivers, ...pick(mapped.drivers, ['revenue0', 'ebitda0', 'nwc0']) };
+  if (data.ts && mapped.ts && TS_BALANCE_METHODS.includes(methodId)) next.ts = { ...data.ts, ...pick(mapped.ts, ['startingPPE', 'equity0']) };
   if (data.comps && mapped.compsTarget) {
     const t = { ...data.comps.target };
     for (const [k, v] of Object.entries(mapped.compsTarget)) {
@@ -80,7 +90,7 @@ function CopyFrom({ record, methodId, section, specsFor, onCopy, what }) {
 
 const COMPANY_SPECS_ALL = companySpecs({ tax: true, nol: true });
 
-function CompanyExtras({ data, setData, company, ctx }) {
+function CompanyExtras({ data, setData, company, ctx, specs }) {
   const onCopy = (src) => setData((d) => {
     const c = { ...d.company };
     for (const k of Object.keys(c)) if (src.company && k in src.company) c[k] = src.company[k];
@@ -97,7 +107,10 @@ function CompanyExtras({ data, setData, company, ctx }) {
           Search a name or ticker to fill the reported figures (converted into {company.currency} {company.unit} at a rate you confirm).
           Nothing changes until you press Apply.
         </div>
-        <ListingSearch company={company} onApply={(mapped) => setData((d) => applyListing(d, mapped))} />
+        <ListingSearch
+          company={company}
+          onApply={(mapped) => setData((d) => applyListing(d, mapped, { companyPaths: (specs || []).map((s) => s.path), methodId: ctx.methodId }))}
+        />
         {data.listing && (
           <div className="fld-h" style={{ marginTop: 8 }}>
             Filled from <b>{data.listing.name || data.listing.symbol}</b> ({data.listing.symbol}
@@ -124,42 +137,6 @@ export const companyStep = (opts = {}) => ({
 /* ======================================================================
    Historical financials (optional)
    ====================================================================== */
-
-/** Row matching for pasted history blocks: label → line key. */
-const HISTORY_SYNONYMS = {
-  revenue: ['revenue', 'sales', 'net sales', 'total revenue', 'turnover', 'income from operations'],
-  cogs: ['cogs', 'cost of goods', 'cost of revenue', 'cost of sales'],
-  ebitda: ['ebitda'],
-  da: ['d&a', 'depreciation', 'amortisation', 'amortization'],
-  interest: ['interest', 'finance cost'],
-  pbt: ['pbt', 'pre-tax', 'pretax', 'profit before tax', 'income before tax'],
-  tax: ['tax'],
-  ni: ['net income', 'net profit', 'pat', 'profit after tax'],
-  cash: ['cash'],
-  receivables: ['receivable', 'debtors'],
-  inventory: ['inventor', 'stock'],
-  ppe: ['pp&e', 'ppe', 'fixed assets', 'property'],
-  totalAssets: ['total assets'],
-  payables: ['payable', 'creditors'],
-  currentLiabilities: ['current liabilities'],
-  totalDebt: ['debt', 'borrowings'],
-  equity: ['equity', 'net worth', 'shareholders'],
-  cfo: ['cfo', 'operating cash', 'cash from operations', 'operating activities'],
-  capex: ['capex', 'capital expenditure', 'purchase of fixed', 'purchase of pp'],
-  dividends: ['dividend'],
-};
-export function matchHistoryLine(label) {
-  const l = String(label || '').toLowerCase().trim();
-  if (!l) return null;
-  // most specific first: exact key/label, then synonyms by length
-  const exact = HISTORY_LINES.find((h) => h.key.toLowerCase() === l || h.label.toLowerCase() === l);
-  if (exact) return exact.key;
-  const cands = Object.entries(HISTORY_SYNONYMS)
-    .flatMap(([k, syns]) => syns.map((s) => [k, s]))
-    .filter(([, s]) => l.includes(s))
-    .sort((a, b) => b[1].length - a[1].length);
-  return cands[0]?.[0] || null;
-}
 
 function HistoryEditor({ data, setData, company }) {
   const h = data.history;
@@ -214,7 +191,7 @@ function HistoryEditor({ data, setData, company }) {
         <div className="tool-h">Reported history · {h.label}</div>
         <div className="tablewrap">
           <table className="fin">
-            <thead><tr><th /> {heads.map((x) => <th key={x}>{x}</th>)}</tr></thead>
+            <thead><tr><th />{heads.map((x) => <th key={x}>{x}</th>)}</tr></thead>
             <tbody>
               {HISTORY_LINES.map((l) => (
                 <tr key={l.key}>
@@ -390,7 +367,7 @@ function HistoryReference({ ref_: ref, company }) {
       </div>
       <div className="tablewrap">
         <table className="fin compact">
-          <thead><tr><th /> {ref.rows.map((r) => <th key={r.date}>{r.label}</th>)}</tr></thead>
+          <thead><tr><th />{ref.rows.map((r) => <th key={r.date}>{r.label}</th>)}</tr></thead>
           <tbody>
             <tr><td>Revenue growth</td>{ref.rows.map((r) => <td key={r.date}>{p(r.growth)}</td>)}</tr>
             <tr><td>EBITDA margin</td>{ref.rows.map((r) => <td key={r.date}>{p(r.ebitdaMargin)}</td>)}</tr>

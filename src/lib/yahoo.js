@@ -6,7 +6,7 @@
  *   /v1/finance/search                      — name → listed symbols
  *   /v8/finance/chart/{sym}                 — live price, quote currency, 52-week range
  *   /ws/fundamentals-timeseries/v1/...      — annual / quarterly / trailing (TTM) statements
- *   /v6/finance/recommendationsbysymbol     — co-watched symbols (peer suggestions)
+ *   /v6/finance/recommendationsbysymbol     — co-watched symbols (the peer finder's candidate pool)
  *
  * The pipeline is split so every number can be traced:
  *   fetchListing(symbol)                 → raw Yahoo JSON, parsed by parseListing()
@@ -43,7 +43,11 @@ export async function searchSymbols(q, opts = {}) {
   return parseSearch(d);
 }
 
-/** Search response → [{ symbol, name, exchange }] (equities only). */
+/**
+ * Search response → [{ symbol, name, exchange, exchangeCode, sector, industry }]
+ * (equities only). Sector / industry are Yahoo's classification, null when the
+ * response carries none.
+ */
 export function parseSearch(d) {
   return (d?.quotes || [])
     .filter((x) => x.quoteType === 'EQUITY' && x.symbol)
@@ -51,6 +55,9 @@ export function parseSearch(d) {
       symbol: x.symbol,
       name: x.longname || x.shortname || x.symbol,
       exchange: x.exchDisp || x.exchange || '',
+      exchangeCode: x.exchange || '',
+      sector: x.sectorDisp || x.sector || null,
+      industry: x.industryDisp || x.industry || null,
     }));
 }
 
@@ -89,8 +96,6 @@ export const STATEMENT_TYPES = {
     'EffectOfExchangeRateChanges', 'FreeCashFlow',
   ],
 };
-/** Kept for callers of the old name. */
-export const HISTORY_TYPES = STATEMENT_TYPES;
 
 /** How a line converts: money → FX + unit; shares → unit only; pershare → FX only. */
 export const LINE_KIND = {
@@ -163,21 +168,16 @@ export async function fetchListingsBatch(queries, concurrency = 3, opts = {}) {
 }
 
 /**
- * Peer suggestions: resolve the company (name or ticker) to its listing, then
- * ask Yahoo for similar symbols. These are co-watched names, not a curated
- * industry screen — treat them as a starting list to prune, not gospel.
+ * Yahoo's co-watched symbols for one listing: [{ symbol, score }], best first.
+ * These are "people who watch X also watch" names, not an industry screen —
+ * lib/peerFinder.js uses them only as the candidate pool it then ranks.
  */
-export async function suggestPeers(query, count = 8, opts = {}) {
+export async function fetchRecommendations(symbol, count = 10, opts = {}) {
   const base = opts.base ?? DEFAULT_BASE;
-  const results = await searchSymbols(query, opts);
-  if (!results.length) throw new Error(`No listed company found for "${query}"`);
-  const exact = results.find((r) => r.symbol.toUpperCase() === query.trim().toUpperCase());
-  const symbol = (exact || results[0]).symbol;
   const d = await getJson(`${base}/v6/finance/recommendationsbysymbol/${encodeURIComponent(symbol)}?count=${count}`, opts.fetchImpl);
-  const rec = d?.finance?.result?.[0]?.recommendedSymbols || [];
-  const symbols = rec.map((r) => r.symbol).filter(Boolean);
-  if (!symbols.length) throw new Error(`Yahoo has no peer suggestions for ${symbol}`);
-  return { symbol, suggestions: symbols };
+  return (d?.finance?.result?.[0]?.recommendedSymbols || [])
+    .filter((r) => r && r.symbol)
+    .map((r) => ({ symbol: r.symbol, score: Number.isFinite(Number(r.score)) ? Number(r.score) : null }));
 }
 
 /* ------------------------------------------------------------ parse layer */
@@ -330,12 +330,19 @@ function makeConverter(raw, company, rates) {
 }
 
 /**
+ * Reported effective tax rate (%) = tax provision ÷ pre-tax income; null when
+ * either is missing or pre-tax income ≤ 0. The caller decides what to do with
+ * a negative result (the model leaves it NA).
+ */
+const effectiveTaxRate = (pTax, pPbt) => (pTax && pPbt && pPbt.value > 0 ? (pTax.value / pPbt.value) * 100 : null);
+
+/**
  * Yahoo's quarterly feed for some issuers carries EBITDA equal to EBIT with
  * no D&A line, so a TTM (sum of quarters) "EBITDA" is really EBIT. A period's
  * EBITDA is treated as not reported when it equals EBIT exactly and D&A is
  * not reported for that period.
  */
-function ebitdaSuspect(blk, date) {
+export function ebitdaSuspect(blk, date) {
   const e = pointAt(blk, 'EBITDA', date), b = pointAt(blk, 'EBIT', date);
   if (!e || !b || e.value !== b.value) return false;
   return !pointAt(blk, 'ReconciledDepreciation', date) && !pointAt(blk, 'DepreciationAndAmortization', date);
@@ -522,10 +529,11 @@ function mapCore(raw, company, rates, opts) {
   const pTax = L('TaxProvision'), pPbt = L('PretaxIncome'), pDil = L('DilutedAverageShares');
 
   // tax rate = reported tax provision ÷ reported pre-tax income (NA if either missing or PBT ≤ 0)
-  const taxRate = pTax && pPbt && pPbt.value > 0 ? (pTax.value / pPbt.value) * 100 : null;
-  if (taxRate !== null && taxRate < 0) {
-    // OPEN QUESTION: a negative reported effective rate (tax credit on positive PBT) is passed through as reported.
-    warnings.push(`The reported effective tax rate is negative (${taxRate.toFixed(1)} %: a tax credit on positive pre-tax income). It is passed through as reported — check it.`);
+  const reportedTaxRate = effectiveTaxRate(pTax, pPbt);
+  const taxNegative = reportedTaxRate !== null && reportedTaxRate < 0;
+  const taxRate = taxNegative ? null : reportedTaxRate;
+  if (taxNegative) {
+    warnings.push(`The reported effective tax rate is negative (${reportedTaxRate.toFixed(1)} %: a tax credit on positive pre-tax income), so the tax rate is left blank — type the rate to use.`);
   }
 
   /* ---- balance sheet (one date) ---- */
@@ -554,36 +562,28 @@ function mapCore(raw, company, rates, opts) {
   const high52 = conv.perShareIn(px.high52, px.currency);
   const low52 = conv.perShareIn(px.low52, px.currency);
   if (px.currency && raw.financialCurrency && px.currency !== raw.financialCurrency) {
-    // OPEN QUESTION: depositary receipts — Yahoo gives no ADR ratio on the crumbless endpoints.
+    // Depositary receipts: Yahoo gives no ADR ratio on the crumbless endpoints — a warning only (the user's choice).
     warnings.push(`The price is quoted in ${px.quoteCurrency || px.currency} but the financials are reported in ${raw.financialCurrency}; each converts at its own rate. If this listing is a depositary receipt (ADR/GDR), one traded unit can represent several ordinary shares — check the share count against the price, or use the home-market listing.`);
   }
   if ((raw.financialCurrencies || []).length > 1) {
     warnings.push(`Yahoo reports this company's lines in more than one currency (${raw.financialCurrencies.join(', ')}); each converts at its own rate.`);
   }
 
-  /* ---- prior year (Comps FY-1) ---- */
-  // Settled only when the LTM is a fiscal year: prior = the fiscal year before it.
-  // OPEN QUESTION: with a TTM LTM, "prior FY" could mean the TTM a year earlier or the latest
-  // completed FY — not settled, so both stay blank and the two candidates show in the preview.
-  let priorRevenue = null, priorEbitda = null, priorLabel = '', priorNote = '';
+  /* ---- prior year (Comps FY-1) ----
+     LTM is a fiscal year → the fiscal year before it.
+     LTM is a TTM         → the latest completed fiscal year (the user's rule). */
+  let priorRevenue = null, priorEbitda = null, priorLabel = '';
   const annDates = (raw.annual.TotalRevenue || []).map((p) => p.date);
-  if (ltm.basis === 'fy') {
-    const prevDate = annDates.filter((d) => d < ltm.date).pop() || null;
-    if (prevDate) {
-      priorLabel = fyName(prevDate);
-      priorRevenue = conv.money(pointAt(raw.annual, 'TotalRevenue', prevDate));
-      priorEbitda = ebitdaSuspect(raw.annual, prevDate) ? null : conv.money(pointAt(raw.annual, 'EBITDA', prevDate));
-    }
-  } else if (ltm.basis === 'ttm') {
-    const yearAgo = (raw.trailing.TotalRevenue || []).filter((p) => p.date < ltm.date).pop();
-    const parts = [];
-    if (yearAgo) parts.push(`TTM to ${monYear(yearAgo.date)} revenue ${fmtRaw(yearAgo.value)} ${yearAgo.currency || ''}`.trim());
-    if (ltm.fy0) {
-      const fyp = pointAt(raw.annual, 'TotalRevenue', ltm.fy0);
-      if (fyp) parts.push(`${fyName(ltm.fy0)} revenue ${fmtRaw(fyp.value)} ${fyp.currency || ''}`.trim());
-    }
-    priorNote = `Not filled: the LTM is a TTM, and which period "prior year" means is not settled.${parts.length ? ` Reported candidates: ${parts.join('; ')}.` : ''}`;
+  const priorDate = ltm.basis === 'fy' ? annDates.filter((d) => d < ltm.date).pop() || null
+    : ltm.basis === 'ttm' ? ltm.fy0 : null;
+  if (priorDate) {
+    priorLabel = fyName(priorDate);
+    priorRevenue = conv.money(pointAt(raw.annual, 'TotalRevenue', priorDate));
+    priorEbitda = ebitdaSuspect(raw.annual, priorDate) ? null : conv.money(pointAt(raw.annual, 'EBITDA', priorDate));
   }
+  const priorNote = priorDate
+    ? (ltm.basis === 'ttm' ? `latest completed fiscal year before the ${ltm.label}` : 'fiscal year before the LTM year')
+    : 'NA — no earlier fiscal year reported';
 
   /* ---- result blocks ---- */
   const revenue = conv.money(pRev);
@@ -594,10 +594,9 @@ function mapCore(raw, company, rates, opts) {
       sharesOut,
       currentPrice,
       grossDebt: conv.money(pDebt),
-      // OPEN QUESTION: cash = cash, equivalents & short-term investments (the same line the NWC build
-      // excludes, so short-term investments are neither lost nor double-counted). Cash & equivalents
-      // alone is shown in the preview for reference.
-      cash: conv.money(pCashSti),
+      // cash & equivalents only (the user's rule). The NWC build still excludes cash, equivalents
+      // AND short-term investments, so short-term investments sit in neither (shown in the preview).
+      cash: conv.money(pCashEq),
       taxRate,
     },
     drivers: { revenue0: revenue, ebitda0: ebitda, nwc0 },
@@ -649,8 +648,8 @@ function mapCore(raw, company, rates, opts) {
 
   const bsBasis = bsDate ? `as of ${bsDate}` : 'not reported';
   row('Balance sheet', 'Total debt', { basis: bsBasis, fields: ['company.grossDebt'], reported: rep(pDebt), reportedCcy: pDebt?.currency || fc, value: out.company.grossDebt });
-  row('Balance sheet', 'Cash, equivalents & short-term investments', { basis: bsBasis, fields: ['company.cash'], reported: rep(pCashSti), reportedCcy: pCashSti?.currency || fc, value: out.company.cash });
-  row('Balance sheet', 'Cash & equivalents only (reference, not applied)', { basis: bsBasis, reported: rep(pCashEq), reportedCcy: pCashEq?.currency || fc, value: conv.money(pCashEq), sub: true, ref: true });
+  row('Balance sheet', 'Cash & equivalents', { basis: bsBasis, fields: ['company.cash'], reported: rep(pCashEq), reportedCcy: pCashEq?.currency || fc, value: out.company.cash });
+  row('Balance sheet', 'Cash, equivalents & short-term investments (reference, not applied)', { basis: bsBasis, reported: rep(pCashSti), reportedCcy: pCashSti?.currency || fc, value: conv.money(pCashSti), sub: true, ref: true, note: 'short-term investments are in neither cash nor NWC' });
   row('Balance sheet', 'Share count', {
     basis: shareBasis ? shareOptions.find((o) => o.id === shareBasis).label : needShareBasis ? 'choose a basis below' : 'not reported',
     fields: ['company.sharesOut'], reported: shareBasis ? shareOptions.find((o) => o.id === shareBasis).reported : null,
@@ -673,7 +672,7 @@ function mapCore(raw, company, rates, opts) {
   row('LTM', 'Net income', { basis: lb, fields: ['compsTarget.netIncome'], reported: rep(pNi), reportedCcy: pNi?.currency || fc, value: out.compsTarget.netIncome });
   row('LTM', 'Gross profit', { basis: lb, fields: ['compsTarget.grossProfit'], reported: rep(pGp), reportedCcy: pGp?.currency || fc, value: out.compsTarget.grossProfit });
   row('LTM', 'Interest expense', { basis: lb, fields: ['compsTarget.interest'], reported: rep(pInt), reportedCcy: pInt?.currency || fc, value: out.compsTarget.interest });
-  row('LTM', 'Tax rate', { basis: lb, fields: ['company.taxRate'], reportedKind: 'pct', kind: 'pct', value: taxRate, note: taxRate === null ? 'NA — tax provision or pre-tax income not reported, or pre-tax income ≤ 0' : 'tax provision ÷ pre-tax income' });
+  row('LTM', 'Tax rate', { basis: lb, fields: ['company.taxRate'], reportedKind: 'pct', kind: 'pct', value: taxRate, note: taxNegative ? `NA — the reported rate is negative (${reportedTaxRate.toFixed(1)} %)` : taxRate === null ? 'NA — tax provision or pre-tax income not reported, or pre-tax income ≤ 0' : 'tax provision ÷ pre-tax income' });
   row('LTM', 'Tax provision', { reported: rep(pTax), reportedCcy: pTax?.currency || fc, value: conv.money(pTax), sub: true, note: pTax ? '' : 'not reported' });
   row('LTM', 'Pre-tax income', { reported: rep(pPbt), reportedCcy: pPbt?.currency || fc, value: conv.money(pPbt), sub: true, note: pPbt ? '' : 'not reported' });
 
@@ -692,9 +691,6 @@ function mapCore(raw, company, rates, opts) {
   return { out, preview: pv, warnings, needRates, needShareBasis };
 }
 
-function fmtRaw(v) {
-  return Number.isFinite(v) ? Number(v).toLocaleString('en-US', { maximumFractionDigits: 0 }) : 'n/a';
-}
 
 /* ------------------------------------------------------ comps peer page */
 
@@ -708,19 +704,16 @@ function fmtRaw(v) {
  * page's LTM is FY0 + current stub − prior stub, so:
  *   - LTM is a fiscal year (no TTM beyond FY0): both stubs are 0 (no stub).
  *   - LTM is a TTM: prior stub = FY0 and current stub = the reported TTM, both
- *     12-month periods, so LTM = TTM exactly with no derived number.
- *     // OPEN QUESTION: the stub columns then hold 12-month figures (the page labels them
- *     // "Prior / Current stub"); the alternative is to rebuild true YTD stubs, which needs
- *     // prior-year quarters Yahoo's feed usually does not carry.
+ *     12-month periods, so LTM = TTM exactly with no derived number (the user
+ *     chose 12-month stub columns over rebuilt YTD stubs).
  *
  * Income statement walk (sales − COGS − SG&A − other = EBIT, EBIT − interest =
  * pre-tax, − taxes − NCI − preferred = net income): sales, COGS, interest,
  * taxes, NCI, preferred dividends and diluted shares are the reported lines.
- * // OPEN QUESTION: Yahoo gives no complete opex split, so "SG&A" carries SG&A and every
- * // other operating item as ONE line = reported gross profit − reported EBIT, which keeps
- * // the page's EBIT (and EBITDA = EBIT + reported D&A) equal to what Yahoo reports. If that
- * // single balancing line is not acceptable, it must be left NA — and with it EBIT, EBITDA,
- * // pre-tax income and net income on every Yahoo peer page.
+ * Yahoo gives no complete opex split, so "SG&A" carries SG&A and every other
+ * operating item as ONE line = reported gross profit − reported EBIT (the
+ * user's choice), which keeps the page's EBIT (and EBITDA = EBIT + reported
+ * D&A) equal to what Yahoo reports.
  * Interest and tax are never back-solved: not reported → null.
  *
  * Balance sheet: current column = the latest reported quarter (balanceSheetDate),
@@ -755,7 +748,7 @@ export function peerPageFromListing(raw, company, rates = {}) {
   const ebit = line(M('EBIT'));
   const periodSlots = slots.map((s, i) => (s !== 'zero' && s.date ? i : -1)).filter((i) => i >= 0);
   const grossKnown = periodSlots.length > 0 && periodSlots.every((i) => cogs[i] !== null);
-  // balancing opex line: gross profit − EBIT (see OPEN QUESTION above); all cost in COGS when COGS is not reported
+  // balancing opex line: gross profit − EBIT (see above); all cost in COGS when COGS is not reported
   const sga = sales.map((s, i) => {
     if (slots[i] === 'zero') return 0;
     if (s === null || ebit[i] === null) return null;
@@ -788,7 +781,7 @@ export function peerPageFromListing(raw, company, rates = {}) {
   const priorBs = (raw.annual.TotalAssets || []).map((p) => p.date).filter((d) => bsDate && d < bsDate).pop() || null;
   const bsCol = (base) => [priorBs, bsDate].map((d) => (d ? conv.money(bsPoint(raw, base, d)) : null));
   const bs = {
-    cash: bsCol('CashCashEquivalentsAndShortTermInvestments'),
+    cash: bsCol('CashAndCashEquivalents'),              // cash & equivalents only (the user's rule)
     ar: bsCol('AccountsReceivable'),
     inventory: bsCol('Inventory'),
     prepaid: [null, null],
@@ -807,7 +800,9 @@ export function peerPageFromListing(raw, company, rates = {}) {
 
   const L = (base) => (ltm.block ? pointAt(raw[ltm.block], base, ltm.date) : null);
   const pTax = L('TaxProvision'), pPbt = L('PretaxIncome');
-  const taxRate = pTax && pPbt && pPbt.value > 0 ? (pTax.value / pPbt.value) * 100 : null;
+  const reportedTaxRate = effectiveTaxRate(pTax, pPbt);
+  const taxRate = reportedTaxRate !== null && reportedTaxRate < 0 ? null : reportedTaxRate;
+  if (taxRate === null && reportedTaxRate !== null) warnings.push(`reported effective tax rate is negative (${reportedTaxRate.toFixed(1)} %) — left blank`);
   const px = raw.price || {};
   if (px.currency && raw.financialCurrency && px.currency !== raw.financialCurrency) {
     warnings.push(`price in ${px.quoteCurrency || px.currency}, financials in ${raw.financialCurrency} — if this is an ADR/GDR check the share count against the price`);

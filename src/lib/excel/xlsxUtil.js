@@ -13,6 +13,11 @@ export const C_RULE = 'FFB4C4D8';
 /** Tab colours: analysis pages read dark, input pages read pale. */
 export const C_TAB_ANALYSIS = 'FF173A5E';
 export const C_TAB_INPUT = 'FF9DB8D6';
+/** Pale fill behind a blue input cell. */
+export const C_INPUT_FILL = 'FFF5F9FF';
+
+/** A numeric input as written to a cell: a blank / non-finite value is the text "NA". */
+export const nv = (x) => (typeof x === 'number' && Number.isFinite(x) ? x : 'NA');
 
 export function colL(n) {
   let s = '';

@@ -26,7 +26,7 @@ const parse = (t) => {
 const show = (v) => (v === null || v === undefined || Number.isNaN(v) ? '' : String(v));
 
 /** Numeric cell: blank stays blank; keeps partial text ("12.", "-") while typing. */
-function CpNum({ value, onSet, disabled, wide }) {
+export function CpNum({ value, onSet, disabled, wide }) {
   const [text, setText] = useState(show(value));
   useEffect(() => {
     const p = parse(text);
@@ -42,7 +42,7 @@ function CpNum({ value, onSet, disabled, wide }) {
     />
   );
 }
-function CpTxt({ value, onSet, ph, disabled }) {
+export function CpTxt({ value, onSet, ph, disabled }) {
   return <input className="cp-in txt" value={value ?? ''} placeholder={ph} disabled={disabled} onChange={(e) => onSet(e.target.value)} />;
 }
 /** LTM value / metric of a multiple, whatever the engine's array shape. */
@@ -51,10 +51,13 @@ const ltmMetric = (m) => (Array.isArray(m?.metric) ? m.metric[0] : m?.metric);
 
 const PERIOD_HEADS = ['FY-2', 'FY-1', 'FY0', 'Prior stub', 'Current stub', 'LTM'];
 
-export default function CompanyPageEditor({ co, settings, tiers, onChange, onDelete, readOnly }) {
+export default function CompanyPageEditor({ co, settings, tiers, onChange, onDelete, readOnly, offerPrice }) {
   const [pasting, setPasting] = useState(false);
-  const page = useMemo(() => computeCompany(co), [co]);
-  const issues = useMemo(() => validateCompany(page), [page]);
+  // a deal target is priced at the offer (precedent transactions), not at a market price
+  const atOffer = offerPrice !== undefined;
+  const page = useMemo(() => computeCompany(atOffer ? { ...co, price: offerPrice } : co), [co, atOffer, offerPrice]);
+  // on a deal page the offer terms carry the price, and the deal page reports them
+  const issues = useMemo(() => validateCompany(page).filter((i) => !(atOffer && i.field === 'price')), [page, atOffer]);
   const locale = CURRENCIES[settings.currency].locale;
   const sym = CURRENCIES[settings.currency].symbol;
   const unit = UNITS[settings.unit];
@@ -85,7 +88,7 @@ export default function CompanyPageEditor({ co, settings, tiers, onChange, onDel
   );
   /** A derived line across all six periods. */
   const calcRow = (label, vals, fmt = money, bold, indent) => (
-    <tr key={label + (bold ? 'b' : '')} className={bold ? 'bold' : indent ? 'sub' : ''}>
+    <tr className={bold ? 'bold' : indent ? 'sub' : ''}>
       <td>{label}</td>
       {(vals || []).map((v, i) => <td key={i} className="calc">{fmt(v)}</td>)}
     </tr>
@@ -149,7 +152,9 @@ export default function CompanyPageEditor({ co, settings, tiers, onChange, onDel
         <div>
           <h4 className="cp-h">Market data &amp; enterprise value</h4>
           <table className="fin cp-kv"><tbody>
-            <tr><td>Current price</td><td>{num(co.price, (v) => set({ price: v }))}</td></tr>
+            {atOffer
+              ? <tr><td>Offer price (from the deal terms)</td><td className="calc">{px(offerPrice)}</td></tr>
+              : <tr><td>Current price</td><td>{num(co.price, (v) => set({ price: v }))}</td></tr>}
             <tr className="sub"><td>% of 52-week high</td><td className="calc">{pct(page.pctOf52wHigh)}</td></tr>
             <tr><td>52-week high</td><td>{num(co.high52, (v) => set({ high52: v }))}</td></tr>
             <tr><td>52-week low</td><td>{num(co.low52, (v) => set({ low52: v }))}</td></tr>
@@ -169,7 +174,7 @@ export default function CompanyPageEditor({ co, settings, tiers, onChange, onDel
       <h4 className="cp-h">Reported income statement <span className="cp-note">LTM = FY0 + current stub − prior stub</span></h4>
       <div className="tablewrap">
         <table className="fin cp-per">
-          <thead><tr><th /> {PERIOD_HEADS.map((h) => <th key={h}>{h}</th>)}</tr></thead>
+          <thead><tr><th />{PERIOD_HEADS.map((h) => <th key={h}>{h}</th>)}</tr></thead>
           <tbody>
             {inRow('Sales', 'is', 'sales')}
             {inRow('COGS (incl. D&A)', 'is', 'cogs')}
@@ -194,7 +199,7 @@ export default function CompanyPageEditor({ co, settings, tiers, onChange, onDel
       <h4 className="cp-h">Adjusted income statement <span className="cp-note">non-recurring items added back, tax-effected at the marginal rate</span></h4>
       <div className="tablewrap">
         <table className="fin cp-per">
-          <thead><tr><th /> {PERIOD_HEADS.map((h) => <th key={h}>{h}</th>)}</tr></thead>
+          <thead><tr><th />{PERIOD_HEADS.map((h) => <th key={h}>{h}</th>)}</tr></thead>
           <tbody>
             {inRow('Non-recurring items in COGS', 'adj', 'nrCogs')}
             {calcRow('Adj. gross profit', page.adjGrossProfit, money, true, false)}
@@ -217,7 +222,7 @@ export default function CompanyPageEditor({ co, settings, tiers, onChange, onDel
       <h4 className="cp-h">Cash flow statement data</h4>
       <div className="tablewrap">
         <table className="fin cp-per">
-          <thead><tr><th /> {PERIOD_HEADS.map((h) => <th key={h}>{h}</th>)}</tr></thead>
+          <thead><tr><th />{PERIOD_HEADS.map((h) => <th key={h}>{h}</th>)}</tr></thead>
           <tbody>
             {inRow('Cash from operations', 'cf', 'cfo')}
             {inRow('Capital expenditures', 'cf', 'capex')}

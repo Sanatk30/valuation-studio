@@ -51,7 +51,8 @@ const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 
 /**
  * Field catalogue. `group` decides which block a row belongs to and therefore
- * how many period columns it consumes: is/cf → 5, bs → 2, est → 3.
+ * how many period columns it consumes: is/cf → 5, bs → 2. Comps is LTM only,
+ * so there are no estimate lines.
  */
 export const FIELDS = [
   // income statement
@@ -88,12 +89,6 @@ export const FIELDS = [
   { key: 'bsNci', group: 'bs', path: ['bs', 'nci'], label: 'Noncontrolling interest (BS)', alt: ['minority interest balance', 'noncontrolling interest equity'] },
   { key: 'bsPreferred', group: 'bs', path: ['bs', 'preferred'], label: 'Preferred stock', alt: ['preferred stock', 'preference share capital'] },
   { key: 'bsEquity', group: 'bs', path: ['bs', 'equity'], label: "Shareholders' equity", alt: ['shareholders equity', 'stockholders equity', 'total equity', 'net worth', 'shareholders funds'] },
-  // estimates
-  { key: 'estSales', group: 'est', path: ['est', 'sales'], label: 'Estimated sales', alt: ['estimated sales', 'sales estimates', 'consensus sales', 'revenue estimates'] },
-  { key: 'estEbitda', group: 'est', path: ['est', 'ebitda'], label: 'Estimated EBITDA', alt: ['estimated ebitda', 'ebitda estimates', 'consensus ebitda'] },
-  { key: 'estEbit', group: 'est', path: ['est', 'ebit'], label: 'Estimated EBIT', alt: ['estimated ebit', 'ebit estimates', 'consensus ebit'] },
-  { key: 'estEps', group: 'est', path: ['est', 'eps'], label: 'Estimated EPS', alt: ['estimated eps', 'eps estimates', 'consensus eps'] },
-  { key: 'estFcfPerShare', group: 'est', path: ['est', 'fcfPerShare'], label: 'Estimated FCF / share', alt: ['estimated fcf per share', 'fcf per share estimates', 'free cash flow per share'] },
 ];
 
 /** Scalar (non-period) fields, used by the wide parser and header rows. */
@@ -114,7 +109,6 @@ export const SCALARS = [
   { key: 'basicShares', label: 'Basic shares outstanding', alt: ['basic shares', 'shares outstanding', 'basic shares outstanding', 'shares'] },
   { key: 'taxRate', label: 'Marginal tax rate (%)', alt: ['tax rate', 'marginal tax rate'] },
   { key: 'beta', label: 'Predicted beta', alt: ['beta', 'predicted beta'] },
-  { key: 'ltGrowth', label: 'Long-term growth (%)', alt: ['long term growth', 'lt growth', 'ltg'] },
 ];
 
 const lookup = (list) => {
@@ -149,7 +143,6 @@ export function matchScalar(label) {
 export const BLOCKS = {
   is: { label: 'Income statement & cash flow', periods: ['FY-2', 'FY-1', 'FY0', 'Prior stub', 'Current stub'] },
   bs: { label: 'Balance sheet', periods: ['Prior', 'Current'] },
-  est: { label: 'Estimates', periods: ['NFY', 'NFY+1', 'NFY+2'] },
 };
 
 /* --------------------------------------------------------- grid parsing */
@@ -208,11 +201,11 @@ export function parseGrid(text, { block = null, offset = 0 } = {}) {
 /** Apply a parseGrid result to a company page, returning a new page. */
 export function applyGrid(co, parsed) {
   if (!parsed?.ok) return co;
-  const next = { ...co, is: { ...co.is }, adj: { ...co.adj }, cf: { ...co.cf }, bs: { ...co.bs }, est: { ...co.est } };
-  const len = { is: 5, bs: 2, est: 3 }[parsed.target];
+  const next = { ...co, is: { ...co.is }, adj: { ...co.adj }, cf: { ...co.cf }, bs: { ...co.bs } };
+  const len = { is: 5, bs: 2 }[parsed.target];
   for (const m of parsed.matched) {
     const [grp, key] = m.field.path;
-    const arr = [...(next[grp][key] || Array(len).fill(0))];
+    const arr = [...(next[grp][key] || Array(len).fill(null))];   // untouched cells stay blank
     parsed.slots.forEach((slot, i) => {
       if (slot == null || slot >= len) return;
       const cell = m.values[i];
@@ -229,8 +222,8 @@ export function applyGrid(co, parsed) {
  * Parse "one row per company". The header row names the columns; a column is
  * either a scalar (Company, Ticker, Price, Basic shares…) or a period field
  * with an optional period suffix — "Sales FY0", "Total debt Current",
- * "Estimated EBITDA NFY+1". Bare period fields land on the block's default
- * column (FY0, Current, NFY).
+ * "Cash Prior". Bare period fields land on the block's default column
+ * (FY0, Current). Anything not pasted stays blank (NA / none per the page rules).
  */
 export function parseWide(text, { tiers = [] } = {}) {
   const rows = splitBlock(text);
@@ -246,7 +239,7 @@ export function parseWide(text, { tiers = [] } = {}) {
     const f = matchField(bare);
     if (f) {
       const periods = BLOCKS[f.group].periods;
-      const defaultIdx = { is: 2, bs: 1, est: 0 }[f.group];
+      const defaultIdx = { is: 2, bs: 1 }[f.group];
       const idx = period ? periods.findIndex((p) => norm(p) === norm(period)) : defaultIdx;
       return { i, kind: 'field', spec: f, period: idx < 0 ? defaultIdx : idx, header: h };
     }
@@ -262,7 +255,7 @@ export function parseWide(text, { tiers = [] } = {}) {
   const companies = rows.slice(1).map((r) => {
     // start nameless so a row that carries no company name is dropped below
     // rather than inheriting the blank-page placeholder
-    const co = blankCompany({ name: '' });
+    const co = blankCompany();
     const fields = [];
     for (const c of cols) {
       const raw = r[c.i];
@@ -278,23 +271,19 @@ export function parseWide(text, { tiers = [] } = {}) {
       const n = parseNum(raw);
       if (!n.ok) continue;
       const [grp, key] = c.spec.path;
-      const len = { is: 5, bs: 2, est: 3 }[c.spec.group];
-      const arr = [...(co[grp][key] || Array(len).fill(0))];
+      const len = { is: 5, bs: 2 }[c.spec.group];
+      const arr = [...(co[grp][key] || Array(len).fill(null))];
       arr[c.period] = n.value;
       co[grp] = { ...co[grp], [key]: arr };
       fields.push(c.spec.key);
     }
-    // a company page needs a share count; fall back to the diluted series
-    if (!co.basicShares && co.is.dilutedShares?.[2]) co.basicShares = co.is.dilutedShares[2];
-    // no COGS/SG&A split pasted → gross profit reports NA rather than a wrong number
-    if (!co.is.cogs.some((v) => v)) co.grossKnown = false;
     return { co, fields };
   }).filter((c) => c.co.name && c.co.name.trim());
 
   return { ok: companies.length > 0, companies, cols, unmatched, reason: companies.length ? '' : 'No rows carried a company name.' };
 }
 
-const PERIOD_WORDS = [...BLOCKS.is.periods, ...BLOCKS.bs.periods, ...BLOCKS.est.periods];
+const PERIOD_WORDS = [...BLOCKS.is.periods, ...BLOCKS.bs.periods];
 function extractPeriod(h) {
   const s = String(h || '');
   for (const p of PERIOD_WORDS) {
@@ -317,5 +306,4 @@ export const WIDE_TEMPLATE_HEADER = [
   'Weighted avg. diluted shares FY0', 'Cash from operations FY0', 'Capital expenditures FY0',
   'Depreciation & amortization FY0',
   'Cash Current', 'Total debt Current', "Shareholders' equity Current",
-  'Estimated sales NFY', 'Estimated EBITDA NFY',
 ].join('\t');

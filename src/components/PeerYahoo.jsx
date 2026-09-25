@@ -1,95 +1,53 @@
-import React, { useState } from 'react';
-import { searchSymbols, fetchPeerMetrics, fetchPeerByQuery, fetchPeersBatch, suggestPeers, UNIT_FACTOR } from '../lib/yahoo.js';
+import React, { useMemo, useState } from 'react';
+import {
+  searchSymbols, fetchListing, fetchListingByQuery, fetchListingsBatch,
+  peerPageFromListing, requiredCurrencies,
+} from '../lib/yahoo.js';
+import PeerFinder from './PeerFinder.jsx';
 import { blankCompany } from '../lib/engine/compsCo.js';
-import { FX } from '../lib/format.js';
+import { useLiveRates, rateNumbers, FxRateFields } from './FxRates.jsx';
 
 /**
- * Fold a Yahoo peer fetch into a comps input page.
+ * Yahoo peers for the comps Peer step.
  *
- * Yahoo's peer feed carries revenue, EBITDA, D&A, capex, net income, diluted
- * shares, debt, cash, equity and the tax rate — enough for the income
- * statement down to EBIT, the estimates and the EV bridge. It does NOT carry a
- * COGS/SG&A split, a full balance sheet or cash from operations, so those are
- * left for the user rather than plugged: the page's issue badge lists exactly
- * what is still missing and which outputs read NA until it is filled.
- *
- * `settings` supplies the display currency and unit the model works in.
+ * A fetch is `m = { raw, rates }`: the parsed listing plus the FX rate(s) the
+ * user confirmed (live, editable; a failed live fetch must be typed). The peer
+ * page holds REPORTED lines only, converted into the valuation currency and
+ * unit (lib/yahoo.js peerPageFromListing) — nothing estimated, no fallbacks.
  */
-export function mergePeerRow(row, m, settings) {
-  const base = row && row.is ? row : blankCompany({ ...row, id: row?.id });
-  const r = m.raw;
-  if (!r) return { ...base, name: m.name || base.name, symbol: m.symbol || base.symbol };
 
-  const fxFrom = FX[r.currency], fxTo = FX[settings?.currency || 'INR'];
-  const fx = isFinite(fxFrom) && isFinite(fxTo) ? fxTo / fxFrom : 1;
-  const u = UNIT_FACTOR[settings?.unit || 'Cr'] || 1;
-  const money = (v) => (isFinite(v) ? (v * fx) / u : 0);   // into display currency + unit
-  const cnt = (v) => (isFinite(v) ? v / u : 0);            // share counts: unit scale only
-  const px = isFinite(r.price) ? r.price * fx : base.price;
-
-  const t = isFinite(r.taxRate) ? r.taxRate : 0.25;
-  const sales = r.sales.map(money);
-  const ebitda = r.ebitda.map(money);
-  const da = r.da.map(money);
-  const ni = r.netIncome.map(money);
-  const shares = r.shares.map(cnt);
-  // interest is backed out of the reported tax rate: pre-tax = NI / (1 − t)
-  const ebit = ebitda.map((e, i) => e - da[i]);
-  const pretax = ni.map((v) => (t < 1 ? v / (1 - t) : v));
-  const interest = ebit.map((e, i) => e - pretax[i]);
-  const taxes = pretax.map((v, i) => v - ni[i]);
-  const five = (a3) => [...a3, 0, 0];                      // no stub data from Yahoo
-
-  const g = sales[1] > 0 ? sales[2] / sales[1] : 1;
-  const est3 = (v) => [v * g, v * g ** 2, v * g ** 3].map((x) => +x.toFixed(4));
-  const ltmShares = shares[2] || 1;
-
+/**
+ * Fold a Yahoo fetch into a peer page. The fetched reported lines win; the
+ * user's own inputs are kept where the feed has nothing: the page id, tier,
+ * ratings, description, beta, dividend, the non-recurring adjustments,
+ * options / converts, and any cell the fetch leaves blank (e.g. balance-sheet
+ * lines Yahoo has no one-to-one line for).
+ */
+export function mergePeerRow(row, m, company) {
+  const base = row && row.is ? row : blankCompany({ ...(row || {}) });
+  const f = peerPageFromListing(m.raw, company, m.rates || {});
+  const cell = (fetched, own) => (fetched === null || fetched === undefined ? own ?? null : fetched);
+  const group = (fg, own) => Object.fromEntries(Object.entries(fg).map(([k, arr]) => [k, arr.map((v, i) => cell(v, own?.[k]?.[i]))]));
   return {
     ...base,
-    name: m.name || base.name,
-    symbol: m.symbol || base.symbol,
-    ticker: m.symbol || base.ticker,
-    exchange: m.exchange || base.exchange,
-    price: px,
-    taxRate: +(t * 100).toFixed(2),
-    fyEnd: r.fyEnd || base.fyEnd,
-    stubEnd: r.fyEnd || base.stubEnd,
-    basicShares: shares[2],
-    // Yahoo gives no COGS/SG&A split: all operating cost sits in COGS so EBIT
-    // still ties, and gross profit reports NA.
-    grossKnown: false,
-    is: {
-      ...base.is,
-      sales: five(sales),
-      cogs: five(sales.map((s, i) => s - ebitda[i] + da[i])),
-      sga: five([0, 0, 0]),
-      otherExp: five([0, 0, 0]),
-      interest: five(interest),
-      taxes: five(taxes),
-      nci: five([0, 0, 0]),
-      prefDiv: five([0, 0, 0]),
-      dilutedShares: five(shares),
-    },
-    cf: { ...base.cf, cfo: five([0, 0, 0]), capex: five(r.capex.map(money)), da: five(da) },
-    bs: {
-      ...base.bs,
-      cash: [money(r.cashPrior), money(r.cash)],
-      prepaid: [money(r.workingCapitalPrior), money(r.workingCapital)],
-      debt: [money(r.debtPrior), money(r.debt)],
-      equity: [money(r.equityPrior), money(r.equity)],
-    },
-    est: {
-      sales: est3(sales[2]),
-      ebitda: est3(ebitda[2]),
-      ebit: est3(ebit[2]),
-      eps: est3(ni[2] / ltmShares),
-      fcfPerShare: est3(0),
-    },
-    _fetched: { at: Date.now(), currency: r.currency, note: 'COGS/SG&A split, full balance sheet and CFO are not in the Yahoo feed' },
+    name: f.name || base.name,
+    symbol: f.symbol,
+    ticker: f.ticker,
+    exchange: f.exchange || base.exchange,
+    price: cell(f.price, base.price),
+    high52: cell(f.high52, base.high52),
+    low52: cell(f.low52, base.low52),
+    taxRate: cell(f.taxRate, base.taxRate),
+    fyEnd: f.fyEnd || base.fyEnd,
+    stubEnd: f.stubEnd || base.stubEnd,
+    basicShares: cell(f.basicShares, base.basicShares),
+    grossKnown: f.grossKnown,
+    is: group(f.is, base.is),
+    cf: group(f.cf, base.cf),
+    bs: group(f.bs, base.bs),
+    _fetched: f._fetched,
   };
 }
-
-const BLANK_ROW = { name: '' };
 
 /** "RELIANCE.NS, TCS.NS INFY.NS" → ['RELIANCE.NS','TCS.NS','INFY.NS'], deduped case-insensitively. */
 export function parseTickerList(text) {
@@ -101,115 +59,135 @@ export function parseTickerList(text) {
   });
 }
 
-/**
- * Per-row fetch: looks the row's name/ticker up on Yahoo and fills its
- * multiples. Shows a spinner glyph while busy, an error mark on failure.
- */
-export function PeerRowFetch({ name, onFilled }) {
-  const [state, setState] = useState('idle'); // idle | busy | err
-  const go = async () => {
-    if (!name || state === 'busy') return;
-    setState('busy');
-    try {
-      const m = await fetchPeerByQuery(name);
-      onFilled(m);
-      setState('idle');
-    } catch {
-      setState('err');
-      setTimeout(() => setState('idle'), 2200);
-    }
-  };
+/** Rate confirmation for one or more fetched listings: resolves to m's. */
+function RateConfirm({ raws, company, onConfirm, onCancel, action }) {
+  const need = useMemo(() => [...new Set(raws.flatMap((r) => requiredCurrencies(r, company.currency)))], [raws, company.currency]);
+  const fx = useLiveRates(need, company.currency);
   return (
-    <button
-      className={`peer-fetch${state === 'err' ? ' err' : ''}`}
-      title={state === 'err' ? 'Fetch failed — check the name/ticker (needs the dev server for the Yahoo proxy)' : 'Fetch multiples from Yahoo Finance by this name/ticker'}
-      onClick={go}
-      disabled={state === 'busy'}
-    >
-      {state === 'busy' ? '…' : state === 'err' ? '!' : '⟳'}
-    </button>
+    <div className="rate-confirm">
+      <div className="fld-h">
+        {raws.length === 1 ? `${raws[0].name} reports` : 'These peers report'} in {need.join(', ')} — confirm the rate{need.length > 1 ? 's' : ''} into {company.currency}:
+      </div>
+      <FxRateFields currencies={need} to={company.currency} {...fx} />
+      <div className="row-btns">
+        <button className="btn sm primary" disabled={!fx.ready} onClick={() => onConfirm(rateNumbers(fx.rates))}>{action}</button>
+        <button className="btn sm ghost" onClick={onCancel}>Cancel</button>
+      </div>
+    </div>
   );
 }
 
 /**
- * Batch builder: paste 4–5 tickers (comma/space separated) and fetch every
- * peer's multiples in one click, or let Yahoo suggest similar names for the
- * current company first. Per-ticker chips show what landed and what failed;
- * successes are handed to onAddMany as ready-to-use peer rows.
+ * Per-row refresh: re-fetches the row's ticker and folds the reported lines
+ * back in (after a rate confirmation when the peer reports in another currency).
  */
-export function PeerBatchAdd({ companyName, existingNames = [], onAddMany, settings }) {
+export function PeerRowFetch({ name, company, onFilled }) {
+  const [state, setState] = useState('idle'); // idle | busy | err
+  const [raw, setRaw] = useState(null);
+  const [msg, setMsg] = useState('');
+  const go = async () => {
+    if (!name || state === 'busy') return;
+    setState('busy'); setMsg('');
+    try {
+      const r = await fetchListingByQuery(name);
+      if (requiredCurrencies(r, company.currency).length) { setRaw(r); setState('idle'); return; }
+      onFilled({ raw: r, rates: {} });
+      setState('idle');
+    } catch (e) {
+      setState('err'); setMsg(e?.message || 'fetch failed');
+      setTimeout(() => setState('idle'), 3000);
+    }
+  };
+  return (
+    <span className="peer-fetch-wrap">
+      <button
+        className={`peer-fetch${state === 'err' ? ' err' : ''}`}
+        title={state === 'err' ? `Fetch failed — ${msg}` : 'Refresh this peer’s reported figures from Yahoo Finance'}
+        onClick={go} disabled={state === 'busy'}
+      >
+        {state === 'busy' ? '…' : state === 'err' ? '!' : '⟳'}
+      </button>
+      {raw && (
+        <div className="peer-pop">
+          <RateConfirm raws={[raw]} company={company} action="Refresh"
+            onConfirm={(rates) => { onFilled({ raw, rates }); setRaw(null); }}
+            onCancel={() => setRaw(null)} />
+        </div>
+      )}
+    </span>
+  );
+}
+
+/**
+ * Batch builder: paste tickers (comma / space separated) and fetch every peer
+ * in one go, or open the peer finder (ranked, explained candidates) and fetch
+ * the ticked ones. Per-ticker chips show what landed and what failed;
+ * foreign-currency peers need one confirmed rate per currency before they are
+ * added. `finder` = { inputs, seed } — the target's figures and default seed.
+ */
+export function PeerBatchAdd({ company, existingNames = [], onAddMany, finder = {} }) {
   const [text, setText] = useState('');
-  const [busy, setBusy] = useState(''); // '' | fetch | suggest
+  const [busy, setBusy] = useState(''); // '' | fetch
+  const [finding, setFinding] = useState(false);
   const [toks, setToks] = useState(null); // [{ q, state: ok|err|dup, detail }]
+  const [pending, setPending] = useState(null); // raws awaiting rate confirmation
   const [err, setErr] = useState('');
 
-  const taken = new Set(existingNames.map((n) => String(n).toUpperCase()));
-
-  const fetchAll = async () => {
-    const queries = parseTickerList(text);
+  const fetchAll = async (list) => {
+    const queries = list || parseTickerList(text);
     if (!queries.length || busy) return;
-    setBusy('fetch'); setErr(''); setToks(queries.map((q) => ({ q, state: 'busy' })));
+    const taken = new Set(existingNames.map((n) => String(n).toUpperCase()));
+    setBusy('fetch'); setErr(''); setPending(null); setToks(queries.map((q) => ({ q, state: 'busy' })));
     try {
-      const results = await fetchPeersBatch(queries);
-      const rows = [];
+      const results = await fetchListingsBatch(queries);
+      const raws = [];
       setToks(results.map((r) => {
         if (!r.ok) return { q: r.q, state: 'err', detail: r.error };
-        if (taken.has(r.m.name.toUpperCase()) || taken.has((r.m.symbol || '').toUpperCase())) {
-          return { q: r.q, state: 'dup', detail: `${r.m.name} is already in the set` };
-        }
-        taken.add(r.m.name.toUpperCase());
-        if (r.m.symbol) taken.add(r.m.symbol.toUpperCase());
-        rows.push(mergePeerRow({ ...BLANK_ROW }, r.m, settings));
-        return { q: r.q, state: 'ok', detail: `${r.m.name} · ${r.m.symbol}` };
+        const nm = String(r.raw.name || '').toUpperCase(), sym = String(r.raw.symbol || '').toUpperCase();
+        if (taken.has(nm) || taken.has(sym)) return { q: r.q, state: 'dup', detail: `${r.raw.name} is already in the set` };
+        taken.add(nm); taken.add(sym);
+        raws.push(r.raw);
+        return { q: r.q, state: 'ok', detail: `${r.raw.name} · ${r.raw.symbol}` };
       }));
-      if (rows.length) {
-        onAddMany(rows);
-        setText('');
-      }
-    } catch {
-      setErr('Batch fetch failed — the Yahoo proxy needs the dev server (npm run dev).');
+      if (!raws.length) return;
+      if (raws.some((r) => requiredCurrencies(r, company.currency).length)) setPending(raws);
+      else add(raws, {});
+    } catch (e) {
+      setErr(`Batch fetch failed (${e?.message || 'error'}) — the Yahoo proxy needs the dev server (npm run dev).`);
     } finally {
       setBusy('');
     }
   };
-
-  const suggest = async () => {
-    if (!companyName || busy) return;
-    setBusy('suggest'); setErr(''); setToks(null);
-    try {
-      const { suggestions } = await suggestPeers(companyName);
-      const fresh = suggestions.filter((s) => !taken.has(s.toUpperCase()));
-      if (!fresh.length) { setErr('Every suggested peer is already in the set.'); return; }
-      setText(parseTickerList(`${text} ${fresh.join(' ')}`).join(', '));
-    } catch (e) {
-      setErr(e?.message || 'No suggestions — try fetching the company first so the name matches a listing.');
-    } finally {
-      setBusy('');
-    }
+  const add = (raws, rates) => {
+    onAddMany(raws.map((raw) => mergePeerRow(blankCompany(), { raw, rates }, company)));
+    setText(''); setPending(null);
   };
 
   return (
     <div className="peer-yf">
-      <div className="yf-search" style={{ marginTop: 0 }}>
+      <div className="yf-search" style={{ marginTop: 8 }}>
         <input
           value={text}
-          placeholder="Build peer set — tickers separated by commas (TCS.NS, INFY.NS, WIPRO.NS…)"
+          placeholder="Several at once — tickers separated by commas (TCS.NS, INFY.NS, WIPRO.NS…)"
           onChange={(e) => { setText(e.target.value); setErr(''); }}
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); fetchAll(); } }}
         />
-      </div>
-      <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-        <button className="btn primary" style={{ flex: 1 }} onClick={fetchAll} disabled={!!busy || !parseTickerList(text).length}>
-          {busy === 'fetch' ? 'Fetching…' : 'Fetch all multiples'}
+        <button className="btn" onClick={() => fetchAll()} disabled={!!busy || !parseTickerList(text).length}>
+          {busy === 'fetch' ? 'Fetching…' : 'Fetch all'}
         </button>
-        <button
-          className="btn" style={{ flex: 1 }} onClick={suggest} disabled={!!busy || !companyName}
-          title={`Ask Yahoo for companies similar to ${companyName || 'the target'} and drop them into the list — prune before fetching`}
-        >
-          {busy === 'suggest' ? 'Suggesting…' : 'Suggest peers'}
+        <button className="btn ghost" onClick={() => setFinding((f) => !f)} disabled={!!busy}
+          title="Rank candidate peers on industry, market, size, margin and growth, then tick which to fetch">
+          Find peers
         </button>
       </div>
-      {err && <div className="berr" style={{ marginTop: 6 }}>{err}</div>}
+      {finding && (
+        <PeerFinder
+          company={company} inputs={finder.inputs} defaultSeed={finder.seed || ''} exclude={existingNames}
+          onClose={() => setFinding(false)}
+          onFetch={(symbols) => { setFinding(false); fetchAll(symbols); }}
+        />
+      )}
+      {err && <div className="fld-e" style={{ marginTop: 6 }}>{err}</div>}
       {toks && (
         <div className="yf-toks">
           {toks.map((t) => (
@@ -219,47 +197,49 @@ export function PeerBatchAdd({ companyName, existingNames = [], onAddMany, setti
           ))}
         </div>
       )}
-      <div className="hint" style={{ marginTop: 6 }}>
-        Suggestions are Yahoo's co-watched names, not an industry screen — prune the list before fetching.
-        Failed tickers stay in the chips; hover one for the reason.
-      </div>
+      {pending && (
+        <RateConfirm raws={pending} company={company} action={`Add ${pending.length} peer${pending.length > 1 ? 's' : ''}`}
+          onConfirm={(rates) => add(pending, rates)} onCancel={() => setPending(null)} />
+      )}
     </div>
   );
 }
 
 /**
- * Search box: type a company name or ticker, pick the listing, and a fully
- * populated peer row (EV/S, EV/EBITDA, P/E, growth) is handed to onAdd.
+ * Search box: type a company name or ticker, pick the listing, confirm the
+ * rate if it reports in another currency, and `onAdd(m)` receives the fetch.
  */
-export function PeerSearchAdd({ onAdd, placeholder = 'Add peer from Yahoo — name or ticker (RELIANCE.NS, AAPL…)' }) {
+export function PeerSearchAdd({ company, onAdd, placeholder = 'Add a peer — name or ticker (RELIANCE.NS, AAPL…)' }) {
   const [q, setQ] = useState('');
   const [results, setResults] = useState(null);
   const [busy, setBusy] = useState(false);
   const [picking, setPicking] = useState('');
+  const [raw, setRaw] = useState(null);
   const [err, setErr] = useState('');
 
   const search = async () => {
     if (!q.trim() || busy) return;
-    setBusy(true); setErr(''); setResults(null);
+    setBusy(true); setErr(''); setResults(null); setRaw(null);
     try {
       const r = await searchSymbols(q.trim());
       if (!r.length) setErr('No listed companies found — try the exact ticker.');
       else setResults(r.slice(0, 6));
-    } catch {
-      setErr('Yahoo search failed — the proxy needs the dev server (npm run dev).');
+    } catch (e) {
+      setErr(`Yahoo search failed (${e.message}) — the proxy needs the dev server (npm run dev).`);
     } finally {
       setBusy(false);
     }
   };
 
-  const pick = async (sym) => {
-    setPicking(sym); setErr('');
+  const pick = async (r) => {
+    setPicking(r.symbol); setErr('');
     try {
-      const m = await fetchPeerMetrics(sym);
-      onAdd(m);
-      setQ(''); setResults(null);
-    } catch {
-      setErr(`Could not compute multiples for ${sym} — fundamentals missing.`);
+      const listing = await fetchListing(r.symbol, { search: r });
+      setResults(null);
+      if (requiredCurrencies(listing, company.currency).length) setRaw(listing);
+      else { onAdd({ raw: listing, rates: {} }); setQ(''); }
+    } catch (e) {
+      setErr(`Could not load ${r.symbol}: ${e.message}`);
     } finally {
       setPicking('');
     }
@@ -269,28 +249,28 @@ export function PeerSearchAdd({ onAdd, placeholder = 'Add peer from Yahoo — na
     <div className="peer-yf">
       <div className="yf-search" style={{ marginTop: 0 }}>
         <input
-          value={q}
-          placeholder={placeholder}
+          value={q} placeholder={placeholder}
           onChange={(e) => { setQ(e.target.value); setErr(''); }}
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); search(); } }}
         />
-        <button className="btn" onClick={search} disabled={busy}>{busy ? '…' : 'Search'}</button>
+        <button className="btn" onClick={search} disabled={busy || !q.trim()}>{busy ? '…' : 'Search'}</button>
       </div>
-      {err && <div className="berr" style={{ marginTop: 6 }}>{err}</div>}
+      {err && <div className="fld-e" style={{ marginTop: 6 }}>{err}</div>}
       {results && (
         <div className="yf-results">
           {results.map((r) => (
-            <button key={r.symbol} onClick={() => pick(r.symbol)} disabled={!!picking}>
-              {picking === r.symbol ? 'Computing multiples…' : r.name}
+            <button key={r.symbol} onClick={() => pick(r)} disabled={!!picking}>
+              {picking === r.symbol ? 'Loading reported figures…' : r.name}
               <span>{r.symbol} · {r.exchange}</span>
             </button>
           ))}
         </div>
       )}
-      <div className="hint" style={{ marginTop: 6 }}>
-        Multiples from live price × latest annual financials; growth = revenue CAGR (edit to your forward view).
-        Prefer the local listing — ADR prices can mismatch the reporting currency.
-      </div>
+      {raw && (
+        <RateConfirm raws={[raw]} company={company} action="Add peer"
+          onConfirm={(rates) => { onAdd({ raw, rates }); setRaw(null); setQ(''); }}
+          onCancel={() => setRaw(null)} />
+      )}
     </div>
   );
 }

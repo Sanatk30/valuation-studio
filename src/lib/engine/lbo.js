@@ -67,7 +67,8 @@ export function computeLbo(a, opsIn = null) {
     openSenior.push(ps);
     openMezz.push(pm);
     const intS = ps * (l.seniorRate / 100);
-    const intM = pm * (l.mezzRate / 100);
+    // no mezzanine balance → no mezzanine interest (its rate is not asked for)
+    const intM = pm === 0 ? 0 : pm * (l.mezzRate / 100);
     const cashInt = pikKnown ? intS + (pik ? 0 : intM) : NaN;
     const pikAmt = pikKnown ? (pik ? intM : 0) : NaN;
     cashInterest.push(cashInt);

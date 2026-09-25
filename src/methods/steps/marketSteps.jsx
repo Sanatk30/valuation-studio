@@ -67,6 +67,13 @@ function PeerSet({ data, setData, company }) {
           company={company}
           existingNames={peers.flatMap((p) => [p.name, p.symbol]).filter(Boolean)}
           onAddMany={(rows) => setPeers((ps) => [...ps, ...rows.map((r) => ({ ...r, tierId: firstTier }))])}
+          finder={{
+            seed: data.listing?.symbol || comps.target?.ticker || company.name || '',
+            inputs: {
+              revenue: comps.target?.revenue, ebitda: comps.target?.ebitda, priorRevenue: comps.target?.priorRevenue,
+              price: data.company?.currentPrice, shares: data.company?.sharesOut,
+            },
+          }}
         />
         <div className="row-btns">
           <button className="btn sm" onClick={() => setPeers((ps) => [...ps, { ...blankCompany(), tierId: firstTier }])}>+ Blank peer (private / type it in)</button>
