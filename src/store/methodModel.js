@@ -14,6 +14,9 @@
  * so an engine touching them never throws.
  */
 
+import { blankTargetCo } from '../lib/engine/comps.js';
+import { blankValuedCo } from '../lib/engine/precedent.js';
+
 export const METHOD_IDS = ['dcf', 'comps', 'precedent', 'lbo', 'ipo', 'ts', 'ratios', 'combined'];
 
 /** Display-only sensitivity step sizes — today's steps, editable on each output. */
@@ -81,32 +84,32 @@ const blankIpo = () => ({
   feesPct: null, useProceedsDebtPct: null,
 });
 
-/** Comps target — LTM only. Required: revenue, ebitda, ebit, netIncome. */
-export const blankCompsTarget = () => ({
-  revenue: null, ebitda: null, ebit: null, netIncome: null,
-  priorRevenue: null, priorEbitda: null,            // prior fiscal year (optional)
-  grossProfit: null, interest: null, equity: null,  // optional
-  beta: null, high52: null, low52: null,            // optional
-  ticker: '', exchange: '', description: '', moodys: '', sp: '',
-  ltmLabel: '',                                     // e.g. "TTM to Jun 2026" / "FY2025 used as LTM"
-});
-
+/**
+ * Comparable companies (the Comparable Company Analysis template): settings,
+ * the target's page and one slot per peer. The structural choices start
+ * blank — the user picks them on the Settings step (the template's own
+ * values are shown as hints, never assumed).
+ */
 const blankComps = () => ({
-  target: blankCompsTarget(),
-  tiers: [],
+  settings: { priceDate: '', lease: null, years: null, ytd: null, labels: null, stats: null, multiples: null },
+  peerCount: null,
+  target: blankTargetCo(),
   peers: [],
-  asOfDate: '',
-  source: '',
+  tiers: [],
+  headline: null,                                   // implied-valuation row that feeds Combined
 });
 
 const blankRegression = () => ({
   yVar: null, yLog: false, xVars: [], customVars: [], targetOverrides: {},
 });
 
+/** Precedent transactions (the Precedent Transactions template). */
 const blankPrecedent = () => ({
-  target: { revenue: null, ebitda: null, ltmLabel: '' },   // target LTM (required: revenue, ebitda)
+  settings: { valDate: '', lease: null, years: null, ytd: null, stats: null, multiples: null },
+  dealCount: null,
+  company: blankValuedCo(),
   deals: [],
-  source: '',
+  headline: null,
 });
 
 const sens = () => JSON.parse(JSON.stringify(SENS_DEFAULTS));
@@ -114,8 +117,8 @@ const sens = () => JSON.parse(JSON.stringify(SENS_DEFAULTS));
 /** Which sections each method owns. */
 const SECTIONS = {
   dcf: () => ({ company: blankCompanySection(), drivers: blankDrivers(), wacc: blankWacc(), dcf: blankDcf(), ts: blankTs(), history: null, listing: null, sens: sens() }),
-  comps: () => ({ company: blankCompanySection(), comps: blankComps(), regression: blankRegression(), listing: null }),
-  precedent: () => ({ company: blankCompanySection(), precedent: blankPrecedent(), listing: null }),
+  comps: () => ({ comps: blankComps(), regression: blankRegression() }),
+  precedent: () => ({ precedent: blankPrecedent() }),
   lbo: () => ({ company: blankCompanySection(), drivers: blankDrivers(), lbo: blankLbo(), history: null, listing: null, sens: sens() }),
   ipo: () => ({ company: blankCompanySection(), drivers: blankDrivers(), ts: blankTs(), ipo: blankIpo(), history: null, listing: null }),
   ts: () => ({ company: blankCompanySection(), drivers: blankDrivers(), ts: blankTs(), history: null, listing: null }),
@@ -151,9 +154,9 @@ const NAN_SECTIONS = {
   ts: () => nanify(blankTs()),
   lbo: () => ({ ...nanify(blankLbo()), mezzPIK: false }),
   ipo: () => ({ ...nanify(blankIpo()), basis: 'pe', greenshoeType: 'primary' }),
-  comps: () => ({ ...blankComps(), target: nanify(blankCompsTarget()) }),
+  comps: () => blankComps(),
   regression: () => blankRegression(),
-  precedent: () => ({ ...blankPrecedent(), target: { revenue: NaN, ebitda: NaN, ltmLabel: '' } }),
+  precedent: () => blankPrecedent(),
 };
 
 /**
@@ -177,8 +180,8 @@ export function toEngineInput(company, data) {
   };
   for (const key of Object.keys(NAN_SECTIONS)) {
     if (d[key] === undefined) { a[key] = NAN_SECTIONS[key](); continue; }
-    if (key === 'comps') a.comps = { ...d.comps, target: nanify(d.comps.target) };
-    else if (key === 'precedent') a.precedent = { ...d.precedent, target: nanify(d.precedent.target) };
+    // comps / precedent pages keep their blanks: the template reads a blank cell as 0 itself
+    if (key === 'comps' || key === 'precedent') a[key] = d[key];
     else if (key === 'regression') a.regression = d.regression;
     else a[key] = nanify(d[key]);
   }

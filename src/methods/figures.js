@@ -3,6 +3,7 @@ import { computeDcf, dcfSensitivity } from '../lib/engine/dcf.js';
 import { computeComps } from '../lib/engine/comps.js';
 import { runRegression } from '../lib/engine/regressionModel.js';
 import { computePrecedent } from '../lib/engine/precedent.js';
+import { STAT_SHORT } from '../lib/engine/templateStats.js';
 import { computeLbo } from '../lib/engine/lbo.js';
 import { computeIpo } from '../lib/engine/ipo.js';
 
@@ -19,6 +20,27 @@ const point = (key, label, value, note = 'point estimate — no range') => ({ ke
 function gridRange(grid) {
   const flat = (grid || []).flat().filter(fin);
   return flat.length ? [Math.min(...flat), Math.max(...flat)] : [NaN, NaN];
+}
+
+const isNum = (v) => typeof v === 'number' && fin(v);
+const statRange = (sel) => `${STAT_SHORT[sel.low]}–${STAT_SHORT[sel.high]}`;
+
+/**
+ * Comps / precedent: one figure per implied-valuation row (mid-statistic
+ * price, low–high range). When a headline multiple is chosen on the output
+ * page, only that row is offered to Combined.
+ */
+function impliedFigures(prefix, name, rows, headline, note) {
+  const pick = headline ? rows.filter((r) => r.key === headline) : rows;
+  return pick.filter((r) => isNum(r.price.mid)).map((r) => {
+    const ends = [r.price.low, r.price.high].filter(isNum);
+    return {
+      key: `${prefix}_${r.key}`, label: `${name} — ${r.label}`, value: r.price.mid,
+      low: ends.length ? Math.min(r.price.mid, ...ends) : r.price.mid,
+      high: ends.length ? Math.max(r.price.mid, ...ends) : r.price.mid,
+      rangeNote: note,
+    };
+  });
 }
 
 const FIGURES = {
@@ -42,10 +64,7 @@ const FIGURES = {
   },
   comps: (a, skipped) => {
     const comps = computeComps(a);
-    const out = comps.rows.map((r) => ({
-      key: `comps_${r.key}`, label: `Comps — ${r.label}`,
-      value: r.impliedMedian, low: r.impliedLow, high: r.impliedHigh, rangeNote: 'peer 25th–75th percentile',
-    }));
+    const out = impliedFigures('comps', 'Comps', comps.implied, a.comps?.headline, `peer ${statRange(comps.statSel)}`);
     if (!skipped.regression) {
       const reg = runRegression(a);
       if (reg?.price) {
@@ -60,14 +79,7 @@ const FIGURES = {
   },
   precedent: (a) => {
     const p = computePrecedent(a);
-    const out = p.rows.map((r) => ({
-      key: `prec_${r.key}`, label: `Precedent — ${r.label}`,
-      value: r.impliedMedian, low: r.impliedLow, high: r.impliedHigh, rangeNote: 'deal 25th–75th percentile',
-    }));
-    if (a.company.currentPrice > 0) {
-      out.push({ key: 'prec_premia', label: 'Precedent — premiums paid', value: p.premia.impliedMedian, low: p.premia.impliedLow, high: p.premia.impliedHigh, rangeNote: '25th–75th percentile 1-day premium' });
-    }
-    return out;
+    return impliedFigures('prec', 'Precedent', p.implied, a.precedent?.headline, `deal ${statRange(p.statSel)}`);
   },
   lbo: (a) => {
     const l = computeLbo(a);

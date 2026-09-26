@@ -1,347 +1,285 @@
 /**
- * Comparable companies analysis, built bottom-up from per-company input pages
- * (see compsCo.js) in the style of the Rosenbaum & Pearl 3E template:
+ * Comparable Company Analysis (trading comps) — the "Comparable Company
+ * Analysis Template" workbook, as an engine.
  *
- *   List            — company, ticker, description, equity value, EV, LTM sales/EBITDA
- *   Benchmarking 1  — market valuation, LTM financials, margins, growth
- *   Benchmarking 2  — general, returns, leverage, coverage, credit ratings
- *   Output          — the trading-multiples page, tiered, with Mean/Median/High/Low
+ *   Inputs            price date, lease toggle, periods, company list (name,
+ *                     ticker, sector, include flag, tier, share price, diluted
+ *                     shares) — `a.comps.settings`, `.target`, `.peers`
+ *   Target / Peer k   one company page each (companyPage.js)
+ *   Comps Summary     Table 1 — market data & valuation multiples
+ *                     Table 2 — operating & financial benchmarking
+ *                     each with statistics over the INCLUDED peers only
+ *                     (target excluded), overall and per tier
+ *   Implied Valuation the chosen multiples × the target's metrics at the
+ *                     chosen low / mid / high statistics → equity value and
+ *                     price per share, and the summary across methods
  *
- * Peers are grouped into user-named tiers of any size; every tier carries its
- * own statistics block and there is an Overall block across all tiers.
- *
- * Comps is LTM only: every multiple is a trailing-twelve-month multiple and
- * there are no forward (consensus-estimate) columns anywhere.
- *
- * The target is this method's own LTM inputs (`a.comps.target`, entered in
- * the Target LTM financials step) plus the share count, price, debt and cash
- * from its Company step — laid out on the same input page as the peers.
+ * Every number follows the template's formulas: multiples are 'NM' on a zero
+ * or negative denominator, statistics skip anything that is not a number,
+ * blank inputs count as 0 (see companyPage.js).
  */
-import { computeCompany, blankCompany, P, regressionFields } from './compsCo.js';
+import { computePage, blankPage, pageIsEmpty, MIN_YEARS, MAX_YEARS } from './companyPage.js';
+import { statBlock, statsSettings, STAT_KEYS } from './templateStats.js';
 
-/* ------------------------------------------------------------------ stats */
+let seq = 0;
+export const nextId = (prefix = 'id') => `${prefix}${Date.now().toString(36)}${(seq++).toString(36)}`;
 
-function percentile(sorted, p) {
-  if (!sorted.length) return NaN;
-  const idx = (sorted.length - 1) * p;
-  const lo = Math.floor(idx), hi = Math.ceil(idx);
-  return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
+/* ------------------------------------------------------------ columns */
+
+/**
+ * Table 1 valuation multiples (columns K–R of the template). `fy` = on the
+ * latest fiscal year, else LTM; `ev` = enterprise-value based (else equity).
+ * `metric` is the page line (or 'book') the multiple divides by.
+ */
+export const COMPS_MULTIPLES = [
+  { key: 'evRevFy', col: 'K', name: 'EV / Revenue', period: 'fy', ev: true, metric: 'rev' },
+  { key: 'evRevLtm', col: 'L', name: 'EV / Revenue', period: 'ltm', ev: true, metric: 'rev' },
+  { key: 'evEbitdaFy', col: 'M', name: 'EV / EBITDA', period: 'fy', ev: true, metric: 'ebitda' },
+  { key: 'evEbitdaLtm', col: 'N', name: 'EV / EBITDA', period: 'ltm', ev: true, metric: 'ebitda' },
+  { key: 'evEbitLtm', col: 'O', name: 'EV / EBIT', period: 'ltm', ev: true, metric: 'ebit' },
+  { key: 'peFy', col: 'P', name: 'P / E', period: 'fy', ev: false, metric: 'patOwners' },
+  { key: 'peLtm', col: 'Q', name: 'P / E', period: 'ltm', ev: false, metric: 'patOwners' },
+  { key: 'pb', col: 'R', name: 'P / B (latest)', period: 'book', ev: false, metric: 'book' },
+];
+
+/**
+ * Table 2 benchmarking columns (D–P). `period`: 'fy' reads the latest fiscal
+ * year column of the page's ratio block, 'ltm' the LTM column.
+ */
+export const COMPS_BENCH = [
+  { key: 'gRev', col: 'D', name: 'Revenue Growth', period: 'fy', fmt: 'pct' },
+  { key: 'gEbitda', col: 'E', name: 'EBITDA Growth', period: 'fy', fmt: 'pct' },
+  { key: 'gPat', col: 'F', name: 'PAT Growth', period: 'fy', fmt: 'pct' },
+  { key: 'ebitdaMargin', col: 'G', name: 'EBITDA Margin', period: 'ltm', fmt: 'pct' },
+  { key: 'patMargin', col: 'H', name: 'PAT Margin', period: 'ltm', fmt: 'pct' },
+  { key: 'roe', col: 'I', name: 'ROE', period: 'ltm', fmt: 'pct' },
+  { key: 'roce', col: 'J', name: 'ROCE', period: 'ltm', fmt: 'pct' },
+  { key: 'de', col: 'K', name: 'Debt / Equity', period: 'ltm', fmt: 'x' },
+  { key: 'ndEbitda', col: 'L', name: 'Net Debt / EBITDA', period: 'ltm', fmt: 'x' },
+  { key: 'intCover', col: 'M', name: 'Interest Coverage', period: 'ltm', fmt: 'x' },
+  { key: 'ccc', col: 'N', name: 'Cash Conv. Cycle (days)', period: 'ltm', fmt: 'days' },
+  { key: 'cfoEbitda', col: 'O', name: 'CFO / EBITDA', period: 'fy', fmt: 'pct' },
+  { key: 'fcfMargin', col: 'P', name: 'FCF Margin', period: 'fy', fmt: 'pct' },
+];
+
+/* ------------------------------------------------------------ settings */
+
+/** Default period labels for n fiscal years ending the year before the projection starts. */
+export function defaultLabels(n, startYear) {
+  const last = Number.isInteger(startYear) ? startYear - 1 : null;
+  // without a year to anchor on, the template's generic labels: … FY -2, FY -1, Latest FY
+  const fy = Array.from({ length: n }, (_, i) => (last === null ? (i === n - 1 ? 'Latest FY' : `FY -${n - 1 - i}`) : `FY${String(last - (n - 1 - i)).slice(-2)}`));
+  return { fy, p: 'Prior YTD', c: 'Current YTD', ltm: 'LTM' };
 }
 
-/** Mean / median / quartiles / high / low over the finite values only. */
-export function stats(values) {
-  const v = values.filter((x) => Number.isFinite(x)).sort((a, b) => a - b);
-  if (!v.length) return { mean: NaN, median: NaN, q1: NaN, q3: NaN, high: NaN, low: NaN, n: 0 };
-  return {
-    mean: v.reduce((s, x) => s + x, 0) / v.length,
-    median: percentile(v, 0.5),
-    q1: percentile(v, 0.25),
-    q3: percentile(v, 0.75),
-    high: v[v.length - 1],
-    low: v[0],
-    n: v.length,
-  };
-}
-
-/* --------------------------------------------------- target from the model */
-
-/** Target FY0 end: the year before the projection starts, on the fiscal month ('' if unknown). */
-function targetFyEnd(a) {
-  const p = a.settings?.period || {};
-  if (!Number.isInteger(p.startYear) || !Number.isInteger(p.fyEndMonth)) return '';
-  const year = p.startYear - 1;
-  const month = p.fyEndMonth;
-  const day = new Date(Date.UTC(year, month, 0)).getUTCDate();   // last day of that month
-  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+/** The label `k` years before `label` when it ends in a year number ("FY24" → "FY22"); null otherwise. */
+function yearsBefore(label, k) {
+  const m = /^(.*?)(\d+)(\D*)$/.exec(String(label ?? '').trim());
+  if (!m) return null;
+  const w = m[2].length;
+  const y = Number(m[2]) - k;
+  const num = w <= 2 ? String(((y % 100) + 100) % 100).padStart(w, '0') : (y >= 0 ? String(y) : null);
+  return num === null ? null : `${m[1]}${num}${m[3]}`;
 }
 
 /**
- * The target's input page, built from the method's own LTM inputs — nothing
- * is projected, back-cast or assumed:
- *   FY0 (= LTM, no stubs) — revenue, gross profit, EBITDA, EBIT, net income
- *                           and interest as entered (reported);
- *   FY-1                  — prior fiscal-year revenue and EBITDA, only if
- *                           entered (else NA); FY-2 is NA.
- * D&A = EBITDA − EBIT (the identity between the two reported figures). Lines
- * the step does not ask for (COGS split, taxes, cash flow, working-capital
- * balances) stay blank, so what depends on them reports NA.
- * Balance sheet: current column = the Company step's debt and cash, and the
- * shareholders' equity when entered; the prior column is blank.
+ * Period labels for n years from stored labels (latest-last, padded / trimmed
+ * on the left). Years added in front of stored labels continue their
+ * numbering (FY24, FY25, FY26 → FY22, FY23, FY24, FY25, FY26).
  */
-export function targetCompanyPage(a) {
-  const c = a.company;
-  const t = a.comps?.target || {};
-  const v = (x) => (Number.isFinite(x) ? x : null);
-  const fy = (prior, ltm) => [null, v(prior), v(ltm), 0, 0];   // FY-2, FY-1, FY0, stubs (none)
-  const da = v(t.ebitda - t.ebit);
-
-  return blankCompany({
-    id: '__target__',
-    name: c.name || '',
-    ticker: t.ticker || '',
-    exchange: t.exchange || '',
-    tierId: null,
-    description: t.description || '',
-    fyEnd: targetFyEnd(a),
-    stubEnd: targetFyEnd(a),   // no stub: the LTM year is FY0
-    moodys: t.moodys || '',
-    sp: t.sp || '',
-    beta: v(t.beta),
-    taxRate: v(c.taxRate),
-    price: v(c.currentPrice),
-    high52: v(t.high52),
-    low52: v(t.low52),
-    dpsMRQ: null,
-    is: {
-      sales: fy(t.priorRevenue, t.revenue),
-      cogs: fy(null, null), sga: fy(null, null), otherExp: fy(null, null),
-      interest: fy(null, t.interest),
-      taxes: fy(null, null),
-      nci: fy(null, null), prefDiv: fy(null, null),
-      dilutedShares: fy(null, c.sharesOut),
-    },
-    reported: {
-      grossProfit: fy(null, t.grossProfit),
-      ebitda: fy(t.priorEbitda, t.ebitda),
-      ebit: fy(null, t.ebit),
-      netIncome: fy(null, t.netIncome),
-    },
-    cf: { cfo: fy(null, null), capex: fy(null, null), da: fy(null, da) },
-    bs: {
-      ...blankCompany().bs,
-      cash: [null, v(c.cash)],
-      debt: [null, v(c.grossDebt)],
-      nci: [null, null], preferred: [null, null],
-      equity: [null, v(t.equity)],
-    },
-    basicShares: v(c.sharesOut),
-    options: [], converts: [],
-  });
+export function periodLabels(stored, n, startYear) {
+  const d = defaultLabels(n, startYear);
+  const fy = Array.isArray(stored?.fy) ? stored.fy.slice(-n) : [];
+  const pad = n - fy.length;
+  const front = Array.from({ length: pad }, (_, i) => (fy.length ? yearsBefore(fy[0], pad - i) : null) || d.fy[i]);
+  return {
+    fy: [...front, ...fy].map((x, i) => (String(x ?? '').trim() ? x : d.fy[i])),
+    p: stored?.p || d.p, c: stored?.c || d.c, ltm: stored?.ltm || d.ltm,
+  };
 }
 
-/* ------------------------------------------------------------ tier helpers */
+export const clampYears = (n) => Math.min(MAX_YEARS, Math.max(MIN_YEARS, Number.isInteger(n) ? n : 3));
 
-/** Tiers as configured, plus a catch-all for peers with no (or a stale) tier. */
-export function resolveTiers(a) {
-  const tiers = (a.comps?.tiers || []).map((t) => ({ ...t }));
+/** Multiples switched on for the implied valuation (template: all). */
+export function usedMultiples(list, sel) {
+  return list.filter((m) => !sel || sel[m.key] !== false);
+}
+
+/* ------------------------------------------------------------ blanks */
+
+/** A peer slot nothing has been typed or fetched into (it stays out of the counts). */
+export const isBlankPeer = (p) => !p || (!String(p.name || '').trim() && !String(p.ticker || '').trim()
+  && !isNum(p.price) && !isNum(p.shares) && pageIsEmpty(p.page));
+
+export const blankCompsSettings = () => ({
+  priceDate: '',
+  lease: 1,                      // include lease liabilities in EV (1 = Yes, 0 = No) — template default
+  years: 3,                      // number of historical fiscal years (1–10)
+  ytd: true,                     // prior / current YTD columns on the pages
+  labels: null,                  // { fy: [], p, c, ltm } — null = defaults
+  stats: null,                   // templateStats settings — null = template's
+  multiples: null,               // { key: false } to leave a multiple out — null = all
+});
+
+export const blankTargetCo = () => ({ ticker: '', sector: '', price: null, shares: null, page: blankPage() });
+
+export const blankPeer = (over = {}) => ({
+  id: nextId('peer'), name: '', ticker: '', sector: '', include: 1, tierId: null,
+  price: null, shares: null, page: blankPage(), ...over,
+});
+
+/**
+ * The peer slots in use: the number of peers the user chose (peerCount), each
+ * the stored peer or an empty slot. Peers beyond the count are kept in the
+ * data (so lowering and raising the count loses nothing) but take no part.
+ */
+export function peerSlots(c) {
+  const stored = c?.peers || [];
+  const n = Number.isInteger(c?.peerCount) && c.peerCount >= 0 ? c.peerCount : stored.length;
+  return Array.from({ length: n }, (_, k) => stored[k] || blankPeer({ id: `slot${k}` }));
+}
+
+/* ------------------------------------------------------------ helpers */
+
+const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
+const z = (v) => (isNum(v) ? v : 0);
+
+/** IF(metric<=0, "NM", base/metric). A blank metric reads 0 → NM. */
+const multipleOf = (base, metric) => (z(metric) <= 0 ? 'NM' : z(base) / z(metric));
+
+/** A computed row's value for a multiple spec. */
+function multipleValue(pg, spec) {
+  const { L } = pg.cols;
+  const col = spec.period === 'fy' ? pg.n - 1 : L;
+  const base = spec.ev ? pg.market.ev : pg.market.equity;
+  const metric = spec.metric === 'book' ? pg.market.bookEquity : pg.v[spec.metric][col];
+  return multipleOf(base, metric);
+}
+function benchValue(pg, spec) {
+  const col = spec.period === 'fy' ? pg.n - 1 : pg.cols.L;
+  return pg.v[spec.key][col];
+}
+
+/* ------------------------------------------------------------ main */
+
+/** The company rows of the summary — target first, then every peer slot. */
+function summaryRow(pg, meta) {
+  const { L } = pg.cols;
+  return {
+    ...meta,
+    page: pg,
+    price: pg.market.price,
+    mcap: pg.market.equity,
+    netDebt: pg.market.netDebt,
+    ev: pg.market.ev,
+    revLtm: pg.v.rev[L],
+    ebitdaLtm: pg.v.ebitda[L],
+    patLtm: pg.v.patOwners[L],
+    mult: Object.fromEntries(COMPS_MULTIPLES.map((m) => [m.key, multipleValue(pg, m)])),
+    bench: Object.fromEntries(COMPS_BENCH.map((b) => [b.key, benchValue(pg, b)])),
+  };
+}
+
+/** Statistics over the rows included in the statistics (include = 1), per column. */
+function statsFor(rows, cols, get, method) {
+  const incl = rows.filter((r) => r.include === 1);
+  return Object.fromEntries(cols.map((c) => [c.key, statBlock(incl.map((r) => get(r, c)), method)]));
+}
+
+/** Tier groups for the per-tier statistics: the named tiers, plus 'Unassigned' when tiers exist and a peer has none. */
+export function tierGroups(tiers = [], peers = []) {
+  if (!tiers.length) return [];
   const known = new Set(tiers.map((t) => t.id));
-  const peers = a.comps?.peers || [];
-  const orphans = peers.filter((p) => !known.has(p.tierId));
-  if (orphans.length && !tiers.length) return [{ id: null, name: 'Comparable Companies' }];
-  if (orphans.length) return [...tiers, { id: null, name: 'Unassigned' }];
-  return tiers;
+  const groups = tiers.map((t) => ({ id: t.id, name: t.name || 'Tier' }));
+  if (peers.some((p) => !known.has(p.tierId))) groups.push({ id: null, name: 'Unassigned' });
+  return groups;
 }
-
-/* ------------------------------------------------- benchmarking column spec
-
-   One definition drives the on-screen tables, the statistics blocks and the
-   Excel export, so a column can never disagree between them. `get(page)` reads
-   the computed page; `cell` names the source row on the company sheet (used by
-   the exporter to write a live cross-sheet link instead of a value).          */
-
-export const LIST_COLS = [
-  { key: 'name', label: 'Company', kind: 'text', get: (p) => p.co.name, cell: 'name' },
-  { key: 'ticker', label: 'Ticker', kind: 'text', get: (p) => p.co.ticker, cell: 'ticker' },
-  { key: 'description', label: 'Business Description', kind: 'text', wide: true, get: (p) => p.co.description, cell: 'description' },
-  { key: 'equityValue', label: 'Equity Value', kind: 'money', get: (p) => p.equityValue, cell: 'equityValue' },
-  { key: 'enterpriseValue', label: 'Enterprise Value', kind: 'money', get: (p) => p.enterpriseValue, cell: 'enterpriseValue' },
-  { key: 'ltmSales', label: 'LTM Sales', kind: 'money', get: (p) => p.is.sales[P.LTM], cell: 'ltmSales' },
-  { key: 'ltmEbitda', label: 'LTM EBITDA', kind: 'money', get: (p) => p.adjEbitda[P.LTM], cell: 'ltmEbitda' },
-];
-
-export const BENCH1_GROUPS = [
-  {
-    title: 'Market Valuation',
-    cols: [
-      { key: 'equityValue', label: 'Equity Value', kind: 'money', get: (p) => p.equityValue, cell: 'equityValue' },
-      { key: 'enterpriseValue', label: 'Enterprise Value', kind: 'money', get: (p) => p.enterpriseValue, cell: 'enterpriseValue' },
-    ],
-  },
-  {
-    title: 'LTM Financial Statistics',
-    cols: [
-      { key: 'ltmSales', label: 'Sales', kind: 'money', get: (p) => p.is.sales[P.LTM], cell: 'ltmSales' },
-      { key: 'ltmGross', label: 'Gross Profit', kind: 'money', get: (p) => p.adjGrossProfit[P.LTM], cell: 'ltmGrossProfit' },
-      { key: 'ltmEbitda', label: 'EBITDA', kind: 'money', get: (p) => p.adjEbitda[P.LTM], cell: 'ltmEbitda' },
-      { key: 'ltmEbit', label: 'EBIT', kind: 'money', get: (p) => p.adjEbit[P.LTM], cell: 'ltmEbit' },
-      { key: 'ltmNi', label: 'Net Income', kind: 'money', get: (p) => p.adjNetIncome[P.LTM], cell: 'ltmNetIncome' },
-    ],
-  },
-  {
-    title: 'LTM Profitability Margins',
-    cols: [
-      { key: 'grossMargin', label: 'Gross Profit (%)', kind: 'pct', stat: true, get: (p) => p.grossMargin[P.LTM], cell: 'grossMargin' },
-      { key: 'ebitdaMargin', label: 'EBITDA (%)', kind: 'pct', stat: true, get: (p) => p.ebitdaMargin[P.LTM], cell: 'ebitdaMargin' },
-      { key: 'ebitMargin', label: 'EBIT (%)', kind: 'pct', stat: true, get: (p) => p.ebitMargin[P.LTM], cell: 'ebitMargin' },
-      { key: 'netMargin', label: 'Net Income (%)', kind: 'pct', stat: true, get: (p) => p.netMargin[P.LTM], cell: 'netMargin' },
-    ],
-  },
-  {
-    title: 'Historical Growth Rates',
-    cols: [
-      { key: 'salesHist1', label: 'Sales 1-yr', kind: 'pct', stat: true, get: (p) => p.growth.sales.hist1, cell: 'gSalesHist1' },
-      { key: 'salesHist2', label: 'Sales 2-yr CAGR', kind: 'pct', stat: true, get: (p) => p.growth.sales.hist2, cell: 'gSalesHist2' },
-      { key: 'ebitdaHist1', label: 'EBITDA 1-yr', kind: 'pct', stat: true, get: (p) => p.growth.ebitda.hist1, cell: 'gEbitdaHist1' },
-      { key: 'epsHist1', label: 'EPS 1-yr', kind: 'pct', stat: true, get: (p) => p.growth.eps.hist1, cell: 'gEpsHist1' },
-    ],
-  },
-];
-
-export const BENCH2_GROUPS = [
-  {
-    title: 'General',
-    cols: [
-      { key: 'fyEnd', label: 'FYE', kind: 'date', get: (p) => p.co.fyEnd, cell: 'fyEnd' },
-      { key: 'beta', label: 'Predicted Beta', kind: 'num', stat: true, get: (p) => (Number.isFinite(p.co.beta) ? p.co.beta : NaN), cell: 'beta' },
-    ],
-  },
-  {
-    title: 'Return on Investment',
-    cols: [
-      { key: 'roic', label: 'ROIC (%)', kind: 'pct', stat: true, get: (p) => p.roic, cell: 'roic' },
-      { key: 'roe', label: 'ROE (%)', kind: 'pct', stat: true, get: (p) => p.roe, cell: 'roe' },
-      { key: 'roa', label: 'ROA (%)', kind: 'pct', stat: true, get: (p) => p.roa, cell: 'roa' },
-      { key: 'divYield', label: 'Implied Div. Yield (%)', kind: 'pct', stat: true, get: (p) => p.dividendYield, cell: 'dividendYield' },
-    ],
-  },
-  {
-    title: 'LTM Leverage Ratios',
-    cols: [
-      { key: 'debtToCap', label: 'Debt / Tot. Cap. (%)', kind: 'pct', stat: true, get: (p) => p.credit.debtToTotalCap, cell: 'debtToTotalCap' },
-      { key: 'debtEbitda', label: 'Debt / EBITDA (x)', kind: 'x', stat: true, get: (p) => p.credit.debtToEbitda, cell: 'debtToEbitda' },
-      { key: 'netDebtEbitda', label: 'Net Debt / EBITDA (x)', kind: 'x', stat: true, get: (p) => p.credit.netDebtToEbitda, cell: 'netDebtToEbitda' },
-    ],
-  },
-  {
-    title: 'LTM Coverage Ratios',
-    cols: [
-      { key: 'ebitdaInt', label: 'EBITDA / Int. Exp. (x)', kind: 'x', stat: true, get: (p) => p.credit.ebitdaToInterest, cell: 'ebitdaToInterest' },
-      { key: 'ebitdaCapexInt', label: '(EBITDA − Cpx) / Int. (x)', kind: 'x', stat: true, get: (p) => p.credit.ebitdaLessCapexToInterest, cell: 'ebitdaLessCapexToInterest' },
-      { key: 'ebitInt', label: 'EBIT / Int. Exp. (x)', kind: 'x', stat: true, get: (p) => p.credit.ebitToInterest, cell: 'ebitToInterest' },
-    ],
-  },
-  {
-    title: 'Credit Ratings',
-    cols: [
-      { key: 'moodys', label: "Moody's", kind: 'text', get: (p) => p.co.moodys, cell: 'moodys' },
-      { key: 'sp', label: 'S&P', kind: 'text', get: (p) => p.co.sp, cell: 'sp' },
-    ],
-  },
-];
+export const tierNameOf = (peer, tiers = []) => {
+  const t = tiers.find((x) => x.id === peer.tierId);
+  return t ? t.name || 'Tier' : tiers.length ? 'Unassigned' : '';
+};
 
 /**
- * The trading-multiples output page.
- * The multiple columns carry `nm: true`: a non-positive denominator makes the
- * multiple not-meaningful, so it renders "NM" (not "NA") and drops out of the
- * Mean / Median / High / Low.
+ * Implied valuation rows: a statistic of the peer multiple × the target's
+ * metric → equity value (EV methods less net debt and NCI) → price per share.
+ * Returns the template's cells: 'NM' where the template shows NM.
  */
-export const OUTPUT_GROUPS = [
-  {
-    title: '',
-    cols: [
-      { key: 'price', label: 'Current Price', kind: 'price', get: (p) => p.price, cell: 'price' },
-      { key: 'pct52', label: '% of 52-wk. High', kind: 'pct', stat: true, get: (p) => p.pctOf52wHigh, cell: 'pctOf52wHigh' },
-      { key: 'equityValue', label: 'Equity Value', kind: 'money', get: (p) => p.equityValue, cell: 'equityValue' },
-      { key: 'enterpriseValue', label: 'Enterprise Value', kind: 'money', get: (p) => p.enterpriseValue, cell: 'enterpriseValue' },
-    ],
-  },
-  {
-    title: 'LTM Trading Multiples',
-    cols: [
-      { key: 'evSalesL', label: 'EV / Sales', kind: 'x', stat: true, get: (p) => p.multiples.evSales.values[0], cell: 'evSales0', nm: true },
-      { key: 'evEbitdaL', label: 'EV / EBITDA', kind: 'x', stat: true, get: (p) => p.multiples.evEbitda.values[0], cell: 'evEbitda0', nm: true },
-      { key: 'evEbitL', label: 'EV / EBIT', kind: 'x', stat: true, get: (p) => p.multiples.evEbit.values[0], cell: 'evEbit0', nm: true },
-      { key: 'peL', label: 'P / E', kind: 'x', stat: true, get: (p) => p.multiples.pe.values[0], cell: 'pe0', nm: true },
-      { key: 'pFcfL', label: 'P / FCF', kind: 'x', stat: true, get: (p) => p.multiples.pFcf.values[0], cell: 'pFcf0', nm: true },
-    ],
-  },
-];
-
-const flatCols = (groups) => groups.flatMap((g) => g.cols);
-
-/** Build a { colKey: stats } block over a set of pages for one column spec. */
-function statsBlock(cols, pages) {
-  const out = {};
-  for (const c of cols) out[c.key] = c.stat ? stats(pages.map((p) => c.get(p))) : null;
-  return out;
-}
-
-/* ------------------------------------------------------------------- main */
-
-/**
- * The four LTM implied-price rows: the peer LTM multiple (median, 25th and
- * 75th percentile) × the target's LTM metric, bridged to a share price.
- */
-export const IMPLIED_ROWS = [
-  { key: 'evSales', label: 'EV / LTM Sales', metricLabel: 'LTM Revenue', ev: true, metric: (t) => t.revenue, pick: (p) => p.multiples.evSales.values[0] },
-  { key: 'evEbitda', label: 'EV / LTM EBITDA', metricLabel: 'LTM EBITDA', ev: true, metric: (t) => t.ebitda, pick: (p) => p.multiples.evEbitda.values[0] },
-  { key: 'evEbit', label: 'EV / LTM EBIT', metricLabel: 'LTM EBIT', ev: true, metric: (t) => t.ebit, pick: (p) => p.multiples.evEbit.values[0] },
-  { key: 'pe', label: 'P / LTM E', metricLabel: 'LTM Net Income', ev: false, metric: (t) => t.netIncome, pick: (p) => p.multiples.pe.values[0] },
-];
-
-/** Full comparable companies analysis (LTM only). */
-export function computeComps(a) {
-  const targetPage = computeCompany(targetCompanyPage(a));
-
-  const peerCos = a.comps?.peers || [];
-  const pages = peerCos.map((co) => computeCompany(co));
-
-  const tiersCfg = resolveTiers(a);
-  const tiers = tiersCfg.map((t) => {
-    const tPages = pages.filter((p) => (p.co.tierId ?? null) === (t.id ?? null));
-    return {
-      ...t,
-      pages: tPages,
-      bench1: statsBlock(flatCols(BENCH1_GROUPS), tPages),
-      bench2: statsBlock(flatCols(BENCH2_GROUPS), tPages),
-      output: statsBlock(flatCols(OUTPUT_GROUPS), tPages),
-    };
+export function impliedRows(specs, stats1, target, sel) {
+  const { netDebt, nci, shares } = target;
+  return specs.map((spec) => {
+    const metric = spec.metric;
+    const eq = (mult) => (isNum(mult) && z(metric) > 0 ? (spec.ev ? mult * metric - netDebt - nci : mult * metric) : 'NM');
+    const px = (e) => (isNum(e) && z(shares) > 0 ? e / shares : 'NM');
+    const st = stats1[spec.key];
+    const mults = { low: st[sel.low], mid: st[sel.mid], high: st[sel.high] };
+    const equity = { low: eq(mults.low), mid: eq(mults.mid), high: eq(mults.high) };
+    const price = { low: px(equity.low), mid: px(equity.mid), high: px(equity.high) };
+    return { ...spec, metric, mults, equity, price };
   });
-  const overall = {
-    pages,
-    bench1: statsBlock(flatCols(BENCH1_GROUPS), pages),
-    bench2: statsBlock(flatCols(BENCH2_GROUPS), pages),
-    output: statsBlock(flatCols(OUTPUT_GROUPS), pages),
+}
+
+/** Summary across the implied rows: lowest, median of the mid-based prices, highest, upside. */
+export function impliedSummary(rows, currentPrice) {
+  const all = rows.flatMap((r) => [r.price.low, r.price.mid, r.price.high]).filter(isNum);
+  const mids = rows.map((r) => r.price.mid).filter(isNum).sort((a, b) => a - b);
+  const n = mids.length;
+  const medianMid = n ? (n % 2 ? mids[(n - 1) / 2] : (mids[n / 2 - 1] + mids[n / 2]) / 2) : 'NM';
+  return {
+    lowest: all.length ? Math.min(...all) : 'NM',
+    medianMid,
+    highest: all.length ? Math.max(...all) : 'NM',
+    currentPrice: currentPrice ?? null,
+    upside: isNum(medianMid) && z(currentPrice) > 0 ? medianMid / currentPrice - 1 : 'NM',
   };
+}
 
-  /* ---- implied share price from the peer LTM multiples ---- */
-  const netDebt = a.company.grossDebt - a.company.cash;
-  const shares = a.company.sharesOut;
-  const t = a.comps?.target || {};
-  const target = { revenue: t.revenue, ebitda: t.ebitda, ebit: t.ebit, netIncome: t.netIncome, ltmLabel: t.ltmLabel || '' };
-  const toPrice = (ev) => (m) => (shares > 0 ? (ev ? m - netDebt : m) / shares : NaN);
+/** Label for a multiple spec given the period labels. */
+export const multipleLabel = (m, labels) => (m.period === 'book' ? m.name : `${m.name} ${m.period === 'fy' ? labels.fy[labels.fy.length - 1] : labels.ltm}`);
 
-  const rows = IMPLIED_ROWS.map((r) => {
-    const s = stats(pages.map(r.pick));
-    const metric = r.metric(target);
-    const px = toPrice(r.ev);
-    return {
-      key: r.key, label: r.label, metricLabel: r.metricLabel, ev: r.ev, metric, ...s,
-      impliedMedian: px(s.median * metric),
-      impliedLow: px(s.q1 * metric),
-      impliedHigh: px(s.q3 * metric),
-    };
+/** Full comparable company analysis. */
+export function computeComps(a) {
+  const c = a.comps || {};
+  const s = { ...blankCompsSettings(), ...(c.settings || {}) };
+  const n = clampYears(s.years);
+  const labels = periodLabels(s.labels, n, a.settings?.period?.startYear);
+  const statSel = statsSettings(s.stats || {});
+  const toggle = s.lease === 0 ? 0 : 1;
+  const ytd = s.ytd !== false;
+  const tiers = c.tiers || [];
+
+  const t = c.target || blankTargetCo();
+  const tPage = computePage(t.page, { n, toggle, ytd, market: { price: t.price, shares: t.shares } });
+  const target = summaryRow(tPage, { id: '__target__', role: 'Target', name: a.company?.name || '', ticker: t.ticker || '', sector: t.sector || '', include: null, tier: '' });
+
+  const slots = peerSlots(c);
+  const peers = slots.map((p, i) => summaryRow(
+    computePage(p.page, { n, toggle, ytd, market: { price: p.price, shares: p.shares } }),
+    { id: p.id, role: `Peer ${i + 1}`, name: p.name || '', ticker: p.ticker || '', sector: p.sector || '', include: p.include === 1 ? 1 : p.include === 0 ? 0 : null, empty: isBlankPeer(p), tierId: p.tierId ?? null, tier: tierNameOf(p, tiers) },
+  ));
+
+  const getMult = (r, col) => r.mult[col.key];
+  const getBench = (r, col) => r.bench[col.key];
+  const stats1 = statsFor(peers, COMPS_MULTIPLES, getMult, statSel.method);
+  const stats2 = statsFor(peers, COMPS_BENCH, getBench, statSel.method);
+  const tierStats = tierGroups(tiers, slots).map((g) => {
+    const rows = peers.filter((r) => (r.tierId ?? null) === g.id || (g.id === null && !tiers.some((x) => x.id === r.tierId)));
+    return { ...g, stats1: statsFor(rows, COMPS_MULTIPLES, getMult, statSel.method), stats2: statsFor(rows, COMPS_BENCH, getBench, statSel.method) };
   });
+
+  /* ---- implied valuation of the target ---- */
+  const L = tPage.cols.L, fy = tPage.n - 1;
+  const metricOf = (m) => (m.metric === 'book' ? tPage.market.bookEquity : tPage.v[m.metric][m.period === 'fy' ? fy : L]);
+  const specs = usedMultiples(COMPS_MULTIPLES, s.multiples).map((m) => ({ ...m, label: multipleLabel(m, labels), metricKey: m.metric, metric: metricOf(m) }));
+  const tgt = { netDebt: tPage.market.netDebt, nci: tPage.market.nci, shares: t.shares };
+  const implied = impliedRows(specs, stats1, tgt, statSel);
+  const summary = impliedSummary(implied, t.price);
 
   return {
-    target, netDebt, shares, rows,
-    peers: compsPeerRows(a, pages),
-    targetPage, pages, tiers, overall,
-    cols: { list: LIST_COLS, bench1: BENCH1_GROUPS, bench2: BENCH2_GROUPS, output: OUTPUT_GROUPS },
+    n, labels, ytd, toggle, statSel, settings: s,
+    target, peers, tiers: tierStats,
+    stats1, stats2, implied, summary,
+    targetMarket: { price: t.price, shares: t.shares, mcap: tPage.market.equity, netDebt: tPage.market.netDebt, nci: tPage.market.nci, ev: tPage.market.ev },
   };
 }
 
-/**
- * Peer rows flattened for the regression workbench and the peer charts:
- * identity fields from the input page, multiples and stats computed.
- * Any custom regression variables stored on the peer object pass through.
- * Size variables (revSize, mktCapSize) are in the valuation currency and unit.
- */
-export function compsPeerRows(a, pagesIn = null) {
-  const pages = pagesIn || (a.comps?.peers || []).map((co) => computeCompany(co));
-  return pages.map((p) => ({
-    ...p.co,
-    ...regressionFields(p),
-    _page: p,
-  }));
-}
+export { STAT_KEYS };

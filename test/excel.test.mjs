@@ -1,6 +1,8 @@
 /**
  * Structure of every method's Excel file: it writes and reads back, carries
- * exactly Cover + Inputs + its own calculation sheets, the Inputs sheet holds
+ * exactly Cover + Inputs + its own calculation sheets (comps and precedent:
+ * the user's template set — Instructions, Inputs, Summary, Implied Valuation,
+ * company sheets), the Inputs sheet holds
  * only that method's inputs, every formula's references resolve to a sheet in
  * the file (and, across sheets, to a non-empty cell), parentheses balance,
  * inputs are blue, and nothing writes NaN / Infinity into a cell.
@@ -29,8 +31,8 @@ const FOREIGN = {
   ipo: ['WACC', 'Entry EV / LTM EBITDA', 'Opening net PP&E'],
   ts: ['WACC', 'Entry EV / LTM EBITDA', 'Primary raise (fresh capital)'],
   ratios: ['WACC', 'Sponsor IRR hurdle', 'Offer P/E'],
-  comps: ['Tax rate', 'WACC', 'Opening net working capital', 'Projection years', 'Opening tax-loss carryforward (NOL)'],
-  precedent: ['Tax rate', 'WACC', 'LTM EBIT', 'Projection years'],
+  comps: ['Tax rate', 'WACC', 'Opening net working capital', 'Projection years', 'Opening tax-loss carryforward (NOL)', 'Valuation date'],
+  precedent: ['Tax rate', 'WACC', 'LTM EBIT', 'Projection years', 'Share price date'],
 };
 
 function* extractRefs(formula) {
@@ -58,7 +60,8 @@ async function checkFile(a, method, opts = {}, expect = EXPECT[method]) {
   await rb.xlsx.load(buf);
   const names = rb.worksheets.map((w) => w.name);
   if (expect) ok(names.join('|') === expect.join('|'), `${method}: sheets [${names.join(', ')}]`);
-  ok(names[0] === 'Cover', `${method}: Cover first`);
+  const template = method === 'comps' || method === 'precedent';
+  ok(names[0] === (template ? 'Instructions' : 'Cover'), `${method}: ${template ? 'Instructions' : 'Cover'} first`);
   if (method !== 'combined') ok(names[1] === 'Inputs', `${method}: Inputs second`);
   ok(!names.includes('Assumptions') && !names.includes('Summary'), `${method}: no legacy Assumptions / Summary sheet`);
 
@@ -70,8 +73,10 @@ async function checkFile(a, method, opts = {}, expect = EXPECT[method]) {
     for (const bad of FOREIGN[method] || []) ok(!labels.includes(bad.trim()), `${method}: Inputs has no foreign input "${bad}"`);
     let blue = 0;
     sheets.Inputs.eachRow((row) => {
-      const c = row.getCell(2);
-      if (c.value !== null && c.value !== undefined && !(c.value && c.value.formula) && c.font?.color?.argb === C_INPUT) blue++;
+      for (const c of [row.getCell(2), row.getCell(3)]) {
+        const isBlue = template ? c.font?.color?.argb === 'FF0000FF' && c.fill?.fgColor?.argb === 'FFFFF2CC' : c.font?.color?.argb === C_INPUT;
+        if (c.value !== null && c.value !== undefined && !(c.value && c.value.formula) && isBlue) blue++;
+      }
     });
     ok(blue >= 5, `${method}: Inputs carries blue input cells (${blue})`);
   }

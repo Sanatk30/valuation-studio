@@ -5,7 +5,6 @@ import { projectOperations } from '../engine/drivers.js';
 import { dcfReportedHistory } from '../engine/dcf.js';
 import { openingNol } from '../engine/tax.js';
 import { otherNetAssetsOf } from '../engine/threeStatement.js';
-import { computePrecedent } from '../engine/precedent.js';
 import { hasHistory } from '../historyModel.js';
 import { SENS_DEFAULTS } from '../../store/methodModel.js';
 import {
@@ -14,9 +13,7 @@ import {
 } from './xlsxUtil.js';
 import { writeDcfSheet, writeDcfLower, writeWaccSheet } from './dcfSheets.js';
 import { writeThreeStatementSheet, writePastRatiosSheet, writeLboSheet, writeIpoSheet } from './modelSheets.js';
-import { addCompsSheets } from './compsSheets.js';
-import { addPrecedentSheets } from './precedentSheets.js';
-import { writeRegressionSheet } from './regressionSheet.js';
+import { buildCompsWorkbook, buildPrecedentWorkbook } from './templateWorkbooks.js';
 
 /*
  * Live-formula Excel export — one file per method.
@@ -250,39 +247,6 @@ function writeInputs(ws, a, F, methodId, opts) {
     r++;
   }
 
-  /* ---- comps target ---- */
-  if (methodId === 'comps') {
-    const t = a.comps?.target || {};
-    section('TARGET — LTM FINANCIALS');
-    inp('tRev', 'LTM revenue', nv(t.revenue), F.money);
-    inp('tEbitda', 'LTM EBITDA', nv(t.ebitda), F.money);
-    inp('tEbit', 'LTM EBIT', nv(t.ebit), F.money);
-    inp('tNi', 'LTM net income', nv(t.netIncome), F.money);
-    inp('tPriorRev', 'Prior fiscal-year revenue', nv(t.priorRevenue), F.money, 'For historical growth');
-    inp('tPriorEbitda', 'Prior fiscal-year EBITDA', nv(t.priorEbitda), F.money);
-    inp('tGross', 'LTM gross profit', nv(t.grossProfit), F.money);
-    inp('tInt', 'LTM interest expense', nv(t.interest), F.money);
-    inp('tEquity', "Shareholders' equity", nv(t.equity), F.money, 'For ROE');
-    inp('tBeta', 'Levered beta', nv(t.beta), F.num3);
-    inp('tHigh', '52-week high', nv(t.high52), F.price);
-    inp('tLow', '52-week low', nv(t.low52), F.price);
-    inp('tTicker', 'Ticker', txt(t.ticker), undefined);
-    inp('tExchange', 'Exchange', txt(t.exchange), undefined);
-    inp('tMoodys', "Moody's rating", txt(t.moodys), undefined);
-    inp('tSp', 'S&P rating', txt(t.sp), undefined);
-    inp('tDesc', 'Business description', txt(t.description) || '[to come]', undefined);
-    r++;
-  }
-
-  /* ---- precedent target ---- */
-  if (methodId === 'precedent') {
-    const t = a.precedent?.target || {};
-    section('TARGET — LTM FINANCIALS');
-    inp('pRev', 'LTM revenue', nv(t.revenue), F.money);
-    inp('pEbitda', 'LTM EBITDA', nv(t.ebitda), F.money);
-    r++;
-  }
-
   /* ---- sensitivity steps ---- */
   const step = (group, key) => {
     const g = a.sens?.[group];
@@ -371,6 +335,9 @@ function writeCombinedSheet(ws, a, F, combined) {
 export function buildWorkbook(a, methodId, opts = {}) {
   if (!EXPORT_METHODS.includes(methodId)) throw new Error(`Unknown method "${methodId}"`);
   const skipped = opts.skipped || {};
+  // comps and precedent follow the user's template workbooks (their own sheet set, no cover)
+  if (methodId === 'comps') return buildCompsWorkbook(a, { skipped });
+  if (methodId === 'precedent') return buildPrecedentWorkbook(a);
   const wb = new ExcelJS.Workbook();
   wb.creator = 'Quant Value';
   wb.calcProperties = { fullCalcOnLoad: true };
@@ -452,30 +419,6 @@ export function buildWorkbook(a, methodId, opts = {}) {
         order.push('Past Ratios');
       }
     }
-  }
-
-  if (methodId === 'comps') {
-    const pkg = addCompsSheets(wb, a, F, unitNote, taken, R);
-    const { b1, b2, out, implied } = pkg.analysisNames;
-    order.push(b1, b2, out, implied);
-    if (!skipped.regression && a.regression?.yVar) {
-      writeRegressionSheet(wb.addWorksheet('Regression'), a, F, R, pkg.peerRefs);
-      order.push('Regression');
-    }
-    order.push(pkg.analysisNames.list, pkg.targetSheetName, ...pkg.peerSheetNames);
-    contents.push(['Benchmarking 1 · 2', 'peer financial statistics and ratios, tier by tier.'],
-      ['Comps Analysis', 'the LTM trading multiples with Mean / Median / High / Low.'],
-      ...(implied ? [['Implied Valuation', 'peer LTM quartiles applied to the target — every row side by side.']] : []),
-      ...(order.includes('Regression') ? [['Regression', SHEET_NOTES.Regression]] : []),
-      ['List · company pages', `the target page (linked to Inputs) and ${pkg.peerSheetNames.length} peer input page${pkg.peerSheetNames.length === 1 ? '' : 's'}.`]);
-  }
-
-  if (methodId === 'precedent') {
-    const prec = computePrecedent(a);
-    const pkg = addPrecedentSheets(wb, a, prec, F, unitNote, taken, R);
-    order.push(...pkg.order);
-    contents.push(['Precedent', 'the transaction multiples and premiums, Mean / Median / High / Low, and the implied takeover value.'],
-      ['Deal List · deal pages', `${pkg.dealNames.length} transaction input page${pkg.dealNames.length === 1 ? '' : 's'}, each priced at its offer.`]);
   }
 
   for (const name of order) if (SHEET_NOTES[name] && name !== 'Inputs' && name !== 'Combined') contents.push([name, SHEET_NOTES[name]]);

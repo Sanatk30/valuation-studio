@@ -46,19 +46,6 @@ export function applyListing(data, mapped, { companyPaths = null, methodId = nul
   next.company = { ...data.company, ...pick(mapped.company, ownCompanyKeys) };
   if (data.drivers) next.drivers = { ...data.drivers, ...pick(mapped.drivers, ['revenue0', 'ebitda0', 'nwc0']) };
   if (data.ts && mapped.ts && TS_BALANCE_METHODS.includes(methodId)) next.ts = { ...data.ts, ...pick(mapped.ts, ['startingPPE', 'equity0']) };
-  if (data.comps && mapped.compsTarget) {
-    const t = { ...data.comps.target };
-    for (const [k, v] of Object.entries(mapped.compsTarget)) {
-      if (typeof v === 'string' ? v : finite(v)) t[k] = v;
-    }
-    next.comps = { ...data.comps, target: t };
-  }
-  if (data.precedent && mapped.precedentTarget) {
-    next.precedent = {
-      ...data.precedent,
-      target: { ...data.precedent.target, ...pick(mapped.precedentTarget, ['revenue', 'ebitda']), ltmLabel: mapped.precedentTarget.ltmLabel || '' },
-    };
-  }
   if ('history' in data && mapped.history) next.history = mapped.history;
   next.listing = mapped.listing || null;
   return next;

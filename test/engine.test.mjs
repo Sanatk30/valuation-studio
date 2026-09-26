@@ -155,93 +155,75 @@ ok(close(hsens.grid[hr][2], lbo.irr, 1e-6), 'lbo: hold x exit grid center = base
 ok(lbo.levGross[0] > lbo.levGross[4], 'lbo: gross leverage declines');
 ok(lbo.coverage[4] > lbo.coverage[0], 'lbo: interest coverage improves');
 
-/* ---- comps (LTM only) ---- */
+/* ---- comps (Comparable Company Analysis template) ---- */
 const comps = computeComps(A);
-ok(comps.rows.length === 4, 'comps: four LTM implied-price rows');
-ok(comps.rows.map((r) => r.key).join() === 'evSales,evEbitda,evEbit,pe', 'comps: EV/Sales, EV/EBITDA, EV/EBIT, P/E');
-ok(comps.rows[1].q1 <= comps.rows[1].median && comps.rows[1].median <= comps.rows[1].q3, 'comps: quartiles ordered');
-ok(close(comps.rows[1].median, med(comps.pages.map((p) => p.multiples.evEbitda.values[0]))), 'comps: EV/EBITDA median over the peers\' LTM multiples');
-ok(close(comps.rows[1].impliedMedian, (comps.rows[1].median * A.comps.target.ebitda - 800) / 10),
-  'comps: EV/LTM EBITDA median × target LTM EBITDA, bridged via net debt and shares');
-ok(close(comps.rows[3].impliedMedian, (comps.rows[3].median * A.comps.target.netIncome) / 10), 'comps: P/E × target LTM net income ÷ shares');
-ok(close(comps.rows[2].impliedLow, (comps.rows[2].q1 * A.comps.target.ebit - 800) / 10), 'comps: EV/EBIT low = 25th percentile');
 {
-  const tp = comps.targetPage;
-  ok(close(tp.adjEbitda[5], 1100) && close(tp.adjEbit[5], 875) && close(tp.adjNetIncome[5], 560), 'comps: target page carries the LTM inputs as reported');
-  ok(close(tp.growth.sales.hist1, 5000 / 4500 - 1), 'comps: target growth from the prior fiscal year input');
-  ok(close(tp.growth.ebitda.hist1, 1100 / 960 - 1), 'comps: target EBITDA growth from prior EBITDA');
-  ok(Number.isNaN(tp.grossProfit[5]), 'comps: target gross profit blank → NA');
-  const noPrior = computeComps(withModel({ comps: { ...A.comps, target: { ...A.comps.target, priorRevenue: NaN, priorEbitda: NaN } } }));
-  ok(Number.isNaN(noPrior.targetPage.growth.sales.hist1), 'comps: no prior-year input → growth NA (no back-cast)');
-  ok(!comps.cols.output.flatMap((g) => g.cols).some((c) => /NFY/.test(c.label)), 'comps: no forward (NFY) columns');
+  // target = the template's Example (Illustrative) page: every figure checked against the template's own results
+  const t = comps.target;
+  ok(close(t.revLtm, 5470) && close(t.ebitdaLtm, 945) && close(t.patLtm, 556), 'comps: target LTM revenue / EBITDA / PAT = the template example (5,470 / 945 / 556)');
+  ok(close(t.mcap, 12400) && close(t.netDebt, -15) && close(t.ev, 12471), 'comps: market cap 12,400, net debt (15), EV 12,471 as in the template');
+  ok(close(t.mult.evEbitdaLtm, 12471 / 945) && close(t.mult.peFy, 12400 / 523) && close(t.mult.pb, 12400 / 3279), 'comps: target multiples (EV/EBITDA LTM, P/E FY, P/B)');
+  ok(close(t.bench.gRev, 5300 / 4750 - 1) && close(t.bench.ebitdaMargin, 945 / 5470), 'comps: target growth (latest FY) and LTM EBITDA margin');
+  const incl = comps.peers.filter((p) => p.include === 1);
+  ok(incl.length === comps.peers.length - 1, 'comps: the peer flagged 0 is out of the statistics');
+  const ev = incl.map((p) => p.mult.evEbitdaLtm).filter((x) => typeof x === 'number');
+  ok(close(comps.stats1.evEbitdaLtm.median, med(ev)), 'comps: median EV/EBITDA LTM over included peers only');
+  ok(comps.peers.some((p) => p.mult.peLtm === 'NM'), 'comps: the loss-maker P/E is NM, not negative');
+  ok(!ev.includes('NM') && comps.stats1.peLtm.min > 0, 'comps: NM values are excluded from the statistics');
+  const r = comps.implied.find((x) => x.key === 'evEbitdaLtm');
+  ok(close(r.equity.mid, r.mults.mid * 945 - (-15) - 86) && close(r.price.mid, r.equity.mid / 20), 'comps: implied equity = multiple × EBITDA − net debt − NCI; price ÷ diluted shares');
+  const pe = comps.implied.find((x) => x.key === 'peLtm');
+  ok(close(pe.equity.mid, pe.mults.mid * 556), 'comps: P/E equity = multiple × PAT (no bridge)');
+  const mids = comps.implied.map((x) => x.price.mid).filter((x) => typeof x === 'number').sort((x, y) => x - y);
+  ok(close(comps.summary.medianMid, mids.length % 2 ? mids[(mids.length - 1) / 2] : (mids[mids.length / 2 - 1] + mids[mids.length / 2]) / 2), 'comps: summary = median of the median-based prices');
+  ok(close(comps.summary.upside, comps.summary.medianMid / 620 - 1), 'comps: upside vs the current price');
+  ok(comps.tiers.map((x) => x.name).join('|') === 'Large caps|Mid caps|Unassigned', 'comps: per-tier statistics, with an Unassigned group');
 }
 
-/* ---- regression workbench ---- */
+/* ---- regression workbench (included peers, Comps Summary variables) ---- */
 {
   const reg = runRegression(A);
-  ok(reg.fit?.ok, `regression: fits with ${A.comps.peers.length} peers`);
-  const obs = comps.peers.filter((p) => Number.isFinite(p.growth) && Number.isFinite(p.evEbitda));
-  const xs = obs.map((p) => p.growth), ys = obs.map((p) => p.evEbitda);
+  const obs = reg.observations;
+  ok(reg.fit?.ok && obs.length === comps.peers.filter((p) => p.include === 1).length, `regression: fits over the ${obs.length} included peers`);
+  const used = obs.filter((o) => Number.isFinite(o.values.ebitdaMargin) && Number.isFinite(o.values.evEbitdaLtm));   // an NM multiple drops out
+  ok(used.length === reg.fit.n, `regression: ${used.length} complete observations`);
+  const xs = used.map((o) => o.values.ebitdaMargin), ys = used.map((o) => o.values.evEbitdaLtm);
   const mean = (v) => v.reduce((s2, x) => s2 + x, 0) / v.length;
   const mx = mean(xs), my = mean(ys);
   let sxx = 0, sxy = 0, syy = 0;
   for (let i = 0; i < xs.length; i++) { sxx += (xs[i] - mx) ** 2; sxy += (xs[i] - mx) * (ys[i] - my); syy += (ys[i] - my) ** 2; }
-  ok(close(reg.fit.beta[1], sxy / sxx), `regression: slope = ${reg.fit.beta[1].toFixed(4)}`);
-  ok(close(reg.fit.beta[0], my - (sxy / sxx) * mx), 'regression: intercept');
+  ok(close(reg.fit.beta[1], sxy / sxx) && close(reg.fit.beta[0], my - (sxy / sxx) * mx), 'regression: slope and intercept by hand');
   ok(close(reg.fit.r2, sxy ** 2 / (sxx * syy)), `regression: R² = ${reg.fit.r2.toFixed(3)}`);
-  ok(close(reg.target.growth, (5000 / 4500 - 1) * 100), 'regression: target growth from the LTM inputs (reported, not projected)');
-  ok(close(reg.pred.yHat, reg.fit.beta[0] + reg.fit.beta[1] * reg.target.growth), 'regression: prediction on the line');
-  ok(close(reg.price.mid, (reg.pred.yHat * A.comps.target.ebitda - 800) / 10), 'regression: implied price on target LTM EBITDA');
-  ok(comps.peers.every((p) => Number.isFinite(p.revSize) && Number.isFinite(p.mktCapSize)), 'regression: size variables in the valuation currency (no FX)');
-  const cleared = targetValues(withModel({ regression: { ...A.regression, targetOverrides: { growth: null } } }));
-  ok(close(cleared.values.growth, (5000 / 4500 - 1) * 100), 'regression: a cleared override falls back (null never reads as 0)');
+  ok(close(reg.target.ebitdaMargin, 945 / 5470 * 100), 'regression: target x = its own Comps Summary row (%)');
+  ok(close(reg.price.mid, (reg.pred.yHat * 945 - (-15) - 86) / 20), 'regression: implied price on target LTM EBITDA, less net debt and NCI');
+  const cleared = targetValues(withModel({ regression: { ...A.regression, targetOverrides: { ebitdaMargin: null } } }));
+  ok(close(cleared.values.ebitdaMargin, 945 / 5470 * 100), 'regression: a cleared override falls back (null never reads as 0)');
   const nullCustom = runRegression(withModel({
-    comps: { ...A.comps, peers: A.comps.peers.map((p) => ({ ...p, c_x: null })) },
     regression: { ...A.regression, customVars: [{ key: 'c_x', label: 'X' }], xVars: [{ key: 'c_x', transform: 'lin', degree: 1 }] },
   }));
   ok(!nullCustom.fit?.ok, 'regression: blank custom variable values are missing, not 0');
-  const noReg = runRegression(withModel({ comps: { ...A.comps, peers: A.comps.peers.slice(0, 2) } }));
-  ok(!noReg.fit?.ok, 'regression: refuses to fit with too few peers');
 }
 
-/* ---- precedent: bottom-up deal pages ---- */
+/* ---- precedent (Precedent Transactions template) ---- */
 const prec = computePrecedent(A);
-ok(prec.deals.length > 0, `precedent: ${prec.deals.length} deal pages`);
-
-// every deal page re-derived by hand from its own inputs
 for (const d of prec.deals) {
-  const n = `${d.deal.acquirer} / ${d.page.co.name}`;
-  const legs = { Cash: [1, 0], Stock: [0, 1], 'Cash / Stock': [1, 1] }[d.deal.consideration];
-  const offer = legs[0] * d.deal.cashOffer + legs[1] * d.deal.exchangeRatio * d.deal.acquirerPrice;
-  ok(close(d.offerPrice, offer), `${n}: offer = cash + exchange ratio x acquirer price (legs per consideration)`);
-  ok(close(d.equityValue, d.offerPrice * d.page.shares.fullyDiluted), `${n}: equity value = offer x fully diluted shares`);
-  const bs = d.page.bs;
-  ok(close(d.enterpriseValue, d.equityValue + bs.debt[1] + bs.preferred[1] + bs.nci[1] - bs.cash[1]),
-    `${n}: EV bridge off the current balance sheet`);
-  ok(close(d.evEbitda, d.enterpriseValue / d.ltmEbitda), `${n}: EV/EBITDA = EV / its own LTM EBITDA`);
-  ok(close(d.evSales, d.enterpriseValue / d.ltmSales), `${n}: EV/Sales = EV / its own LTM sales`);
-  ok(close(d.ebitdaMargin, d.ltmEbitda / d.ltmSales), `${n}: LTM EBITDA margin`);
-  for (const w of [1, 7, 30]) {
-    const un = d.deal.unaffected?.[w] ?? NaN;
-    const expected = un > 0 ? d.offerPrice / un - 1 : NaN;
-    ok(close(d.premiums[w], expected) || (!isFinite(d.premiums[w]) && !isFinite(expected)),
-      `${n}: ${w}-day premium over the unaffected price`);
-  }
+  const n = `${d.role} (${d.deal.target})`;
+  ok(close(d.equity, d.deal.consideration / (d.deal.stakePct / 100)), `${n}: implied 100% equity = consideration ÷ stake`);
+  ok(close(d.ev, d.equity + d.page.market.netDebt + d.page.market.nci), `${n}: implied EV = equity + net debt + NCI`);
+  ok(d.ebitdaLtm <= 0 ? d.mult.evEbitda === 'NM' : close(d.mult.evEbitda, d.ev / d.ebitdaLtm), `${n}: EV / LTM EBITDA`);
+  const prem = d.deal.listed === 'Yes' && d.deal.unaffectedPrice > 0 && d.deal.offerPrice > 0 ? d.deal.offerPrice / d.deal.unaffectedPrice - 1 : '';
+  ok(prem === '' ? d.premium === '' : close(d.premium, prem), `${n}: control premium only for listed targets`);
 }
-
-// the statistics and the implied-price bridge
-ok(close(prec.rows[1].median, med(prec.deals.map((d) => d.evEbitda))), 'precedent: EV/EBITDA median over the deal pages');
-ok(close(prec.premia.median, med(prec.deals.map((d) => d.premiums[1] * 100))), 'precedent: median 1-day premium');
-ok(close(prec.premia.impliedMedian, 850 * (1 + prec.premia.median / 100)), 'precedent: premia-implied price = current x (1+median)');
-ok(close(prec.rows[1].impliedMedian, (prec.rows[1].median * A.precedent.target.ebitda - 800) / 10), 'precedent: applied to the method\'s own target LTM EBITDA');
-ok(close(prec.rows[0].impliedMedian, (prec.rows[0].median * A.precedent.target.revenue - 800) / 10), 'precedent: EV/Sales applied to target LTM revenue');
 {
-  const noPx = computePrecedent(withModel({ company: { ...A.company, currentPrice: NaN } }));
-  ok(Number.isNaN(noPx.premia.impliedMedian), 'precedent: no market price → premia analysis NA');
+  const incl = prec.deals.filter((d) => d.include === 1);
+  ok(close(prec.stats1.evEbitda.median, med(incl.map((d) => d.mult.evEbitda))), 'precedent: median EV/EBITDA over included deals');
+  const pr = prec.implied.find((r) => r.key === 'premium');
+  ok(close(pr.equity.mid, 620 * (1 + prec.stats1.premium.median) * 20) && close(pr.price.mid, 620 * (1 + prec.stats1.premium.median)), 'precedent: control-premium method on the current price');
+  const noPx = computePrecedent(withModel({ precedent: { ...A.precedent, company: { ...A.precedent.company, price: null } } }));
+  ok(noPx.implied.find((r) => r.key === 'premium').price.mid === 'NM', 'precedent: unlisted company → control-premium row NM');
+  const r = prec.implied.find((x) => x.key === 'evEbitda');
+  ok(close(r.equity.mid, r.mults.mid * 945 - (-15) - 86), 'precedent: deal EV/EBITDA median × company LTM EBITDA − net debt − NCI');
 }
-// a deal with no unaffected price drops out of the premium statistic
-ok(prec.premiaByWindow[1].n === prec.deals.filter((d) => Number.isFinite(d.premiums[1])).length,
-  'precedent: deals without an unaffected price are excluded from the premium stats');
 
 /* ---- IPO ---- */
 const ipo = computeIpo(A);

@@ -4,9 +4,14 @@ import { companyStep, historyStep, forecastStep } from './steps/common.jsx';
 import { waccStep, terminalStep, fcfeStep } from './steps/dcfSteps.jsx';
 import {
   lboEntryStep, lboDebtStep, lboSweepStep, ipoFinancingStep, ipoPricingStep, ipoStructureStep,
-  financingStep, ratioSettingsStep, compsTargetStep, precTargetStep,
+  financingStep, ratioSettingsStep,
 } from './steps/fieldSteps.js';
-import { peersStep, regressionStep, dealsStep, peerStatus, dealStatus } from './steps/marketSteps.jsx';
+import {
+  compsSettingsStep, compsTargetStep, peersStep, regressionStep,
+  precSettingsStep, precCompanyStep, dealListStep, dealPagesStep,
+} from './steps/templateSteps.jsx';
+import { computeComps } from '../lib/engine/comps.js';
+import { computePrecedent } from '../lib/engine/precedent.js';
 import { combinedStep } from './combined.jsx';
 import { toEngineInput } from '../store/methodModel.js';
 import { projectOperations } from '../lib/engine/drivers.js';
@@ -63,34 +68,34 @@ export const METHODS = {
     },
   },
   comps: {
-    steps: [companyStep({ priceHint: 'Optional — used for the target’s own multiples and upside' }), compsTargetStep(), peersStep(), regressionStep()],
+    steps: [compsSettingsStep(), compsTargetStep(), peersStep(), regressionStep()],
     Output: out.comps,
-    preview(def, a, states, company) {
+    preview(def, a, states) {
+      if (!valid(def, states, 'compsSettings')) return [];
+      const c = computeComps(a);
       const rows = [];
-      const t = a.comps.target;
-      if (valid(def, states, 'compsTarget')) {
-        rows.push({ label: 'LTM EBITDA margin', value: fmtPct((t.ebitda / t.revenue) * 100, 1) });
-      }
-      const usable = (a.comps.peers || []).map(peerStatus).filter((s) => s.ok);
-      if (usable.length) {
-        const m = usable.map((s) => s.page.multiples?.evEbitda?.values?.[0]).filter(fin).sort((x, y) => x - y);
-        rows.push({ label: 'Usable peers', value: String(usable.length) });
-        if (m.length) rows.push({ label: 'Median EV / LTM EBITDA', value: fmtX(m.length % 2 ? m[(m.length - 1) / 2] : (m[m.length / 2 - 1] + m[m.length / 2]) / 2, 1) });
-      }
+      const m = c.target.bench.ebitdaMargin;
+      if (typeof m === 'number') rows.push({ label: `Target EBITDA margin (${c.labels.ltm})`, value: fmtPct(m * 100, 1) });
+      const filled = c.peers.filter((p) => !p.empty);
+      if (filled.length) rows.push({ label: 'Peers included', value: `${filled.filter((p) => p.include === 1).length} of ${filled.length}` });
+      const med = c.stats1.evEbitdaLtm?.median;
+      if (typeof med === 'number') rows.push({ label: `Median EV / EBITDA ${c.labels.ltm}`, value: fmtX(med, 1) });
       return rows;
     },
   },
   precedent: {
-    steps: [companyStep({ priceHint: 'Optional — needed for the premiums-paid analysis' }), precTargetStep(), dealsStep()],
+    steps: [precSettingsStep(), precCompanyStep(), dealListStep(), dealPagesStep()],
     Output: out.precedent,
     preview(def, a, states) {
+      if (!valid(def, states, 'precSettings')) return [];
+      const p = computePrecedent(a);
       const rows = [];
-      const usable = (a.precedent.deals || []).map(dealStatus).filter((s) => s.ok);
-      if (usable.length) {
-        const m = usable.map((s) => s.page.evEbitda).filter(fin).sort((x, y) => x - y);
-        rows.push({ label: 'Usable deals', value: String(usable.length) });
-        if (m.length) rows.push({ label: 'Median EV / LTM EBITDA', value: fmtX(m.length % 2 ? m[(m.length - 1) / 2] : (m[m.length / 2 - 1] + m[m.length / 2]) / 2, 1) });
-      }
+      const filled = p.deals.filter((d) => !d.empty);
+      if (filled.length) rows.push({ label: 'Deals included', value: `${filled.filter((d) => d.include === 1).length} of ${filled.length}` });
+      const med = p.stats1.evEbitda?.median;
+      if (typeof med === 'number') rows.push({ label: 'Median EV / LTM EBITDA', value: fmtX(med, 1) });
+      const prem = p.stats1.premium?.median;
+      if (typeof prem === 'number') rows.push({ label: 'Median control premium', value: fmtPct(prem * 100, 1) });
       return rows;
     },
   },

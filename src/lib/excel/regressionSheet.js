@@ -1,15 +1,14 @@
 /**
  * Regression workbench as LIVE formulas (engine/regressionModel.js + mlr.js):
- * peer data (green links into the peer input pages; blue for custom
+ * peer data (green links into the Comps Summary rows; blue for custom
  * variables) → transformed design matrix → normal equations X'X / X'y →
  * Gauss-Jordan elimination on [X'X | X'y | I] (pure arithmetic — no MINVERSE,
  * so it recalculates in any engine) → coefficients, classical SEs (t via
  * TDIST), fit diagnostics, the target prediction with its ±1 SE band, and the
  * implied-price bridge onto the target's LTM metric.
  *
- * The target's x-values are formulas off the Inputs sheet (comps target LTM
- * inputs and the Company step) unless an override was typed in the app, in
- * which case the override is a blue input here.
+ * Peer and target values link to the Comps Summary rows; a target override
+ * typed in the app is a blue input here.
  */
 import {
   put, colL, na, nv, styleSheet,
@@ -23,37 +22,24 @@ function sectionHeader(ws, row, text, span) {
   ws.getRow(row).height = 18;
 }
 
-/** A catalog variable read off a peer page (link × scale), or null for custom variables. */
-const PEER_LINK = {
-  evSales: ['evSales0', 1], evEbitda: ['evEbitda0', 1], pe: ['pe0', 1],
-  growth: ['gSalesHist1', 100], ebitdaMargin: ['ebitdaMargin', 100],
-  netDebtEbitda: ['netDebtToEbitda', 1], roe: ['roe', 100],
-  revSize: ['ltmSales', 1], mktCapSize: ['equityValue', 1],
-};
-
-/** Target x-value formulas off the Inputs sheet, in the units of REG_VARS (% points for %). */
-const targetFormula = (key, R) => ({
-  growth: na(`(${R.tRev}/${R.tPriorRev}-1)*100`),
-  ebitdaMargin: na(`${R.tEbitda}/${R.tRev}*100`),
-  netDebtEbitda: na(`${R.netDebt}/${R.tEbitda}`),
-  roe: na(`${R.tNi}/${R.tEquity}*100`),
-  revSize: na(`${R.tRev}+0`),
-  mktCapSize: na(`${R.curPrice}*${R.shares}`),
-}[key] || null);
-
 /**
- * Write the Regression sheet. `peerRefs` are the comps peer-page refs, in the
- * same order as a.comps.peers. Returns the implied-price refs, or null when
- * the model is not estimable / y is not a valuation multiple.
+ * Write the Regression sheet. `links` ties it to the workbook:
+ *   peerName(id)        formula for a peer's name
+ *   peerCell(id, key)   formula for a built-in variable of that peer (null → typed)
+ *   targetCell(key)     formula for the target's value of a built-in variable
+ *   metric(spec)        formula for the target metric a multiple divides by
+ *   netDebt, nci, shares  the target's EV-bridge cells
+ * Returns the implied-price refs, or null when the model is not estimable / y
+ * is not a valuation multiple.
  */
-export function writeRegressionSheet(ws, a, F, R, peerRefs) {
+export function writeRegressionSheet(ws, a, F, links) {
   const regRun = runRegression(a);
   const fitR = regRun.fit;
   ws.getColumn(1).width = 30;
   for (let i = 2; i <= 26; i++) ws.getColumn(i).width = 13;
   styleSheet(ws, { freezeRow: 1, freezeCol: 1, tab: C_TAB_ANALYSIS, printTitles: '1:1' });
   let rr = 1;
-  put(ws, `A${rr}`, 'REGRESSION ANALYSIS — PEER LTM MULTIPLES', { bold: true, size: 14 }); rr++;
+  put(ws, `A${rr}`, 'REGRESSION ANALYSIS — PEER MULTIPLES', { bold: true, size: 14 }); rr++;
   const yLabel = regRun.yDef?.label || regRun.yVar || 'y';
   if (!fitR?.ok) {
     put(ws, `A${rr + 1}`, `The model is not estimable: ${fitR?.reason || 'choose the variables in the Regression step'}.`, { italic: true, color: C_MUTED });
@@ -79,7 +65,7 @@ export function writeRegressionSheet(ws, a, F, R, peerRefs) {
   });
   const nObs = used.length;
 
-  sectionHeader(ws, rr++, 'PEER DATA (green = linked to the peer page, blue = typed)', 2 + usedX.length);
+  sectionHeader(ws, rr++, 'PEER DATA — included peers (green = linked to Comps Summary, blue = typed)', 2 + usedX.length);
   const pdHead = rr;
   put(ws, `A${pdHead}`, 'Peer', { bold: true, fill: C_SECTION_FILL });
   usedX.forEach((k, i) => put(ws, `${colL(2 + i)}${pdHead}`, varLabel(k), { bold: true, fill: C_SECTION_FILL, align: 'center', wrap: true }));
@@ -87,18 +73,12 @@ export function writeRegressionSheet(ws, a, F, R, peerRefs) {
   ws.getRow(pdHead).height = 30;
   rr++;
   const pd0 = rr;
-  const peerCell = (i, key) => {
-    const link = PEER_LINK[key];
-    const refs = peerRefs[i];
-    if (link && refs?.[link[0]]) return { formula: link[1] === 1 ? refs[link[0]] : `${refs[link[0]]}*${link[1]}` };
-    return null;
-  };
   for (const i of used) {
     const ob = obs[i];
-    put(ws, `A${rr}`, peerRefs[i] ? { formula: peerRefs[i].name } : ob.name, { color: C_LINK });
+    put(ws, `A${rr}`, links.peerName(ob.id) ? { formula: links.peerName(ob.id) } : ob.name, { color: C_LINK });
     [...usedX, regRun.yVar].forEach((k, j) => {
-      const link = peerCell(i, k);
-      if (link) put(ws, `${colL(2 + j)}${rr}`, link, { fmt: F.num, color: C_LINK, align: 'center' });
+      const link = links.peerCell(ob.id, k);
+      if (link) put(ws, `${colL(2 + j)}${rr}`, { formula: link }, { fmt: F.num, color: C_LINK, align: 'center' });
       else put(ws, `${colL(2 + j)}${rr}`, nv(ob.values[k]), { fmt: F.num, color: C_INPUT, fill: C_INPUT_FILL, align: 'center' });
     });
     rr++;
@@ -243,14 +223,14 @@ export function writeRegressionSheet(ws, a, F, R, peerRefs) {
 
   /* ---- prediction for the target ---- */
   sectionHeader(ws, rr++, 'PREDICTION — THE TARGET', 4 + terms.length);
-  put(ws, `A${rr}`, 'Target x (green = from the Inputs sheet, blue = override)', { bold: true, fill: C_SECTION_FILL });
+  put(ws, `A${rr}`, 'Target x (green = its Comps Summary row, blue = override)', { bold: true, fill: C_SECTION_FILL });
   usedX.forEach((k, i) => put(ws, `${colL(2 + i)}${rr}`, varLabel(k), { bold: true, fill: C_SECTION_FILL, align: 'center', wrap: true }));
   rr++;
   const tg = rr;
   put(ws, `A${tg}`, 'value');
   usedX.forEach((k, i) => {
     const ov = a.regression?.targetOverrides?.[k];
-    const f = typeof ov === 'number' && Number.isFinite(ov) ? null : targetFormula(k, R);
+    const f = typeof ov === 'number' && Number.isFinite(ov) ? null : links.targetCell(k);
     if (f) put(ws, `${colL(2 + i)}${tg}`, { formula: f }, { fmt: F.num, color: C_LINK, align: 'center' });
     else put(ws, `${colL(2 + i)}${tg}`, nv(regRun.target[k]), { fmt: F.num, color: C_INPUT, fill: C_INPUT_FILL, align: 'center' });
   });
@@ -285,17 +265,16 @@ export function writeRegressionSheet(ws, a, F, R, peerRefs) {
   let refs = null;
   if (regRun.yDef?.multiple) {
     sectionHeader(ws, rr++, 'IMPLIED SHARE PRICE', 4);
-    const metricRef = { revenue: R.tRev, ebitda: R.tEbitda, netIncome: R.tNi }[regRun.yDef.metricKey];
-    pVal('metric', regRun.yDef.metricLabel, metricRef, F.money, 'Target LTM (Inputs sheet)', { color: C_LINK });
-    const toPrice = (mult) => na(`IF(${R.shares}>0,${regRun.yDef.multiple === 'ev'
-      ? `(${mult}*B${P.metric}-${R.netDebt})/${R.shares}`
-      : `${mult}*B${P.metric}/${R.shares}`},"NA")`);
-    pVal('px', 'Implied share price', toPrice(`B${P.pred}`), F.price, regRun.yDef.multiple === 'ev' ? 'EV less net debt, over shares' : 'Equity value over shares', { bold: true });
+    pVal('metric', 'Target metric', links.metric(regRun.yDef.spec), F.money, regRun.yDef.label, { color: C_LINK });
+    const toPrice = (mult) => na(`IF(AND(${links.shares}>0,B${P.metric}>0),${regRun.yDef.multiple === 'ev'
+      ? `(${mult}*B${P.metric}-${links.netDebt}-${links.nci})/${links.shares}`
+      : `${mult}*B${P.metric}/${links.shares}`},"NA")`);
+    pVal('px', 'Implied share price', toPrice(`B${P.pred}`), F.price, regRun.yDef.multiple === 'ev' ? 'EV less net debt and NCI, over diluted shares' : 'Equity value over diluted shares', { bold: true });
     pVal('pxLo', '−1 SE', toPrice(`B${P.predLo}`), F.price);
     pVal('pxHi', '+1 SE', toPrice(`B${P.predHi}`), F.price);
     refs = { px: `'${ws.name}'!$B$${P.px}`, lo: `'${ws.name}'!$B$${P.pxLo}`, hi: `'${ws.name}'!$B$${P.pxHi}` };
   }
   rr++;
-  put(ws, `A${rr}`, 'Everything above recalculates live: edit a peer page, a blue cell or a target input and the elimination, coefficients and prediction re-solve.', { italic: true, color: C_MUTED });
+  put(ws, `A${rr}`, 'Everything above recalculates live: edit a company sheet, a blue cell or an input and the elimination, coefficients and prediction re-solve.', { italic: true, color: C_MUTED });
   return refs;
 }

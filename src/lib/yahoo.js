@@ -12,7 +12,7 @@
  *   fetchListing(symbol)                 → raw Yahoo JSON, parsed by parseListing()
  *   parseListing({ chart, annual, … })   → `raw`: every reported point with its date and currency
  *   mapListing(raw, company, rates)      → what lands in the model, converted, plus the preview
- *   peerPageFromListing(raw, company, rates) → a comps peer page (reported lines only)
+ *   templateFromListing(raw, company, rates, { n, before }) → a comps / precedent template page
  *
  * House rules (docs/STEPWISE_SPEC.md): REPORTED FACTS ONLY. No growth / margin
  * / D&A% / capex% / NWC% prefill, no 25 % tax fallback, no back-solved lines,
@@ -23,7 +23,7 @@
  */
 import { normalizeCurrency, fxPairSymbol } from './fx.js';
 import { HISTORY_LINES, HISTORY_MAX_YEARS } from './historyModel.js';
-import { blankCompsTarget } from '../store/methodModel.js';
+import { blankPage } from './engine/companyPage.js';
 
 export const UNIT_FACTOR = { Cr: 1e7, Lakh: 1e5, Mn: 1e6, Bn: 1e9, K: 1e3 };
 
@@ -70,6 +70,7 @@ export const STATEMENT_TYPES = {
     'NetNonOperatingInterestIncomeExpense', 'InterestExpense', 'InterestIncome',
     'OtherIncomeExpense', 'PretaxIncome', 'TaxProvision', 'MinorityInterests',
     'PreferredStockDividends', 'NetIncome', 'NetIncomeCommonStockholders', 'EBITDA', 'EBIT',
+    'SalariesAndWages', 'TotalUnusualItems',
     'ReconciledDepreciation', 'BasicEPS', 'DilutedEPS', 'BasicAverageShares', 'DilutedAverageShares',
   ],
   bs: [
@@ -93,7 +94,7 @@ export const STATEMENT_TYPES = {
     'NetOtherInvestingChanges', 'FinancingCashFlow', 'IssuanceOfDebt', 'RepaymentOfDebt',
     'RepurchaseOfCapitalStock', 'CashDividendsPaid', 'NetOtherFinancingCharges',
     'BeginningCashPosition', 'EndCashPosition', 'ChangesInCash',
-    'EffectOfExchangeRateChanges', 'FreeCashFlow',
+    'EffectOfExchangeRateChanges', 'FreeCashFlow', 'IssuanceOfCapitalStock', 'IncomeTaxPaidSupplementalData',
   ],
 };
 
@@ -234,6 +235,8 @@ export function parseListing({ symbol, chart, annual, quarterly = null, trailing
     symbol: meta.symbol || symbol,
     name: meta.longName || meta.shortName || search?.name || symbol,
     exchange: meta.fullExchangeName || meta.exchangeName || search?.exchange || '',
+    sector: search?.sector || null,
+    industry: search?.industry || null,
     price: {
       value: px(meta.regularMarketPrice),
       high52: px(meta.fiftyTwoWeekHigh),
@@ -466,8 +469,6 @@ export function listingHistory(raw, company, rates) {
  *   company:  { sharesOut, currentPrice, grossDebt, cash, taxRate },
  *   drivers:  { revenue0, ebitda0, nwc0 },
  *   ts:       { startingPPE, equity0 },            // reported opening balances (3-Statement / Ratios / IPO)
- *   compsTarget: { ...blankCompsTarget() },        // LTM target for Comps
- *   precedentTarget: { revenue, ebitda, ltmLabel },
  *   history,                                       // canonical, converted
  *   listing:  { symbol, name, exchange, financialCurrency, priceCurrency, quoteCurrency,
  *               rates, ltmLabel, ltmBasis, ltmEnd, fy0End, bsDate, priceAt, at,
@@ -525,7 +526,6 @@ function mapCore(raw, company, rates, opts) {
   if (ebitdaBad) {
     warnings.push(`Yahoo's ${ltm.label} EBITDA equals its EBIT and no D&A is reported for that period (its quarterly feed omits D&A for this issuer), so EBITDA is left blank rather than filled with EBIT.`);
   }
-  const pEbit = L('EBIT'), pNi = L('NetIncome'), pGp = L('GrossProfit'), pInt = L('InterestExpense');
   const pTax = L('TaxProvision'), pPbt = L('PretaxIncome'), pDil = L('DilutedAverageShares');
 
   // tax rate = reported tax provision ÷ reported pre-tax income (NA if either missing or PBT ≤ 0)
@@ -559,8 +559,6 @@ function mapCore(raw, company, rates, opts) {
   /* ---- price ---- */
   const px = raw.price || {};
   const currentPrice = conv.perShareIn(px.value, px.currency);
-  const high52 = conv.perShareIn(px.high52, px.currency);
-  const low52 = conv.perShareIn(px.low52, px.currency);
   if (px.currency && raw.financialCurrency && px.currency !== raw.financialCurrency) {
     // Depositary receipts: Yahoo gives no ADR ratio on the crumbless endpoints — a warning only (the user's choice).
     warnings.push(`The price is quoted in ${px.quoteCurrency || px.currency} but the financials are reported in ${raw.financialCurrency}; each converts at its own rate. If this listing is a depositary receipt (ADR/GDR), one traded unit can represent several ordinary shares — check the share count against the price, or use the home-market listing.`);
@@ -568,22 +566,6 @@ function mapCore(raw, company, rates, opts) {
   if ((raw.financialCurrencies || []).length > 1) {
     warnings.push(`Yahoo reports this company's lines in more than one currency (${raw.financialCurrencies.join(', ')}); each converts at its own rate.`);
   }
-
-  /* ---- prior year (Comps FY-1) ----
-     LTM is a fiscal year → the fiscal year before it.
-     LTM is a TTM         → the latest completed fiscal year (the user's rule). */
-  let priorRevenue = null, priorEbitda = null, priorLabel = '';
-  const annDates = (raw.annual.TotalRevenue || []).map((p) => p.date);
-  const priorDate = ltm.basis === 'fy' ? annDates.filter((d) => d < ltm.date).pop() || null
-    : ltm.basis === 'ttm' ? ltm.fy0 : null;
-  if (priorDate) {
-    priorLabel = fyName(priorDate);
-    priorRevenue = conv.money(pointAt(raw.annual, 'TotalRevenue', priorDate));
-    priorEbitda = ebitdaSuspect(raw.annual, priorDate) ? null : conv.money(pointAt(raw.annual, 'EBITDA', priorDate));
-  }
-  const priorNote = priorDate
-    ? (ltm.basis === 'ttm' ? `latest completed fiscal year before the ${ltm.label}` : 'fiscal year before the LTM year')
-    : 'NA — no earlier fiscal year reported';
 
   /* ---- result blocks ---- */
   const revenue = conv.money(pRev);
@@ -601,22 +583,6 @@ function mapCore(raw, company, rates, opts) {
     },
     drivers: { revenue0: revenue, ebitda0: ebitda, nwc0 },
     ts: { startingPPE: conv.money(pPpe), equity0: equity },
-    compsTarget: {
-      ...blankCompsTarget(),
-      revenue, ebitda,
-      ebit: conv.money(pEbit),
-      netIncome: conv.money(pNi),
-      priorRevenue, priorEbitda,
-      grossProfit: conv.money(pGp),
-      interest: conv.money(pInt),
-      equity,
-      beta: null,                 // not on Yahoo's crumbless endpoints
-      high52, low52,
-      ticker: raw.symbol || '',
-      exchange: raw.exchange || '',
-      ltmLabel: ltm.label,
-    },
-    precedentTarget: { revenue, ebitda, ltmLabel: ltm.label },
     history: listingHistory(raw, company, rates),
     listing: {
       symbol: raw.symbol, name: raw.name, exchange: raw.exchange,
@@ -643,8 +609,6 @@ function mapCore(raw, company, rates, opts) {
   const mkt = px.at ? `quote ${px.at.slice(0, 16).replace('T', ' ')} UTC` : 'live quote';
   const pxNote = px.divisor && px.divisor !== 1 ? `quoted in ${px.quoteCurrency}; ÷${px.divisor} → ${px.currency}` : '';
   row('Market', 'Share price', { basis: mkt, fields: ['company.currentPrice'], reported: px.value, reportedCcy: px.currency, reportedKind: 'pershare', value: currentPrice, kind: 'pershare', note: pxNote });
-  row('Market', '52-week high', { basis: mkt, fields: ['compsTarget.high52'], reported: px.high52, reportedCcy: px.currency, reportedKind: 'pershare', value: high52, kind: 'pershare' });
-  row('Market', '52-week low', { basis: mkt, fields: ['compsTarget.low52'], reported: px.low52, reportedCcy: px.currency, reportedKind: 'pershare', value: low52, kind: 'pershare' });
 
   const bsBasis = bsDate ? `as of ${bsDate}` : 'not reported';
   row('Balance sheet', 'Total debt', { basis: bsBasis, fields: ['company.grossDebt'], reported: rep(pDebt), reportedCcy: pDebt?.currency || fc, value: out.company.grossDebt });
@@ -656,7 +620,7 @@ function mapCore(raw, company, rates, opts) {
     reportedKind: 'shares', value: sharesOut, kind: 'shares',
   });
   for (const o of shareOptions) row('Balance sheet', o.label, { reported: o.reported, reportedKind: 'shares', value: o.value, kind: 'shares', sub: true, ref: true, note: o.id === shareBasis ? 'applied' : '' });
-  row('Balance sheet', "Shareholders' equity", { basis: bsBasis, fields: ['compsTarget.equity', 'ts.equity0'], reported: rep(pEq), reportedCcy: pEq?.currency || fc, value: equity });
+  row('Balance sheet', "Shareholders' equity", { basis: bsBasis, fields: ['ts.equity0'], reported: rep(pEq), reportedCcy: pEq?.currency || fc, value: equity });
   row('Balance sheet', 'Net PP&E', { basis: bsBasis, fields: ['ts.startingPPE'], reported: rep(pPpe), reportedCcy: pPpe?.currency || fc, value: out.ts.startingPPE });
   row('Balance sheet', 'Opening operating NWC', { basis: bsBasis, fields: ['drivers.nwc0'], value: nwc0, note: nwc0 === null ? 'NA — a component below is not reported' : '(current assets − cash & ST investments) − (current liabilities − current debt)' });
   const nwcRow = (label, p, v) => row('Balance sheet', label, { reported: rep(p), reportedCcy: p?.currency || fc, value: v, sub: true, note: p ? '' : 'not reported' });
@@ -666,18 +630,11 @@ function mapCore(raw, company, rates, opts) {
   nwcRow('Less: current debt (incl. current lease liabilities)', pCurDebt, nwcParts[3]);
 
   const lb = ltm.label || 'not reported';
-  row('LTM', 'Revenue', { basis: lb, fields: ['drivers.revenue0', 'compsTarget.revenue', 'precedentTarget.revenue'], reported: rep(pRev), reportedCcy: pRev?.currency || fc, value: revenue });
-  row('LTM', 'EBITDA', { basis: lb, fields: ['drivers.ebitda0', 'compsTarget.ebitda', 'precedentTarget.ebitda'], reported: rep(pEbitda), reportedCcy: pEbitda?.currency || fc, value: ebitda, note: ebitdaBad ? 'not used — equals EBIT with no D&A reported' : '' });
-  row('LTM', 'EBIT', { basis: lb, fields: ['compsTarget.ebit'], reported: rep(pEbit), reportedCcy: pEbit?.currency || fc, value: out.compsTarget.ebit });
-  row('LTM', 'Net income', { basis: lb, fields: ['compsTarget.netIncome'], reported: rep(pNi), reportedCcy: pNi?.currency || fc, value: out.compsTarget.netIncome });
-  row('LTM', 'Gross profit', { basis: lb, fields: ['compsTarget.grossProfit'], reported: rep(pGp), reportedCcy: pGp?.currency || fc, value: out.compsTarget.grossProfit });
-  row('LTM', 'Interest expense', { basis: lb, fields: ['compsTarget.interest'], reported: rep(pInt), reportedCcy: pInt?.currency || fc, value: out.compsTarget.interest });
+  row('LTM', 'Revenue', { basis: lb, fields: ['drivers.revenue0'], reported: rep(pRev), reportedCcy: pRev?.currency || fc, value: revenue });
+  row('LTM', 'EBITDA', { basis: lb, fields: ['drivers.ebitda0'], reported: rep(pEbitda), reportedCcy: pEbitda?.currency || fc, value: ebitda, note: ebitdaBad ? 'not used — equals EBIT with no D&A reported' : '' });
   row('LTM', 'Tax rate', { basis: lb, fields: ['company.taxRate'], reportedKind: 'pct', kind: 'pct', value: taxRate, note: taxNegative ? `NA — the reported rate is negative (${reportedTaxRate.toFixed(1)} %)` : taxRate === null ? 'NA — tax provision or pre-tax income not reported, or pre-tax income ≤ 0' : 'tax provision ÷ pre-tax income' });
   row('LTM', 'Tax provision', { reported: rep(pTax), reportedCcy: pTax?.currency || fc, value: conv.money(pTax), sub: true, note: pTax ? '' : 'not reported' });
   row('LTM', 'Pre-tax income', { reported: rep(pPbt), reportedCcy: pPbt?.currency || fc, value: conv.money(pPbt), sub: true, note: pPbt ? '' : 'not reported' });
-
-  row('Prior year', `Revenue${priorLabel ? ` (${priorLabel})` : ''}`, { basis: priorLabel || '', fields: ['compsTarget.priorRevenue'], value: priorRevenue, note: priorNote });
-  row('Prior year', `EBITDA${priorLabel ? ` (${priorLabel})` : ''}`, { basis: priorLabel || '', fields: ['compsTarget.priorEbitda'], value: priorEbitda, note: priorNote });
 
   const h = out.history;
   row('History', 'Annual core lines', { reportedKind: 'text', kind: 'text', reported: `${h.annual.dates.length} year(s)`, value: h.annual.dates.length ? `${h.annual.dates[0]} → ${h.annual.dates[h.annual.dates.length - 1]}` : 'none' });
@@ -692,155 +649,145 @@ function mapCore(raw, company, rates, opts) {
 }
 
 
-/* ------------------------------------------------------ comps peer page */
+/* -------------------------------------------------- template company page */
 
 /**
- * A comps peer page (engine/compsCo.js shape) from a listing — REPORTED lines
- * only, converted into the valuation currency / unit. Returns the fields to
- * merge onto a page (the caller keeps id, tier, ratings, description, beta and
- * the user's adjustment lines). Nothing is estimated: no `est` block.
+ * A comps / precedent template page (engine/companyPage.js) from a listing —
+ * reported figures converted into the valuation currency and unit, for the
+ * last `n` fiscal years (only years ending before `before`, an ISO date, when
+ * given: a deal target's financials as at announcement). YTD columns and the
+ * interim balance sheet are left blank (LTM = latest FY on the page).
  *
- * Periods. FY-2 / FY-1 / FY0 are the last three reported fiscal years. The
- * page's LTM is FY0 + current stub − prior stub, so:
- *   - LTM is a fiscal year (no TTM beyond FY0): both stubs are 0 (no stub).
- *   - LTM is a TTM: prior stub = FY0 and current stub = the reported TTM, both
- *     12-month periods, so LTM = TTM exactly with no derived number (the user
- *     chose 12-month stub columns over rebuilt YTD stubs).
- *
- * Income statement walk (sales − COGS − SG&A − other = EBIT, EBIT − interest =
- * pre-tax, − taxes − NCI − preferred = net income): sales, COGS, interest,
- * taxes, NCI, preferred dividends and diluted shares are the reported lines.
- * Yahoo gives no complete opex split, so "SG&A" carries SG&A and every other
- * operating item as ONE line = reported gross profit − reported EBIT (the
- * user's choice), which keeps the page's EBIT (and EBITDA = EBIT + reported
- * D&A) equal to what Yahoo reports.
- * Interest and tax are never back-solved: not reported → null.
- *
- * Balance sheet: current column = the latest reported quarter (balanceSheetDate),
- * prior column = the latest fiscal year end before it. Lines Yahoo has no
- * one-to-one line for (prepaid, other assets, accrued, other liabilities) stay
- * null, so the page's balance check shows the gap instead of hiding it.
+ * Income statement (the user's choices):
+ *   Cost of Materials = cost of revenue · Employee Benefits = salaries & wages
+ *   (when reported) · Other Expenses = revenue − those two − reported EBITDA,
+ *   so the page's EBITDA equals Yahoo's · D&A, Finance Costs (interest
+ *   expense), Exceptional Items (unusual items), Tax as reported · Other
+ *   Income = the balancing figure that makes PBT equal reported pre-tax income
+ *   · NCI share of profit as reported · diluted weighted-average shares.
+ * Balance sheet: one-to-one lines as reported; Current Investments = cash &
+ * short-term investments − cash & equivalents; lease liabilities = debt incl.
+ * leases − debt; the "Other …" lines (and Other Equity) take the difference to
+ * Yahoo's reported subtotals, so the balance check ties.
+ * Cash flow: PBT, D&A, working capital, taxes paid, capex, investments,
+ * borrowings, dividends and equity as reported; the "Other" line of each
+ * section takes the difference to reported CFO / CFI / CFF.
+ * A line whose source (or subtotal) is not reported stays blank.
  */
-export function peerPageFromListing(raw, company, rates = {}) {
+export function templateFromListing(raw, company, rates = {}, { n = 3, before = null } = {}) {
   const conv = makeConverter(raw, company, rates);
-  const ltm = ltmPeriod(raw);
   const warnings = [];
+  const all = unionDates(raw.annual, ['TotalRevenue', 'EBIT', 'NetIncome', 'TotalAssets'], 0);
+  const dates = (before ? all.filter((d) => d < before) : all).slice(-n);
+  const nz = (...vs) => vs.reduce((acc, v) => acc + (v ?? 0), 0);
+  const any = (...vs) => vs.some((v) => v !== null && v !== undefined);
+  const neg = (v) => (v === null ? null : -v);
 
-  const fyDates = unionDates(raw.annual, ['TotalRevenue', 'EBIT', 'NetIncome'], 0).slice(-3);
-  while (fyDates.length < 3) fyDates.unshift(null);
-  const useTtm = ltm.basis === 'ttm';
-  // five slots: FY-2, FY-1, FY0, prior stub, current stub — each { blk, date } or 'zero'
-  const slots = [
-    { blk: raw.annual, date: fyDates[0] },
-    { blk: raw.annual, date: fyDates[1] },
-    { blk: raw.annual, date: fyDates[2] },
-    useTtm ? { blk: raw.annual, date: fyDates[2] } : 'zero',
-    useTtm ? { blk: raw.trailing, date: ltm.date } : 'zero',
-  ];
-  const line = (fn) => slots.map((s) => (s === 'zero' ? 0 : s.date ? fn(s.blk, s.date) : null));
-  const M = (base, sign = 1) => (blk, d) => {
-    const v = conv.money(pointAt(blk, base, d));
-    return v === null ? null : v * sign;
-  };
-
-  const sales = line(M('TotalRevenue'));
-  const cogs = line(M('CostOfRevenue'));
-  const ebit = line(M('EBIT'));
-  const periodSlots = slots.map((s, i) => (s !== 'zero' && s.date ? i : -1)).filter((i) => i >= 0);
-  const grossKnown = periodSlots.length > 0 && periodSlots.every((i) => cogs[i] !== null);
-  // balancing opex line: gross profit − EBIT (see above); all cost in COGS when COGS is not reported
-  const sga = sales.map((s, i) => {
-    if (slots[i] === 'zero') return 0;
-    if (s === null || ebit[i] === null) return null;
-    return cogs[i] !== null ? s - cogs[i] - ebit[i] : 0;
+  const cols = dates.map((d) => {
+    const a = (base) => conv.money(pointAt(raw.annual, base, d));
+    const o = {};
+    // ---- income statement
+    o.rev = a('TotalRevenue');
+    o.materials = a('CostOfRevenue');
+    o.employee = a('SalariesAndWages');
+    o.da = a('ReconciledDepreciation') ?? a('DepreciationAndAmortization');
+    let ebitda = ebitdaSuspect(raw.annual, d) ? null : a('EBITDA');
+    const ebit = a('EBIT');
+    if (ebitda === null && ebit !== null && o.da !== null) ebitda = ebit + o.da;
+    o.otherExp = o.rev !== null && ebitda !== null ? o.rev - nz(o.materials, o.employee) - ebitda : null;
+    o.finance = a('InterestExpense');
+    o.exceptional = a('TotalUnusualItems');
+    const pbt = a('PretaxIncome');
+    o.otherInc = pbt !== null && ebitda !== null ? pbt - (ebitda - nz(o.da)) + nz(o.finance) - nz(o.exceptional) : null;
+    o.tax = a('TaxProvision');
+    o.assoc = null;
+    o.nciProfit = neg(a('MinorityInterests'));          // Yahoo shows the NCI share as a deduction (negative)
+    o.shares = conv.shares(pointAt(raw.annual, 'DilutedAverageShares', d));
+    // ---- balance sheet
+    o.ppe = a('NetPPE');
+    o.rou = null;
+    const gw = a('Goodwill'), oi = a('OtherIntangibleAssets');
+    o.intangibles = any(gw, oi) ? nz(gw, oi) : null;
+    o.ncInvest = a('InvestmentsAndAdvances');
+    o.inventories = a('Inventory');
+    o.receivables = a('AccountsReceivable');
+    o.cash = a('CashAndCashEquivalents');
+    o.otherBank = null;
+    const cashSti = a('CashCashEquivalentsAndShortTermInvestments');
+    o.curInvest = o.cash !== null && cashSti !== null ? cashSti - o.cash : null;
+    const tca = a('CurrentAssets');
+    const tnca = a('TotalNonCurrentAssets') ?? (a('TotalAssets') !== null && tca !== null ? a('TotalAssets') - tca : null);
+    o.otherNca = tnca !== null ? tnca - nz(o.ppe, o.intangibles, o.ncInvest) : null;
+    o.otherCa = tca !== null ? tca - nz(o.inventories, o.receivables, o.cash, o.curInvest) : null;
+    const se = a('StockholdersEquity');
+    o.shareCap = a('CommonStock');
+    o.otherEquity = se !== null ? se - nz(o.shareCap) : null;
+    o.nci = a('MinorityInterest');
+    const ltd = a('LongTermDebt'), ltdl = a('LongTermDebtAndCapitalLeaseObligation');
+    o.ltBorrow = ltd ?? ltdl;
+    o.leaseNc = ltd !== null && ltdl !== null ? ltdl - ltd : null;
+    const tncl = a('TotalNonCurrentLiabilitiesNetMinorityInterest');
+    o.otherNcl = tncl !== null ? tncl - nz(o.ltBorrow, o.leaseNc) : null;
+    const std = a('CurrentDebt'), stdl = a('CurrentDebtAndCapitalLeaseObligation');
+    o.stBorrow = std ?? stdl;
+    o.leaseCur = std !== null && stdl !== null ? stdl - std : null;
+    o.payables = a('AccountsPayable');
+    const cl = a('CurrentLiabilities');
+    o.otherCl = cl !== null ? cl - nz(o.stBorrow, o.leaseCur, o.payables) : null;
+    // ---- cash flow (outflows negative, as Yahoo reports them)
+    o.cfPbt = pbt;
+    o.cfDa = a('DepreciationAndAmortization') ?? o.da;
+    o.cfFinance = null;
+    o.cfWc = a('ChangeInWorkingCapital');
+    o.cfTax = neg(a('IncomeTaxPaidSupplementalData'));
+    const cfo = a('OperatingCashFlow');
+    o.cfOther = cfo !== null ? cfo - nz(o.cfPbt, o.cfDa, o.cfWc, o.cfTax) : null;
+    o.capex = a('CapitalExpenditure');
+    o.ppeSale = null;
+    const pi = a('PurchaseOfInvestment'), si = a('SaleOfInvestment');
+    o.investNet = any(pi, si) ? nz(pi, si) : null;
+    o.acquisitions = null;
+    const cfi = a('InvestingCashFlow');
+    o.intDivRecd = cfi !== null ? cfi - nz(o.capex, o.investNet) : null;
+    const di = a('IssuanceOfDebt'), dr = a('RepaymentOfDebt');
+    o.borrowNet = any(di, dr) ? nz(di, dr) : null;
+    o.intPaid = null;
+    o.divPaid = a('CashDividendsPaid');
+    o.leasePay = null;
+    const ei = a('IssuanceOfCapitalStock'), eb = a('RepurchaseOfCapitalStock');
+    o.equityIssue = any(ei, eb) ? nz(ei, eb) : null;
+    const cff = a('FinancingCashFlow');
+    o.otherFin = cff !== null ? cff - nz(o.borrowNet, o.divPaid, o.equityIssue) : null;
+    return o;
   });
-  const cogsWalk = sales.map((s, i) => {
-    if (slots[i] === 'zero') return 0;
-    if (cogs[i] !== null) return cogs[i];
-    return s !== null && ebit[i] !== null ? s - ebit[i] : null;
-  });
 
-  const is = {
-    sales,
-    cogs: cogsWalk,
-    sga,
-    otherExp: line(() => 0),
-    interest: line(M('InterestExpense')),
-    taxes: line(M('TaxProvision')),
-    nci: line(M('MinorityInterests', -1)),          // Yahoo reports the NCI share as a deduction (negative)
-    prefDiv: line(M('PreferredStockDividends')),
-    dilutedShares: line((blk, d) => conv.shares(pointAt(blk, 'DilutedAverageShares', d))),
-  };
-  const cf = {
-    cfo: line(M('OperatingCashFlow')),
-    capex: line(M('CapitalExpenditure', -1)),
-    da: line(M('DepreciationAndAmortization')),
-  };
+  const page = blankPage();
+  const pad = Array(Math.max(0, n - dates.length)).fill(null);
+  for (const key of Object.keys(page.lines)) page.lines[key] = { fy: [...pad, ...cols.map((c) => c[key] ?? null)], p: null, c: null };
+  page.labels = { fy: [...pad.map((_, i) => `FY -${n - 1 - i}`), ...dates.map((d) => `FY${String(d).slice(2, 4)}`)], p: null, c: null, ltm: null };
 
-  const bsDate = balanceSheetDate(raw);
-  const priorBs = (raw.annual.TotalAssets || []).map((p) => p.date).filter((d) => bsDate && d < bsDate).pop() || null;
-  const bsCol = (base) => [priorBs, bsDate].map((d) => (d ? conv.money(bsPoint(raw, base, d)) : null));
-  const bs = {
-    cash: bsCol('CashAndCashEquivalents'),              // cash & equivalents only (the user's rule)
-    ar: bsCol('AccountsReceivable'),
-    inventory: bsCol('Inventory'),
-    prepaid: [null, null],
-    ppe: bsCol('NetPPE'),
-    goodwill: bsCol('Goodwill'),
-    otherAssets: [null, null],
-    ap: bsCol('AccountsPayable'),
-    accrued: [null, null],
-    otherCurLiab: [null, null],
-    debt: bsCol('TotalDebt'),
-    otherLTLiab: [null, null],
-    nci: bsCol('MinorityInterest'),
-    preferred: bsCol('PreferredStockEquity'),
-    equity: bsCol('StockholdersEquity'),
-  };
+  if (!dates.length) warnings.push(before ? `Yahoo has no fiscal year ending before ${before} for ${raw.symbol} — it keeps about four years of annual statements.` : `Yahoo returned no annual statements for ${raw.symbol}.`);
+  else if (dates.length < n) warnings.push(`Yahoo has ${dates.length} fiscal year${dates.length === 1 ? '' : 's'}${before ? ` before ${before}` : ''}; the earlier column${n - dates.length === 1 ? ' is' : 's are'} left blank.`);
 
-  const L = (base) => (ltm.block ? pointAt(raw[ltm.block], base, ltm.date) : null);
-  const pTax = L('TaxProvision'), pPbt = L('PretaxIncome');
-  const reportedTaxRate = effectiveTaxRate(pTax, pPbt);
-  const taxRate = reportedTaxRate !== null && reportedTaxRate < 0 ? null : reportedTaxRate;
-  if (taxRate === null && reportedTaxRate !== null) warnings.push(`reported effective tax rate is negative (${reportedTaxRate.toFixed(1)} %) — left blank`);
+  // latest diluted weighted-average shares (TTM when reported, else the latest fiscal year)
+  const ltm = ltmPeriod(raw);
+  const latestShares = (ltm.block ? pointAt(raw[ltm.block], 'DilutedAverageShares', ltm.date) : null)
+    || (raw.annual.DilutedAverageShares || []).slice(-1)[0] || null;
   const px = raw.price || {};
   if (px.currency && raw.financialCurrency && px.currency !== raw.financialCurrency) {
-    warnings.push(`price in ${px.quoteCurrency || px.currency}, financials in ${raw.financialCurrency} — if this is an ADR/GDR check the share count against the price`);
+    warnings.push(`Price in ${px.quoteCurrency || px.currency}, financials in ${raw.financialCurrency} — if this is an ADR/GDR, check the share count against the price.`);
   }
-  const needRates = requiredCurrencies(raw, company.currency).filter((c) => !Number.isFinite(conv.rateFor(c)));
-
+  const sector = [raw.sector, raw.industry].filter(Boolean).join(' / ');
   return {
     name: raw.name,
-    symbol: raw.symbol,
     ticker: raw.symbol,
-    exchange: raw.exchange,
+    sector,
     price: conv.perShareIn(px.value, px.currency),
-    high52: conv.perShareIn(px.high52, px.currency),
-    low52: conv.perShareIn(px.low52, px.currency),
-    taxRate,
-    fyEnd: fyDates[2],
-    stubEnd: useTtm ? ltm.date : fyDates[2],
-    basicShares: conv.shares(bsPoint(raw, 'OrdinarySharesNumber', bsDate)),
-    grossKnown,
-    is, cf, bs,
-    _fetched: {
-      at: raw.fetchedAt,
-      symbol: raw.symbol,
-      financialCurrency: raw.financialCurrency,
-      priceCurrency: px.currency || null,
-      rates: normaliseRates(raw, company, rates),
-      valuationCurrency: company.currency,
-      unit: company.unit,
-      ltmLabel: ltm.label,
-      bsDate,
-      bsPriorDate: priorBs,
-      needRates,
-      warnings,
-      note: [
-        useTtm ? `LTM = ${ltm.label}: prior stub = ${fyName(fyDates[2])}, current stub = the reported TTM (both 12-month periods).` : `${ltm.label || 'No LTM reported'}; no stub.`,
-        grossKnown ? 'SG&A = gross profit − reported EBIT (all operating items between gross profit and EBIT, one line).' : 'No COGS reported: all operating cost sits in COGS (sales − reported EBIT), gross profit is NA.',
-        'Interest and tax are as reported (blank = not reported). Balance sheet lines without a one-to-one Yahoo line are blank.',
-      ].join(' '),
-    },
+    shares: conv.shares(latestShares),
+    page,
+    fyDates: dates,
+    warnings,
+    needRates: requiredCurrencies(raw, company.currency).filter((c) => !Number.isFinite(conv.rateFor(c))),
+    fetched: { at: raw.fetchedAt, symbol: raw.symbol, financialCurrency: raw.financialCurrency, rates: normaliseRates(raw, company, rates) },
   };
 }

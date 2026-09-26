@@ -1,92 +1,91 @@
 /**
- * Regression workbench model: variable catalog, peer observations, target
- * x-values from the method's own LTM inputs, the OLS fit and the
- * implied-price bridge.
+ * Regression workbench (comps, optional step): explain a peer multiple with
+ * operating fundamentals and predict the target's multiple.
  *
- * Observations are the comps peer set. Every catalog variable (plus any
- * user-defined custom variables) lives as a numeric field on the peer object,
- * so the Yahoo peer fetch, the data table and the peer pages edit one place.
- * Everything is LTM / reported: growth is the historical 1-year sales growth,
- * and the size variables are in the valuation currency and unit (no FX).
+ * Observations are the peers included in the statistics (Include = 1), read
+ * off the same Comps Summary rows the tables show: every multiple of Table 1
+ * can be the dependent variable, every Table 2 metric and the two size
+ * measures a regressor, plus any variables the user types. The target's
+ * x-values come from its own summary row; a typed override wins.
+ * Percentages are in %-points; money in the valuation currency and unit.
  */
 import { fitOLS, predictOLS } from './mlr.js';
-import { compsPeerRows } from './comps.js';
+import { computeComps, COMPS_MULTIPLES, COMPS_BENCH, multipleLabel, peerSlots } from './comps.js';
 
 const fin = Number.isFinite;
-const ratioPct = (n, d) => (fin(n) && fin(d) && d !== 0 ? (n / d) * 100 : NaN);
+const num = (v) => (typeof v === 'number' && fin(v) ? v : NaN);
 
-/** Built-in variable catalog. `target(a)` derives the company's own value from a.comps.target. */
-export const REG_VARS = [
-  { key: 'evEbitda', label: 'EV / LTM EBITDA', fmt: 'x', multiple: 'ev', metricKey: 'ebitda', metricLabel: 'LTM EBITDA' },
-  { key: 'evSales', label: 'EV / LTM Sales', fmt: 'x', multiple: 'ev', metricKey: 'revenue', metricLabel: 'LTM Revenue' },
-  { key: 'pe', label: 'P / LTM E', fmt: 'x', multiple: 'eq', metricKey: 'netIncome', metricLabel: 'LTM Net Income' },
-  { key: 'growth', label: 'Sales growth (hist. 1-yr)', fmt: 'pct', target: (t) => (fin(t.priorRevenue) && t.priorRevenue !== 0 ? (t.revenue / t.priorRevenue - 1) * 100 : NaN) },
-  { key: 'ebitdaMargin', label: 'LTM EBITDA margin', fmt: 'pct', target: (t) => ratioPct(t.ebitda, t.revenue) },
-  { key: 'netDebtEbitda', label: 'Net debt / LTM EBITDA', fmt: 'x', target: (t, c) => (fin(t.ebitda) && t.ebitda !== 0 ? (c.grossDebt - c.cash) / t.ebitda : NaN) },
-  { key: 'roe', label: 'ROE', fmt: 'pct', target: (t) => ratioPct(t.netIncome, t.equity) },
-  { key: 'revSize', label: 'LTM revenue (size)', fmt: 'num', target: (t) => t.revenue },
-  { key: 'mktCapSize', label: 'Market cap (size)', fmt: 'num', target: (t, c) => c.currentPrice * c.sharesOut },
-];
+/** Built-in variable catalog (labels resolved against the period labels). */
+export function builtInVars(labels) {
+  return [
+    ...COMPS_MULTIPLES.map((m) => ({
+      key: m.key, label: multipleLabel(m, labels), fmt: 'x', multiple: m.ev ? 'ev' : 'eq', spec: m,
+      get: (r) => num(r.mult[m.key]),
+    })),
+    ...COMPS_BENCH.map((b) => ({
+      key: b.key, label: `${b.name} ${b.period === 'fy' ? labels.fy[labels.fy.length - 1] : labels.ltm}`,
+      fmt: b.fmt === 'pct' ? 'pct' : b.fmt === 'x' ? 'x' : 'num',
+      get: (r) => (b.fmt === 'pct' ? num(r.bench[b.key]) * 100 : num(r.bench[b.key])),
+    })),
+    { key: 'revSize', label: `Revenue ${labels.ltm} (size)`, fmt: 'num', get: (r) => num(r.revLtm) },
+    { key: 'mcapSize', label: 'Market cap (size)', fmt: 'num', get: (r) => num(r.mcap) },
+  ];
+}
 
 /** Full catalog including the user's custom variables. */
-export function allVars(a) {
+export function allVars(a, comps = computeComps(a)) {
   const custom = (a.regression?.customVars || []).map((cv) => ({
     key: cv.key, label: cv.label || cv.key, fmt: cv.fmt || 'num', custom: true,
   }));
-  return [...REG_VARS, ...custom];
+  return [...builtInVars(comps.labels), ...custom];
 }
 
-/**
- * Peer rows → regression observations ({ name, values }).
- * Multiples, margins, leverage and growth are computed from each peer's input
- * page rather than typed, so the workbench always regresses on the same numbers
- * the benchmarking pages report.
- */
-export const observations = (a) =>
-  compsPeerRows(a).map((p) => ({ name: p.name, values: p }));
+/** Included peers → { id, name, values } with every variable (custom ones typed on the peer object). */
+export function observations(a, comps = computeComps(a)) {
+  const vars = allVars(a, comps);
+  const peerObj = Object.fromEntries(peerSlots(a.comps).map((p) => [p.id, p]));
+  return comps.peers.filter((r) => r.include === 1).map((r) => ({
+    id: r.id,
+    name: r.name,
+    values: Object.fromEntries(vars.map((v) => [v.key, v.custom ? num(peerObj[r.id]?.[v.key]) : v.get(r)])),
+  }));
+}
 
-/**
- * The company's own x-values (for the prediction), from the method's LTM
- * inputs; a.regression.targetOverrides[key] wins when it holds a number (a
- * cleared override is null and falls back — it never reads as 0).
- */
-export function targetValues(a) {
-  const t = a.comps?.target || {};
+/** The target's x-values: its summary row, unless a number is typed as an override. */
+export function targetValues(a, comps = computeComps(a)) {
   const out = {};
-  for (const v of allVars(a)) {
+  for (const v of allVars(a, comps)) {
     const ov = a.regression?.targetOverrides?.[v.key];
     if (typeof ov === 'number' && fin(ov)) out[v.key] = ov;
-    else if (v.target) out[v.key] = v.target(t, a.company);
+    else if (!v.custom) out[v.key] = v.get(comps.target);
   }
   return { values: out };
 }
 
-/**
- * Run the whole workbench: fit + prediction + (when y is a multiple) the
- * implied share price with the ±1 SE band.
- */
+/** Fit + prediction + (when y is a multiple) the implied share price with its ±1 SE band. */
 export function runRegression(a) {
   const spec = a.regression || {};
   const yVar = spec.yVar;
   if (!yVar) return { fit: null, pred: null, price: null, yVar: null, yDef: null, xVars: [], target: {}, spec };
+  const comps = computeComps(a);
   const xVars = (spec.xVars || []).filter((v) => v.key !== yVar);
-  const fit = fitOLS(observations(a), { yVar, yLog: !!spec.yLog, xVars });
-
-  const { values: target } = targetValues(a);
+  const obs = observations(a, comps);
+  const fit = fitOLS(obs, { yVar, yLog: !!spec.yLog, xVars });
+  const { values: target } = targetValues(a, comps);
   const pred = fit?.ok ? predictOLS(fit, target) : null;
 
-  const yDef = allVars(a).find((v) => v.key === yVar);
+  const yDef = allVars(a, comps).find((v) => v.key === yVar);
   let price = null;
   if (pred?.ok && yDef?.multiple) {
-    const netDebt = a.company.grossDebt - a.company.cash;
-    const shares = a.company.sharesOut;
-    const metric = a.comps?.target?.[yDef.metricKey];
-    const toPrice = (mult) => (shares > 0 ? (yDef.multiple === 'ev' ? mult * metric - netDebt : mult * metric) / shares : NaN);
+    const m = yDef.spec;
+    const pg = comps.target.page;
+    const metric = m.metric === 'book' ? pg.market.bookEquity : pg.v[m.metric][m.period === 'fy' ? pg.n - 1 : pg.cols.L];
+    const { netDebt, nci, shares } = comps.targetMarket;
+    const toPrice = (mult) => (shares > 0 && metric > 0 ? (m.ev ? mult * metric - netDebt - nci : mult * metric) / shares : NaN);
     price = {
-      metric, metricLabel: yDef.metricLabel, netDebt, shares,
+      metric, metricLabel: yDef.label, netDebt, nci, shares,
       mid: toPrice(pred.yHat), lo: toPrice(pred.lo), hi: toPrice(pred.hi),
     };
   }
-
-  return { fit, pred, price, yVar, yDef, xVars, target, spec };
+  return { fit, pred, price, yVar, yDef, xVars, target, spec, observations: obs };
 }

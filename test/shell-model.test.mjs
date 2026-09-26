@@ -42,17 +42,17 @@ ok(blankMethodData('dcf').sens !== blankMethodData('dcf').sens, 'each blank data
   ok(Number.isNaN(a.company.grossDebt) && Number.isNaN(a.company.taxRate), 'untyped values become NaN, never 0');
   ok(a.drivers.mode === 'fade' && a.drivers.perYear === null, 'strings and null grids survive');
   ok(Number.isNaN(a.wacc.riskFree) && a.wacc.betaMode === 'direct', 'a section the method does not own is a NaN blank');
-  ok(Number.isNaN(a.comps.target.revenue) && Array.isArray(a.comps.peers), 'comps stand-in has NaN target and empty peers');
-  ok(Number.isNaN(a.precedent.target.ebitda), 'precedent stand-in has NaN target');
+  ok(a.comps.target.page && a.comps.peers.length === 0 && a.comps.settings, 'comps stand-in: a blank target page, no peers');
+  ok(a.precedent.company.page && a.precedent.deals.length === 0, 'precedent stand-in: a blank company page, no deals');
   ok(a.sens.lbo.hurdleStep === SENS_DEFAULTS.lbo.hurdleStep, 'sens passes through');
   ok(d.company.grossDebt === null, 'adapter does not mutate the stored data');
 }
 {
   const d = blankMethodData('comps');
-  d.comps.target.revenue = 100; d.comps.target.ticker = 'ABC';
+  d.comps.target.page.lines.rev.fy = [null, null, 100]; d.comps.target.ticker = 'ABC';
   d.comps.peers = [{ id: 'p1', name: 'Peer' }];
   const a = toEngineInput(company, d);
-  ok(a.comps.target.revenue === 100 && Number.isNaN(a.comps.target.ebit) && a.comps.target.ticker === 'ABC', 'comps target: numbers / NaN / text');
+  ok(a.comps.target.page.lines.rev.fy[2] === 100 && a.comps.target.page.lines.rev.fy[0] === null && a.comps.target.ticker === 'ABC', 'comps target page: numbers stay, blanks stay blank (the template reads them as 0)');
   ok(a.comps.peers === d.comps.peers, 'peer pages pass through untouched');
 }
 {

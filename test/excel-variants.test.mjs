@@ -2,14 +2,13 @@
  * Excel ↔ engine under edge cases: tax losses (NOL), loss years, blank inputs
  * (NA), the optional FCFE / history / regression steps, beta peers, clamped
  * WACC rows, custom grid steps, absolute per-year forecasts, horizons of 3 and
- * 10 years, PIK / no-mezzanine LBOs, IPO greenshoe types and bases, blank or
- * adjustment-only company pages, and every purchase consideration.
+ * 10 years, PIK / no-mezzanine LBOs, IPO greenshoe types and bases, and
+ * regression specifications on the comparable companies.
  */
 import { withModel, SAMPLE_MODEL } from './fixtures/model.mjs';
-import { checkDcf, checkTs, checkLbo, checkIpo, checkComps, checkPrecedent, checkCombined } from './helpers/excelChecks.mjs';
+import { checkDcf, checkTs, checkLbo, checkIpo, checkComps, checkCombined } from './helpers/excelChecks.mjs';
 import { buildPerYearGrid } from '../src/lib/engine/drivers.js';
 import { blankManualHistory } from '../src/lib/historyModel.js';
-import { blankCompany } from '../src/lib/engine/compsCo.js';
 
 /* ---------------------------------------------------------------- history */
 function history({ quarterly = false } = {}) {
@@ -107,53 +106,10 @@ const ratioVariants = {
   'private company (no valuation ratios)': [withModel({ company: { ...SAMPLE_MODEL.company, currentPrice: NaN } })],
 };
 
-/* ---- comps ---- */
-function compsWith(mut) {
-  const a = withModel({});
-  mut(a);
-  return a;
-}
+/* ---- comps (the template's own variants are in template-excel.test.mjs) ---- */
 const compsVariants = {
-  'target blanks (no prior year, GP, interest, equity, 52w)': [compsWith((a) => {
-    Object.assign(a.comps.target, { priorRevenue: null, priorEbitda: null, grossProfit: null, interest: null, equity: null, high52: null, low52: null, beta: null });
-  })],
-  'private target (no price)': [compsWith((a) => { a.company.currentPrice = null; })],
-  'peer blanks, no stubs, options & converts, a loss-maker': [compsWith((a) => {
-    const [p0, p1, p2, p3] = a.comps.peers;
-    p0.is.cogs[0] = null; p0.cf.cfo[2] = null; p0.bs.ar[0] = null;            // core blanks → NA
-    for (const k of Object.keys(p1.is)) { p1.is[k][3] = null; p1.is[k][4] = null; }   // no stubs
-    for (const k of Object.keys(p1.cf)) { p1.cf[k][3] = null; p1.cf[k][4] = null; }
-    for (const k of Object.keys(p1.adj)) p1.adj[k] = [null, null, null, null, null];  // adjustments blank = none
-    p2.options = [{ shares: 0.4, strike: 700 }, { shares: 0.2, strike: 99999 }, { shares: null, strike: 10 }];
-    p2.converts = [{ amount: 150, price: 600 }, { amount: 90, price: 999999 }];
-    p3.is.sga = p3.is.sga.map((v) => v * 3);                                     // negative EBIT → NM multiples
-    p3.price = null;                                                             // and no price → NA
-  })],
-  'regression skipped': [withModel({}), { skipped: { regression: true } }],
-  'regression: ln(y) on growth + margin + size': [withModel({ regression: { yVar: 'evEbitda', yLog: true, xVars: [{ key: 'growth', transform: 'lin', degree: 1 }, { key: 'ebitdaMargin', transform: 'lin', degree: 1 }, { key: 'revSize', transform: 'ln', degree: 1 }], customVars: [], targetOverrides: { ebitdaMargin: 23.5 } } })],
-  'regression on P/E': [withModel({ regression: { yVar: 'pe', yLog: false, xVars: [{ key: 'roe', transform: 'lin', degree: 1 }], customVars: [], targetOverrides: {} } })],
-  'no peers': [compsWith((a) => { a.comps.peers = []; }), { skipped: { regression: true } }],
-  'a fully blank peer': [compsWith((a) => { a.comps.peers.push(blankCompany({ name: 'Blank Co', tierId: 't1' })); })],
-};
-
-/* ---- precedent ---- */
-function precWith(mut) {
-  const a = withModel({});
-  mut(a);
-  return a;
-}
-const precVariants = {
-  'stock and cash / stock deals': [precWith((a) => {
-    const [d0, d1] = a.precedent.deals;
-    const px0 = d0.cashOffer;
-    Object.assign(d0, { consideration: 'Stock', cashOffer: null, exchangeRatio: px0 / 250, acquirerPrice: 250 });
-    const px1 = d1.cashOffer;
-    Object.assign(d1, { consideration: 'Cash / Stock', cashOffer: px1 * 0.6, exchangeRatio: (px1 * 0.4) / 80, acquirerPrice: 80 });
-  })],
-  'consideration not chosen → NA': [precWith((a) => { a.precedent.deals[2].consideration = ''; })],
-  'stock deal missing the acquirer price → NA': [precWith((a) => { Object.assign(a.precedent.deals[3], { consideration: 'Stock', acquirerPrice: null, exchangeRatio: 2 }); })],
-  'blank unaffected prices': [precWith((a) => { a.precedent.deals[0].unaffected = { 1: null, 7: 812, 30: null }; })],
-  'private target (no price) → premia NA': [precWith((a) => { a.company.currentPrice = null; })],
+  'regression: ln(y) on growth + margin + size': [withModel({ regression: { yVar: 'evEbitdaLtm', yLog: true, xVars: [{ key: 'gRev', transform: 'lin', degree: 1 }, { key: 'ebitdaMargin', transform: 'lin', degree: 1 }, { key: 'revSize', transform: 'ln', degree: 1 }], customVars: [], targetOverrides: { ebitdaMargin: 23.5 } } })],
+  'regression on P/E LTM': [withModel({ regression: { yVar: 'peLtm', yLog: false, xVars: [{ key: 'roe', transform: 'lin', degree: 1 }], customVars: [], targetOverrides: {} } })],
 };
 
 /* ------------------------------------------------------------------- run */
@@ -177,7 +133,6 @@ for (const [name, [a, o = {}]] of Object.entries(ipoVariants)) run(`ipo — ${na
 for (const [name, [a, o = {}]] of Object.entries(tsVariants)) run(`ts — ${name}`, checkTs(a, { ...o, tag: name }, 'ts'));
 for (const [name, [a, o = {}]] of Object.entries(ratioVariants)) run(`ratios — ${name}`, checkTs(a, { ...o, tag: name }, 'ratios'));
 for (const [name, [a, o = {}]] of Object.entries(compsVariants)) run(`comps — ${name}`, checkComps(a, { ...o, tag: name }));
-for (const [name, [a, o = {}]] of Object.entries(precVariants)) run(`precedent — ${name}`, checkPrecedent(a, { ...o, tag: name }));
 run('combined — a missing weight → NA', checkCombined(withModel({}), { rows: [{ method: 'DCF', figureLabel: 'x', value: 900, low: 800, high: 1000, weight: 70 }, { method: 'Comps', figureLabel: 'y', value: 820, low: 760, high: 880, weight: null }], marketPrice: null }));
 
 console.log(`excel-variants: ${checks} checks, ${failures} failures`);

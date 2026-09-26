@@ -7,21 +7,15 @@
  * must be NA / NM text in Excel.
  */
 import { buildWorkbook } from '../../src/lib/excel/exportExcel.js';
-import { companyLayout } from '../../src/lib/excel/compsSheets.js';
-import { dealLayout } from '../../src/lib/excel/precedentSheets.js';
 import { computeDcf, dcfSensitivity, dcfReportedHistory } from '../../src/lib/engine/dcf.js';
 import { computeWacc, waccSensitivity, betaPeerStats } from '../../src/lib/engine/wacc.js';
 import { computeThreeStatement } from '../../src/lib/engine/threeStatement.js';
 import { computeLbo, lboSensitivity, lboHoldSensitivity } from '../../src/lib/engine/lbo.js';
 import { computeIpo } from '../../src/lib/engine/ipo.js';
 import { computeForecastRatios, computeHistoryRatios } from '../../src/lib/engine/ratios.js';
-import { computeComps, targetCompanyPage, BENCH1_GROUPS, BENCH2_GROUPS, OUTPUT_GROUPS } from '../../src/lib/engine/comps.js';
-import { computeCompany, P } from '../../src/lib/engine/compsCo.js';
-import { computePrecedent } from '../../src/lib/engine/precedent.js';
-import { PREMIUM_DAYS } from '../../src/lib/engine/precedentDeal.js';
-import { runRegression } from '../../src/lib/engine/regressionModel.js';
 import { hasHistory } from '../../src/lib/historyModel.js';
 import { recalc, colLetter } from './recalc.mjs';
+import { checkCompsWorkbook, checkPrecedentWorkbook } from './templateChecks.mjs';
 
 const isNum = (x) => typeof x === 'number' && Number.isFinite(x);
 /** Scale a numeric cell (a % shown as a fraction); text such as "NA" passes through. */
@@ -276,178 +270,12 @@ export function checkIpo(a, opts = {}) {
   return T;
 }
 
-/* ================================================================ Comps */
+/* ===================================================== Comps / Precedent */
 
-/** Every checked field of a company page against computeCompany. */
-function checkCompanyPage(X, T, sheet, page, L, tag) {
-  const g = (addr) => X.get(sheet, addr);
-  const s = (addr, eng, what) => T.same(g(addr), eng, `${tag} ${what}`);
-  s(`T${L.fullyDiluted}`, page.shares.fullyDiluted, 'diluted shares');
-  s(`E${L.equityValue}`, page.equityValue, 'equity value');
-  s(`E${L.ev}`, page.enterpriseValue, 'EV');
-  const cols = ['I', 'J', 'K', 'L', 'M', 'N'];
-  const series = [
-    ['sales', page.is.sales], ['cogs', page.is.cogs], ['grossProfit', page.grossProfit],
-    ['sga', page.is.sga], ['otherExp', page.is.otherExp], ['ebit', page.ebit],
-    ['interest', page.is.interest], ['pretax', page.pretax], ['taxes', page.is.taxes],
-    ['netIncome', page.netIncome], ['effTax', page.effTaxRate], ['dilEps', page.eps],
-    ['wtdShares', page.is.dilutedShares],
-    ['adjGross', page.adjGrossProfit], ['adjGrossM', page.grossMargin],
-    ['adjEbit', page.adjEbit], ['adjEbitM', page.ebitMargin],
-    ['ebitdaB', page.ebitda], ['adjEbitda', page.adjEbitda], ['adjEbitdaM', page.ebitdaMargin],
-    ['taxAdj', page.taxAdjustment], ['adjNi', page.adjNetIncome], ['adjNiM', page.netMargin],
-    ['adjEps', page.adjEps],
-    ['cfo', page.cf.cfo], ['capex', page.cf.capex], ['fcf', page.fcf],
-    ['fcfMargin', page.fcfMargin], ['fcfPerShare', page.fcfPerShare], ['da', page.cf.da],
-    ['capexPct', page.capexPctSales], ['daPct', page.daPctSales],
-  ];
-  for (const [key, vals] of series) cols.forEach((c, i) => s(`${c}${L[key]}`, vals[i], `${key}[${i}]`));
-  const bs = page.bs;
-  for (const [key, vals] of [
-    ['bsTca', bs.totalCurrentAssets], ['bsTotalAssets', bs.totalAssets], ['bsTcl', bs.totalCurrentLiab],
-    ['bsTotalLiab', bs.totalLiabilities], ['bsTotalLe', bs.totalLiabEquity],
-  ]) ['S', 'T'].forEach((c, i) => s(`${c}${L[key]}`, vals[i], `${key}[${i}]`));
-  s(`T${L.plusOptions}`, page.shares.itmShares, 'ITM option shares');
-  s(`T${L.lessRepurch}`, page.shares.repurchased, 'shares repurchased');
-  s(`T${L.netNewOptions}`, page.shares.netNew, 'net new option shares');
-  s(`T${L.plusConverts}`, page.shares.convShares, 'convertible shares');
-  s(`C${L.evSales}`, page.multiples.evSales.metric[0], 'EV/Sales metric');
-  s(`C${L.evEbitda}`, page.multiples.evEbitda.metric[0], 'EV/EBITDA metric');
-  s(`C${L.pe}`, page.multiples.pe.metric[0], 'P/E metric');
-  s(`E${L.debtEbitda}`, page.credit.debtToEbitda, 'debt/EBITDA');
-  s(`E${L.ebitInt}`, page.credit.ebitToInterest, 'EBIT/interest');
-  s(`C${L.hist2}`, page.growth.ebitda.hist2, 'EBITDA CAGR 2y');
-  s(`E${L.hist2}`, page.growth.eps.hist2, 'EPS CAGR 2y');
-  s(`B${L.evSales}`, page.multiples.evSales.values[0], 'EV/Sales');
-  s(`B${L.evEbitda}`, page.multiples.evEbitda.values[0], 'EV/EBITDA');
-  s(`B${L.evEbit}`, page.multiples.evEbit.values[0], 'EV/EBIT');
-  s(`B${L.pe}`, page.multiples.pe.values[0], 'P/E');
-  s(`B${L.pFcf}`, page.multiples.pFcf.values[0], 'P/FCF');
-  s(`B${L.fcfYield}`, page.multiples.fcfYield.values[0], 'FCF yield');
-  s(`E${L.roic}`, page.roic, 'ROIC');
-  s(`E${L.roe}`, page.roe, 'ROE');
-  s(`E${L.roa}`, page.roa, 'ROA');
-  s(`E${L.divYield}`, page.dividendYield, 'dividend yield');
-  s(`E${L.pctHigh}`, page.pctOf52wHigh, '% of 52w high');
-  s(`E${L.debtCap}`, page.credit.debtToTotalCap, 'debt/cap');
-  s(`E${L.netDebtEbitda}`, page.credit.netDebtToEbitda, 'net debt/EBITDA');
-  s(`E${L.ebitdaInt}`, page.credit.ebitdaToInterest, 'EBITDA/interest');
-  s(`E${L.ebitdaCapexInt}`, page.credit.ebitdaLessCapexToInterest, '(EBITDA−capex)/interest');
-  s(`B${L.hist1}`, page.growth.sales.hist1, 'sales growth 1y');
-  s(`B${L.hist2}`, page.growth.sales.hist2, 'sales CAGR 2y');
-  s(`C${L.hist1}`, page.growth.ebitda.hist1, 'EBITDA growth 1y');
-  s(`D${L.hist1}`, page.growth.fcf.hist1, 'FCF/sh growth 1y');
-  s(`E${L.hist1}`, page.growth.eps.hist1, 'EPS growth 1y');
-  s(`T${L.bsCheck}`, page.bs.check[1], 'balance check');
-}
-
-/** Find a stat column by its header label on an analysis page (row 8). */
-function statColumn(X, sheet, label) {
-  const id = X.hf.getSheetId(sheet);
-  const { width } = X.hf.getSheetDimensions(id);
-  for (let c = 0; c < width; c++) if (X.hf.getCellValue({ sheet: id, col: c, row: 7 }) === label) return colLetter(c + 1);
-  return null;
-}
-
-export function checkComps(a, opts = {}) {
-  const T = ctx(`comps${opts.tag ? ` [${opts.tag}]` : ''}`);
-  const { wb, X } = open(a, 'comps', opts, T);
-  const comps = computeComps(a);
-  const peers = a.comps?.peers || [];
-  const all = [targetCompanyPage(a), ...peers];
-  const L = companyLayout(Math.max(5, ...all.map((c) => (c.options || []).length)), Math.max(5, ...all.map((c) => (c.converts || []).length)));
-  const names = wb.worksheets.map((w) => w.name);
-  const listAt = names.indexOf('List');
-  const targetSheet = names[listAt + 1];
-  checkCompanyPage(X, T, targetSheet, comps.targetPage, L, 'target');
-  peers.forEach((p, i) => checkCompanyPage(X, T, names[listAt + 2 + i], comps.pages[i], L, p.name));
-
-  // analysis pages — the Overall block of every statistic column
-  const pages = [['Benchmarking 1', BENCH1_GROUPS, 'bench1'], ['Benchmarking 2', BENCH2_GROUPS, 'bench2'], ['Comps Analysis', OUTPUT_GROUPS, 'output']];
-  for (const [sheet, groups, key] of pages) {
-    const overall = X.row(sheet, 'Overall', 'B');
-    if (!peers.length) { T.truthy(overall < 0, `${sheet}: no Overall block without peers`); continue; }
-    const at = (label) => X.rows(sheet, label, 'B').find((r) => r > overall);
-    for (const c of groups.flatMap((gp) => gp.cols).filter((c) => c.stat)) {
-      const col = statColumn(X, sheet, c.label);
-      T.truthy(!!col, `${sheet}: column "${c.label}"`);
-      if (!col) continue;
-      const st = comps.overall[key][c.key];
-      T.same(X.get(sheet, `${col}${at('Mean')}`), st.mean, `${sheet} ${c.label} mean`);
-      T.same(X.get(sheet, `${col}${at('Median')}`), st.median, `${sheet} ${c.label} median`);
-      T.same(X.get(sheet, `${col}${at('High')}`), st.high, `${sheet} ${c.label} high`);
-      T.same(X.get(sheet, `${col}${at('Low')}`), st.low, `${sheet} ${c.label} low`);
-    }
-  }
-
-  // implied valuation — every row side by side
-  if (peers.length) {
-    for (const row of comps.rows) {
-      const r = need(T, X.row('Implied Valuation', row.label, 'B'), row.label);
-      T.same(X.get('Implied Valuation', `C${r}`), row.impliedLow, `${row.label} 25th`);
-      T.same(X.get('Implied Valuation', `D${r}`), row.impliedMedian, `${row.label} median`);
-      T.same(X.get('Implied Valuation', `E${r}`), row.impliedHigh, `${row.label} 75th`);
-    }
-  }
-
-  // regression
-  if (!opts.skipped?.regression && a.regression?.yVar) {
-    const reg = runRegression(a);
-    T.truthy(X.sheets.includes('Regression'), 'Regression sheet present');
-    if (reg.fit?.ok) {
-      T.same(X.get('Regression', `B${X.row('Regression', 'Intercept')}`), reg.fit.beta[0], 'regression intercept');
-      T.same(X.get('Regression', `B${X.row('Regression', 'R²')}`), reg.fit.r2, 'regression R²');
-      if (reg.price) {
-        T.same(X.get('Regression', `B${X.row('Regression', 'Implied share price')}`), reg.price.mid, 'regression price');
-        const lo = X.rows('Regression', '−1 SE'), hi = X.rows('Regression', '+1 SE');
-        T.same(X.get('Regression', `B${lo[lo.length - 1]}`), reg.price.lo, 'regression price −1 SE');
-        T.same(X.get('Regression', `B${hi[hi.length - 1]}`), reg.price.hi, 'regression price +1 SE');
-      }
-    }
-  } else {
-    T.truthy(!X.sheets.includes('Regression'), 'no Regression sheet when skipped');
-  }
-  return T;
-}
-
-/* ============================================================ Precedent */
-
-export function checkPrecedent(a, opts = {}) {
-  const T = ctx(`precedent${opts.tag ? ` [${opts.tag}]` : ''}`);
-  const { wb, X } = open(a, 'precedent', opts, T);
-  const prec = computePrecedent(a);
-  const DL = dealLayout();
-  const L = companyLayout(Math.max(5, ...prec.deals.map((d) => (d.deal.target.options || []).length)), Math.max(5, ...prec.deals.map((d) => (d.deal.target.converts || []).length)));
-  const names = wb.worksheets.map((w) => w.name);
-  const first = names.indexOf('Deal List') + 1;
-  prec.deals.forEach((d, i) => {
-    const sheet = names[first + i];
-    const tag = sheet;
-    T.same(X.get(sheet, `E${DL.offer}`), d.offerPrice, `${tag} offer price`);
-    T.same(X.get(sheet, `E${DL.stockOffer}`), d.stockOffer, `${tag} stock leg`);
-    T.same(X.get(sheet, `E${DL.equityValue}`), d.equityValue, `${tag} equity value`);
-    T.same(X.get(sheet, `E${DL.ev}`), d.enterpriseValue, `${tag} EV`);
-    T.same(X.get(sheet, `E${DL.evSales}`), d.evSales, `${tag} EV/Sales`);
-    T.same(X.get(sheet, `E${DL.evEbitda}`), d.evEbitda, `${tag} EV/EBITDA`);
-    T.same(X.get(sheet, `E${DL.evEbit}`), d.evEbit, `${tag} EV/EBIT`);
-    T.same(X.get(sheet, `E${DL.pe}`), d.pe, `${tag} P/E`);
-    T.same(X.get(sheet, `N${L.adjEbitdaM}`), d.ebitdaMargin, `${tag} EBITDA margin`);
-    PREMIUM_DAYS.forEach((w, k) => T.same(X.get(sheet, `E${DL.premFirst + k}`), d.premiums[w], `${tag} premium ${w}d`));
-  });
-  const S = 'Precedent';
-  const rowsByKey = { evSales: 'EV / LTM Sales × target LTM revenue', evEbitda: 'EV / LTM EBITDA × target LTM EBITDA' };
-  for (const row of prec.rows) {
-    const r = need(T, X.row(S, rowsByKey[row.key], 'B'), row.key);
-    T.same(X.get(S, `C${r}`), row.impliedLow, `${row.key} 25th`);
-    T.same(X.get(S, `D${r}`), row.impliedMedian, `${row.key} median`);
-    T.same(X.get(S, `E${r}`), row.impliedHigh, `${row.key} 75th`);
-  }
-  const pr = need(T, X.row(S, 'Premiums paid (1-day) on the current share price', 'B'), 'premia');
-  T.same(X.get(S, `C${pr}`), prec.premia.impliedLow, 'premia 25th');
-  T.same(X.get(S, `D${pr}`), prec.premia.impliedMedian, 'premia median');
-  T.same(X.get(S, `E${pr}`), prec.premia.impliedHigh, 'premia 75th');
-  return T;
-}
+/** The template workbooks (test/helpers/templateChecks.mjs), in this file's { failures, checks } shape. */
+const adapt = (label, res) => ({ failures: res.fails.map((f) => `${label}: ${f}`), checks: res.checks });
+export const checkComps = (a, opts = {}) => adapt(`comps${opts.tag ? ` [${opts.tag}]` : ''}`, checkCompsWorkbook(a, opts));
+export const checkPrecedent = (a, opts = {}) => adapt(`precedent${opts.tag ? ` [${opts.tag}]` : ''}`, checkPrecedentWorkbook(a, opts));
 
 /* ============================================================= Combined */
 
@@ -462,5 +290,3 @@ export function checkCombined(a, combined, opts = {}) {
   T.truthy(X.sheets.length === 2, `combined file = Cover + one sheet (got ${X.sheets.join(', ')})`);
   return T;
 }
-
-export { P };

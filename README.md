@@ -79,8 +79,8 @@ xattr -dr com.apple.quarantine "Valuation Studio.app"
 | Method | Steps |
 | --- | --- |
 | **DCF** | Company → Historical financials *(optional)* → Forecast → Cost of capital (CAPM, Hamada or direct beta, optional beta-peer list) → Terminal value → FCFE financing *(optional — skip for FCFF only)* |
-| **Comparable companies** (LTM) | Company → Target LTM financials → Peer set (≥ 3 usable peers) → Regression *(optional)* |
-| **Precedent transactions** | Company → Target LTM financials → Transaction set (≥ 3 usable deals) |
+| **Comparable companies** | Settings → Target company (full company page) → Peers (as many as you choose, each with its company page, include flag and tier) → Regression *(optional)* |
+| **Precedent transactions** | Settings → Company being valued (company page) → Deal list (as many as you choose) → Deal financials (one page per deal) |
 | **LBO** | Company → Forecast → Entry & exit (incl. cash left at close) → Debt structure → Cash sweep & hurdle |
 | **IPO** | Company → Forecast → Financing rates → Pricing basis → Offer structure (greenshoe size, % exercised, primary or secondary) |
 | **Combined** | Pick completed methods, the figure each contributes and its weight (must total 100 %); optional market price |
@@ -99,6 +99,36 @@ Modelling conventions that are stated rather than assumed: tax is never negative
 value uses a fully-taxed final-year flow with the remaining NOL valued as its own
 line; interest accrues on opening balances (no circular references); forecasts
 are annual.
+
+## Comparable companies and precedent transactions
+
+Both follow the *Comparable Company Analysis* and *Precedent Transactions*
+templates: every company (target, peers, the company being valued, each deal's
+target) has a company page — income statement, balance sheet, cash flow and the
+ratio block — with **1 to 10 historical fiscal years** plus optional prior and
+current **YTD** columns and an **LTM** column (LTM = latest FY + current YTD −
+prior YTD; the balance sheet uses the interim column when entered, else the
+latest FY). Blanks follow the template: a blank cell counts as 0, NM marks a
+zero or negative denominator, and NM values are left out of the statistics.
+
+What you choose on the **Settings** step: price / valuation date, the lease
+toggle, the number of years, YTD columns on or off, the period labels, which
+multiples feed the implied valuation, which statistics give the low / mid /
+high values (template: 25th percentile / median / 75th percentile), the
+percentile method (inclusive, as the template, or exclusive) and which
+statistics rows are shown. The number of peers and of deals is chosen on their
+steps. On the output page you pick the **headline multiple** — the one row
+Combined uses (mid statistic as the value, low–high as the range).
+
+Pages fill from Yahoo Finance (Cost of Materials = cost of revenue, Employee
+Benefits = salaries when reported, Other Expenses and Other Income balance to
+Yahoo's EBITDA and pre-tax income, the "Other" balance-sheet and cash-flow lines
+take the difference to Yahoo's totals, YTD columns are left to you; a listed
+deal target's page uses the fiscal years ending before the announcement date),
+or paste a block straight from Excel (*Paste from Excel*: rows matched by label,
+columns lined up by the header row, totals skipped and recalculated). The peer
+and deal lists can be pasted too. Peers can be grouped into tiers; the
+statistics are shown per tier as well.
 
 ## Company search (Yahoo Finance)
 
@@ -155,8 +185,8 @@ black = formula, green = cross-sheet link) for that method only:
 | Method | Sheets |
 | --- | --- |
 | DCF | Cover · Inputs · DCF (reported history, LTM, projection, NOL schedule, FCFF valuation, FCFE when not skipped, sensitivity grids) · WACC (CAPM + Hamada build, beta-peer reference, WACC surface) |
-| Comps | Cover · Inputs · Benchmarking 1 · Benchmarking 2 · Comps Analysis · Implied Valuation · Regression *(when not skipped)* · List · the target page · one input page per peer |
-| Precedent | Cover · Inputs · Precedent · Deal List · one input page per transaction |
+| Comps | Instructions · Inputs · Comps Summary (Table 1 multiples, Table 2 benchmarking, statistics overall and per tier) · Implied Valuation · Regression *(when not skipped)* · Target · one page per peer — the template's layout |
+| Precedent | Instructions · Inputs · Transaction Summary · Implied Valuation · Company Being Valued · one page per deal — the template's layout |
 | LBO | Cover · Inputs · Projection · LBO |
 | IPO | Cover · Inputs · Projection · 3 Statement · IPO |
 | 3-Statement | Cover · Inputs · Projection · 3 Statement (with the forecast ratio block) |
@@ -165,12 +195,13 @@ black = formula, green = cross-sheet link) for that method only:
 
 The **Inputs** sheet holds only that method's inputs, including the
 sensitivity-grid step sizes; a blank input is the text `NA` and every figure
-built from it reads NA. On company and deal pages a blank core line is NA and a
-blank adjustment line (non-recurring items, NCI, preferred, options,
-convertibles, stubs) is 0. The test suite recalculates every method's workbook
-with HyperFormula and requires it to match the app's engines cell for cell,
-on the sample model and on more than 50 edge cases (tax losses, blanks, optional steps,
-horizons, deal considerations). The DCF tornado is an on-screen analysis only.
+built from it reads NA. The comps and precedent workbooks keep their
+templates' rules instead (a blank cell is 0; NM where a denominator is zero or
+negative). The test suite recalculates every method's workbook with
+HyperFormula and requires it to match the app's engines cell for cell, on the
+sample model and on more than 70 edge cases (tax losses, blanks, optional
+steps, horizons, 1 / 5 / 10 fiscal years, YTD off, every statistics choice,
+no or excluded peers, blank deals). The DCF tornado is an on-screen analysis only.
 
 ## Project layout
 
@@ -198,6 +229,7 @@ build.
 `npm test` runs every `test/*.test.mjs`: hand-checked engine identities (NOL
 schedules, balance-sheet ties, sources = uses, IRR, regression), HyperFormula
 recalculation of each method's workbook against the engines, the Yahoo mapping
-and currency conversion on recorded fixtures, the peer finder's scoring and
+and currency conversion on recorded fixtures, the Excel paste parser, the
+template statistics (inclusive / exclusive quartiles against Excel's values), the peer finder's scoring and
 pipeline on the same fixtures, and the shell's data model
 (nothing pre-filled, blanks never read as 0).

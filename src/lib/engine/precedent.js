@@ -1,148 +1,173 @@
 /**
- * Precedent transactions, built bottom-up from per-deal input pages
- * (see precedentDeal.js) in the style of the Rosenbaum & Pearl 3E template:
+ * Precedent Transactions Analysis — the "Precedent Transactions Template"
+ * workbook, as an engine.
  *
- *   List    — date announced, acquirer, target, type, description, equity &
- *             enterprise value, LTM sales and EBITDA
- *   Output  — one row per deal: the transaction multiples, LTM EBITDA margin
- *             and premiums paid at 1 / 7 / 30 days, with Mean / Median /
- *             High / Low beneath
- *
- * Deal multiples embed the control premium, so they are applied to the
- * target's LTM metrics — the method's own inputs (`a.precedent.target`).
- * A separate premia analysis applies the observed acquisition premia straight
- * to the current share price.
+ *   Inputs                valuation date, lease toggle, the company being
+ *                         valued (price, diluted shares) and the deal list:
+ *                         date, target, acquirer, acquirer type, stake %,
+ *                         consideration paid, implied 100% equity value
+ *                         (= consideration ÷ stake), form, status, listed?,
+ *                         offer / unaffected price, control premium, include
+ *   Company Being Valued  its company page (latest financials)
+ *   Deal k                the target's page AS AT ANNOUNCEMENT, each with its
+ *                         own period labels
+ *   Transaction Summary   Table 1 — deal values & transaction multiples
+ *                         Table 2 — target operating profile at announcement
+ *                         statistics over the deals flagged Include = 1
+ *   Implied Valuation     the chosen multiples (and control premium) at the
+ *                         chosen low / mid / high statistics
  */
-import { computeDeal, PREMIUM_DAYS } from './precedentDeal.js';
+import { computePage, blankPage, pageIsEmpty } from './companyPage.js';
+import { statBlock, statsSettings } from './templateStats.js';
+import {
+  nextId, clampYears, periodLabels, defaultLabels, usedMultiples, impliedRows, impliedSummary,
+} from './comps.js';
 
-function percentile(sorted, p) {
-  if (!sorted.length) return NaN;
-  const idx = (sorted.length - 1) * p;
-  const lo = Math.floor(idx), hi = Math.ceil(idx);
-  return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
-}
-/** Mean / median / quartiles / high / low over the finite values only. */
-export function stats(values) {
-  const v = values.filter((x) => Number.isFinite(x)).sort((a, b) => a - b);
-  if (!v.length) return { mean: NaN, median: NaN, q1: NaN, q3: NaN, min: NaN, max: NaN, high: NaN, low: NaN, n: 0 };
-  return {
-    mean: v.reduce((s, x) => s + x, 0) / v.length,
-    median: percentile(v, 0.5),
-    q1: percentile(v, 0.25),
-    q3: percentile(v, 0.75),
-    min: v[0], max: v[v.length - 1],
-    high: v[v.length - 1], low: v[0],
-    n: v.length,
-  };
-}
+/** Table 1 transaction multiples (N–R) and the control premium (S). */
+export const DEAL_MULTIPLES = [
+  { key: 'evRev', col: 'N', label: 'EV / LTM Revenue', ev: true, metric: 'rev' },
+  { key: 'evEbitda', col: 'O', label: 'EV / LTM EBITDA', ev: true, metric: 'ebitda' },
+  { key: 'evEbit', col: 'P', label: 'EV / LTM EBIT', ev: true, metric: 'ebit' },
+  { key: 'pe', col: 'Q', label: 'P / E (LTM)', ev: false, metric: 'patOwners' },
+  { key: 'pb', col: 'R', label: 'P / B', ev: false, metric: 'book' },
+];
+/** Implied-valuation methods: the five multiples and the control premium on the current price. */
+export const PREC_METHODS = [...DEAL_MULTIPLES, { key: 'premium', label: 'Control Premium (on current price)', premium: true }];
 
-/* ------------------------------------------------- output column spec ------
-   One definition drives the on-screen table and the Excel export, so a column
-   can never disagree between them. `nm: true` marks a multiple that reports NM
-   (not meaningful) on a non-positive metric and drops out of the statistics. */
-
-export const OUTPUT_GROUPS = [
-  {
-    title: '',
-    cols: [
-      { key: 'dateAnnounced', label: 'Date Announced', kind: 'date', get: (d) => d.deal.dateAnnounced },
-      { key: 'acquirer', label: 'Acquirer', kind: 'text', get: (d) => d.deal.acquirer },
-      { key: 'target', label: 'Target', kind: 'text', get: (d) => d.page.co.name },
-      { key: 'type', label: 'Transaction Type', kind: 'text', get: (d) => d.deal.transactionType },
-      { key: 'consideration', label: 'Purchase Consideration', kind: 'text', get: (d) => d.deal.consideration },
-      { key: 'equityValue', label: 'Equity Value', kind: 'money', get: (d) => d.equityValue },
-      { key: 'enterpriseValue', label: 'Enterprise Value', kind: 'money', get: (d) => d.enterpriseValue },
-    ],
-  },
-  {
-    title: 'Enterprise Value / LTM',
-    cols: [
-      { key: 'evSales', label: 'Sales', kind: 'x', stat: true, nm: true, get: (d) => d.evSales },
-      { key: 'evEbitda', label: 'EBITDA', kind: 'x', stat: true, nm: true, get: (d) => d.evEbitda },
-      { key: 'evEbit', label: 'EBIT', kind: 'x', stat: true, nm: true, get: (d) => d.evEbit },
-    ],
-  },
-  {
-    title: 'LTM',
-    cols: [
-      { key: 'ebitdaMargin', label: 'EBITDA Margin', kind: 'pct', stat: true, get: (d) => d.ebitdaMargin },
-    ],
-  },
-  {
-    title: 'Equity Value /',
-    cols: [
-      { key: 'pe', label: 'LTM Net Income', kind: 'x', stat: true, nm: true, get: (d) => d.pe },
-    ],
-  },
-  {
-    title: 'Premiums Paid — days prior to unaffected',
-    cols: PREMIUM_DAYS.map((d) => ({
-      key: `prem${d}`, label: `${d} day${d > 1 ? 's' : ''}`, kind: 'pct', stat: true,
-      get: (row) => row.premiums[d],
-    })),
-  },
+/** Table 2 target operating profile (H–P). */
+export const DEAL_BENCH = [
+  { key: 'gRev', col: 'H', name: 'Revenue Growth (Latest FY)', period: 'fy', fmt: 'pct' },
+  { key: 'ebitdaMargin', col: 'I', name: 'EBITDA Margin (LTM)', period: 'ltm', fmt: 'pct' },
+  { key: 'patMargin', col: 'J', name: 'PAT Margin (LTM)', period: 'ltm', fmt: 'pct' },
+  { key: 'roe', col: 'K', name: 'ROE (LTM)', period: 'ltm', fmt: 'pct' },
+  { key: 'roce', col: 'L', name: 'ROCE (LTM)', period: 'ltm', fmt: 'pct' },
+  { key: 'de', col: 'M', name: 'Debt / Equity (LTM)', period: 'ltm', fmt: 'x' },
+  { key: 'ndEbitda', col: 'N', name: 'Net Debt / EBITDA (LTM)', period: 'ltm', fmt: 'x' },
+  { key: 'ccc', col: 'O', name: 'Cash Conv. Cycle (days, LTM)', period: 'ltm', fmt: 'days' },
+  { key: 'cfoEbitda', col: 'P', name: 'CFO / EBITDA (Latest FY)', period: 'fy', fmt: 'pct' },
 ];
 
-export const LIST_COLS = [
-  { key: 'dateAnnounced', label: 'Date Announced', kind: 'date', get: (d) => d.deal.dateAnnounced },
-  { key: 'acquirer', label: 'Acquirer', kind: 'text', get: (d) => d.deal.acquirer },
-  { key: 'target', label: 'Target', kind: 'text', get: (d) => d.page.co.name },
-  { key: 'type', label: 'Transaction Type', kind: 'text', get: (d) => d.deal.transactionType },
-  { key: 'description', label: 'Target Business Description', kind: 'text', wide: true, get: (d) => d.deal.targetDescription || d.page.co.description },
-  { key: 'equityValue', label: 'Equity Value', kind: 'money', get: (d) => d.equityValue },
-  { key: 'enterpriseValue', label: 'Enterprise Value', kind: 'money', get: (d) => d.enterpriseValue },
-  { key: 'ltmSales', label: 'LTM Sales', kind: 'money', get: (d) => d.ltmSales },
-  { key: 'ltmEbitda', label: 'LTM EBITDA', kind: 'money', get: (d) => d.ltmEbitda },
-];
+export const blankPrecSettings = () => ({
+  valDate: '',
+  lease: 1,
+  years: 3,
+  ytd: true,
+  stats: null,
+  multiples: null,
+});
 
-const flatCols = (groups) => groups.flatMap((g) => g.cols);
+export const blankValuedCo = () => ({ ticker: '', price: null, shares: null, page: blankPage() });
 
-/* ------------------------------------------------------------------- main */
+/** A deal row nothing has been typed or fetched into (it stays out of the counts). */
+export const isBlankDeal = (d) => !d || (!['date', 'target', 'acquirer', 'ticker'].some((k) => String(d[k] || '').trim())
+  && !['stakePct', 'consideration', 'offerPrice', 'unaffectedPrice'].some((k) => typeof d[k] === 'number' && Number.isFinite(d[k]))
+  && pageIsEmpty(d.page));
 
+export const blankDeal = (over = {}) => ({
+  id: nextId('deal'),
+  date: '', target: '', acquirer: '', acquirerType: '',
+  stakePct: null,            // stake acquired, % (51 = 51%)
+  consideration: null,       // consideration paid
+  form: '', status: '',
+  listed: '',                // 'Yes' | 'No'
+  offerPrice: null, unaffectedPrice: null,
+  include: 1,
+  source: '',
+  ticker: '',                // listed target's ticker (for the Yahoo fill)
+  page: blankPage(),
+  ...over,
+});
+
+/** The deal slots in use: the number of deals the user chose (dealCount). */
+export function dealSlots(pr) {
+  const stored = pr?.deals || [];
+  const n = Number.isInteger(pr?.dealCount) && pr.dealCount >= 0 ? pr.dealCount : stored.length;
+  return Array.from({ length: n }, (_, k) => stored[k] || blankDeal({ id: `slot${k}` }));
+}
+
+const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
+const z = (v) => (isNum(v) ? v : 0);
+
+/** Inputs!H = IFERROR(Consideration ÷ Stake, 0). */
+export const impliedEquity100 = (d) => {
+  const stake = z(d.stakePct) / 100;
+  return stake === 0 ? 0 : z(d.consideration) / stake;
+};
+/** Inputs!N = IF(AND(Listed="Yes", Unaffected>0, Offer>0), Offer/Unaffected − 1, ""). */
+export const controlPremium = (d) => (d.listed === 'Yes' && z(d.unaffectedPrice) > 0 && z(d.offerPrice) > 0 ? d.offerPrice / d.unaffectedPrice - 1 : '');
+
+const multipleOf = (base, metric) => (z(metric) <= 0 ? 'NM' : z(base) / z(metric));
+
+/** Full precedent transactions analysis. */
 export function computePrecedent(a) {
-  const netDebt = a.company.grossDebt - a.company.cash;
-  const shares = a.company.sharesOut;
+  const pr = a.precedent || {};
+  const s = { ...blankPrecSettings(), ...(pr.settings || {}) };
+  const n = clampYears(s.years);
+  const statSel = statsSettings(s.stats || {});
+  const toggle = s.lease === 0 ? 0 : 1;
+  const ytd = s.ytd !== false;
 
-  const pages = (a.precedent?.deals || []).map((d) => computeDeal(d));
+  const co = pr.company || blankValuedCo();
+  const cPage = computePage(co.page, { n, toggle, ytd, market: { price: co.price, shares: co.shares } });
+  const company = {
+    name: a.company?.name || '', ticker: co.ticker || '', page: cPage,
+    labels: periodLabels(co.page?.labels, n, null),
+    price: co.price, shares: co.shares,
+  };
 
-  const tIn = a.precedent?.target || {};
-  const target = { revenue: tIn.revenue, ebitda: tIn.ebitda, ltmLabel: tIn.ltmLabel || '' }; // LTM
-  const evToPrice = (ev) => (shares > 0 ? (ev - netDebt) / shares : NaN);
-
-  /* ---- implied takeover value per share, by multiple ---- */
-  const rows = [
-    { key: 'evSales', label: 'EV / LTM Sales', metric: target.revenue, metricLabel: 'LTM Revenue', pick: (d) => d.evSales },
-    { key: 'evEbitda', label: 'EV / LTM EBITDA', metric: target.ebitda, metricLabel: 'LTM EBITDA', pick: (d) => d.evEbitda },
-  ].map((r) => {
-    const s = stats(pages.map(r.pick));
+  const deals = dealSlots(pr).map((d, i) => {
+    const equity = impliedEquity100(d);
+    const pg = computePage(d.page, { n, toggle, ytd, market: { dealEquity: equity, stake: d.stakePct, consideration: d.consideration } });
+    const { L } = pg.cols;
+    const fy = pg.n - 1;
+    const metric = (m) => (m.metric === 'book' ? pg.market.bookEquity : pg.v[m.metric][L]);
     return {
-      ...r, ...s,
-      impliedMedian: evToPrice(s.median * r.metric),
-      impliedLow: evToPrice(s.q1 * r.metric),
-      impliedHigh: evToPrice(s.q3 * r.metric),
+      id: d.id, role: `Deal ${i + 1}`, deal: d, page: pg,
+      labels: periodLabels(d.page?.labels, n, null),
+      include: d.include === 1 ? 1 : d.include === 0 ? 0 : null,
+      empty: isBlankDeal(d),
+      equity, netDebt: pg.market.netDebt, ev: pg.market.ev,
+      revLtm: pg.v.rev[L], ebitdaLtm: pg.v.ebitda[L], patLtm: pg.v.patOwners[L],
+      mult: Object.fromEntries(DEAL_MULTIPLES.map((m) => [m.key, multipleOf(m.ev ? pg.market.ev : equity, metric(m))])),
+      premium: controlPremium(d),
+      bench: Object.fromEntries(DEAL_BENCH.map((b) => [b.key, pg.v[b.key][b.period === 'fy' ? fy : L]])),
     };
   });
 
-  /* ---- premia analysis on the current share price (1-day window) ---- */
-  const premStats = stats(pages.map((d) => d.premiums[1] * 100));
-  const px = a.company.currentPrice;   // optional: blank → the premia analysis is NA
-  const premia = {
-    ...premStats,
-    impliedMedian: px > 0 ? px * (1 + premStats.median / 100) : NaN,
-    impliedLow: px > 0 ? px * (1 + premStats.q1 / 100) : NaN,
-    impliedHigh: px > 0 ? px * (1 + premStats.q3 / 100) : NaN,
+  const incl = deals.filter((d) => d.include === 1);
+  const st = (vals) => statBlock(vals, statSel.method);
+  const stats1 = {
+    equity: st(incl.map((d) => d.equity)),
+    ev: st(incl.map((d) => d.ev)),
+    ...Object.fromEntries(DEAL_MULTIPLES.map((m) => [m.key, st(incl.map((d) => d.mult[m.key]))])),
+    premium: st(incl.map((d) => d.premium)),
   };
-  /** Every premium window, for the output page's statistics block. */
-  const premiaByWindow = Object.fromEntries(
-    PREMIUM_DAYS.map((d) => [d, stats(pages.map((p) => p.premiums[d] * 100))]),
-  );
+  const stats2 = Object.fromEntries(DEAL_BENCH.map((b) => [b.key, st(incl.map((d) => d.bench[b.key]))]));
 
-  const output = {};
-  for (const c of flatCols(OUTPUT_GROUPS)) output[c.key] = c.stat ? stats(pages.map((p) => c.get(p))) : null;
+  /* ---- implied valuation of the company being valued ---- */
+  const { L } = cPage.cols;
+  const sel = usedMultiples(PREC_METHODS, s.multiples);
+  const tgt = { netDebt: cPage.market.netDebt, nci: cPage.market.nci, shares: co.shares };
+  const multRows = impliedRows(
+    sel.filter((m) => !m.premium).map((m) => ({ ...m, metricKey: m.metric, metric: m.metric === 'book' ? cPage.market.bookEquity : cPage.v[m.metric][L] })),
+    stats1, tgt, statSel,
+  );
+  const rows = [];
+  for (const m of sel) {
+    if (!m.premium) { rows.push(multRows.find((r) => r.key === m.key)); continue; }
+    // F = IF(AND(ISNUMBER(prem), price>0, shares>0), price × (1 + prem) × shares, "NM")
+    const px = co.price;
+    const eq = (p) => (isNum(p) && z(px) > 0 && z(co.shares) > 0 ? px * (1 + p) * co.shares : 'NM');
+    const per = (e) => (isNum(e) && z(co.shares) > 0 ? e / co.shares : 'NM');
+    const mults = { low: stats1.premium[statSel.low], mid: stats1.premium[statSel.mid], high: stats1.premium[statSel.high] };
+    const equity = { low: eq(mults.low), mid: eq(mults.mid), high: eq(mults.high) };
+    rows.push({ ...m, metric: px, mults, equity, price: { low: per(equity.low), mid: per(equity.mid), high: per(equity.high) } });
+  }
+  const summary = impliedSummary(rows, co.price);
 
   return {
-    target, netDebt, shares, rows, premia, premiaByWindow,
-    deals: pages, pages, output,
-    cols: { output: OUTPUT_GROUPS, list: LIST_COLS },
+    n, ytd, toggle, statSel, settings: s, defaultLabels: defaultLabels(n, null),
+    company, deals, stats1, stats2, implied: rows, summary,
+    companyMarket: { price: co.price, shares: co.shares, mcap: cPage.market.equity, netDebt: cPage.market.netDebt, nci: cPage.market.nci, ev: cPage.market.ev },
   };
 }

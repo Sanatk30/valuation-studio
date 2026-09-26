@@ -1,5 +1,4 @@
-import { SAMPLE_TIERS, samplePeers } from './compsSample.mjs';
-import { sampleDeals } from './precedentSample.mjs';
+import { sampleCompsData, samplePrecedentData } from './templateSample.mjs';
 import { SENS_DEFAULTS } from '../../src/store/methodModel.js';
 
 /**
@@ -91,31 +90,15 @@ export const SAMPLE_MODEL = {
     useProceedsDebtPct: 50,
     rangeBand: 8,
   },
-  comps: {
-    target: {
-      revenue: 5000, ebitda: 1100, ebit: 875, netIncome: 560,
-      priorRevenue: 4500, priorEbitda: 960,
-      grossProfit: null, interest: 108, equity: 2400,
-      beta: 1.05, high52: 910, low52: 690,
-      ticker: 'SMPL', exchange: 'NSE', description: 'Sample target', moodys: '', sp: '',
-      ltmLabel: 'FY2025',
-    },
-    tiers: SAMPLE_TIERS,
-    peers: samplePeers(),
-    asOfDate: '', source: 'Company filings',
-  },
+  comps: sampleCompsData(),
   regression: {
-    yVar: 'evEbitda',
+    yVar: 'evEbitdaLtm',
     yLog: false,
-    xVars: [{ key: 'growth', transform: 'lin', degree: 1 }],
+    xVars: [{ key: 'ebitdaMargin', transform: 'lin', degree: 1 }],
     customVars: [],
     targetOverrides: {},
   },
-  precedent: {
-    target: { revenue: 5000, ebitda: 1100, ltmLabel: 'FY2025' },
-    deals: sampleDeals(),
-    source: 'Company filings, press releases, merger proxies',
-  },
+  precedent: samplePrecedentData(),
 };
 
 /** A deep copy with `patch` merged one level into each section. */

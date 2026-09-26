@@ -469,55 +469,43 @@ table.fin td.hist { color: #93A1BA; background: rgba(255,255,255,0.018); }
 table.fin td.cagr { color: #8FA3C8; font-style: italic; background: rgba(108,140,255,0.05); }
 table.fin tr.bold td.hist, table.fin tr.bold td.cagr { color: #C3CEE2; }
 
-/* company / deal input pages */
-.cp-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
-.cp-title { font-size: 16px; font-weight: 700; color: #E6EBF3; }
-.cp-tick { font-weight: 500; color: #7A8699; font-size: 13px; }
-.cp-sub { font-size: 11.5px; color: #7A8699; margin-top: 2px; }
-.cp-badges { display: flex; align-items: center; gap: 6px; }
-.cp-badge { font-size: 10.5px; font-weight: 700; border-radius: 999px; padding: 3px 9px; letter-spacing: 0.02em; }
-.cp-badge.ok { background: rgba(52,199,123,0.16); color: #6EE7A8; }
-.cp-badge.warn { background: rgba(251,191,36,0.16); color: #FBBF24; }
-.cp-badge.err { background: rgba(248,113,113,0.16); color: #F87171; }
-
-.cp-issues { margin: 0 0 14px; padding: 10px 14px 10px 28px; list-style: disc;
-  background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.07); border-radius: 9px; }
-.cp-issues li { font-size: 11.5px; margin: 2px 0; }
-.cp-issues li.error { color: #F87171; }
-.cp-issues li.warn { color: #FBBF24; }
-.cp-issues li.info { color: #7A8699; }
-
-.cp-h { font-size: 12.5px; font-weight: 700; color: #C7D3FF; margin: 18px 0 7px;
-  text-transform: uppercase; letter-spacing: 0.05em; }
-.cp-h5 { font-size: 11.5px; font-weight: 700; color: #8FA3C8; margin: 14px 0 5px; }
-.cp-note { font-weight: 400; text-transform: none; letter-spacing: 0; color: #6B7688; font-size: 11px; margin-left: 8px; }
-.cp-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; align-items: start; }
-
-/* blue-dashed = input, matching the Excel convention */
-.cp-in {
-  width: 100%; background: rgba(108,140,255,0.07); border: 1px dashed rgba(108,140,255,0.45);
-  color: #9EB4FF; border-radius: 5px; padding: 3px 6px; font-size: 12px; text-align: right;
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
-}
-.cp-in.txt { text-align: left; font-family: inherit; }
-.cp-in:focus { outline: none; border-style: solid; background: rgba(108,140,255,0.14); }
-.cp-in:disabled { background: transparent; border-color: transparent; color: #7A8699; }
+/* template company / deal pages (components/TemplatePageEditor.jsx) — blue input
+   cells, black calculated rows, grey "not applicable", as in the workbook */
+.tp-top { display: grid; grid-template-columns: minmax(300px, 440px) 1fr; gap: 18px; align-items: start; margin-bottom: 12px; }
+.tp-mkt { border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; background: var(--surface-2); }
+.tp-mkt-h { font-size: 11.5px; font-weight: 700; color: var(--text); margin-bottom: 4px; display: flex; justify-content: space-between; }
+.tp-mkt-h span { color: var(--faint); font-weight: 500; }
+.tp-mkt table.fin td:last-child { text-align: right; font-family: var(--mono); }
+.tp-mkt table.fin { width: 100%; }
+.tp-mkt table.fin td:first-child { white-space: normal; }
+.tp-mkt table.fin td:last-child { white-space: nowrap; }
+.tp-side .row-btns { margin-top: 0; }
+.tp-grid { max-height: 70vh; overflow: auto; }
+.tp-grid table.fin { white-space: nowrap; }
+.tp-grid table.fin th { position: sticky; top: 0; z-index: 2; }
+.tp-grid table.fin td:first-child { min-width: 250px; white-space: normal; }
+.tp-grid table.fin td { font-family: var(--mono); }
+.tp-grid table.fin td:first-child { font-family: var(--sans); }
+.tp-grid td.tp-in { padding: 2px 3px; }
+.tp-grid td.tp-in .fld-box.sm { min-width: 84px; width: 96px; border-style: dashed; border-color: rgba(108,140,255,0.45); background: rgba(108,140,255,0.07); }
+.tp-grid td.tp-in .fld-in { color: #9EB4FF; text-align: right; font-family: var(--mono); }
+.tp-grid td.tp-na { background: rgba(255,255,255,0.035); }
+.tp-grid th.tp-ytd, .tp-grid th.tp-ltm { color: var(--muted); }
+.tp-grid td.tp-ltm { background: rgba(255,255,255,0.02); }
+.tp-grid td.tp-mute { color: var(--faint); font-style: italic; }
+.tp-grid tr.tp-sec td { background: rgba(108,140,255,0.10); color: var(--text); font-weight: 700; cursor: pointer; font-family: var(--sans); letter-spacing: 0.03em; }
+.tp-grid tr.tp-head td { font-weight: 700; text-decoration: underline; color: var(--muted); background: none; }
+table.fin tr.tp-sub td { font-weight: 700; color: var(--text); border-top: 1px solid var(--border-strong); background: rgba(255,255,255,0.025); }
+table.fin tr.tp-bad td { color: #F87171; }
+.tp-lab { width: 100%; min-width: 70px; background: transparent; border: 1px dashed rgba(108,140,255,0.45); color: #9EB4FF; border-radius: 5px; padding: 2px 5px; font-size: 11px; text-align: center; }
 table.fin td.calc { font-family: 'JetBrains Mono', ui-monospace, monospace; text-align: right; }
-table.fin tr.cp-bad td { color: #F87171; }
-table.cp-per td, table.cp-per th { padding: 3px 7px; font-size: 12px; text-align: right; }
-table.cp-per td:first-child, table.cp-per th:first-child { text-align: left; min-width: 200px; }
-table.cp-kv td:first-child { min-width: 190px; }
-table.cp-kv td:last-child, table.cp-kv3 td, table.cp-kv4 td { text-align: right; }
-table.cp-kv3 td:first-child, table.cp-kv4 td:first-child { text-align: left; min-width: 180px; }
+@media (max-width: 900px) { .tp-top { grid-template-columns: 1fr; } }
 .btn.sm { padding: 4px 10px; font-size: 11.5px; margin-top: 6px; }
 
 /* tier editor (Peers step) */
 .tier-row { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
 .tier-n { font-size: 11px; color: #6B7688; min-width: 16px; text-align: right; }
 
-@media (max-width: 1100px) {
-  .cp-grid2 { grid-template-columns: 1fr; }
-}
 
 /* paste dialog */
 .paste-box {
@@ -534,3 +522,33 @@ table.cp-kv3 td:first-child, table.cp-kv4 td:first-child { text-align: left; min
   border-radius: 6px; padding: 4px 8px; font-size: 12px;
 }
 table.fin td.muted, table.fin th.muted { color: #5A6478; text-decoration: line-through; }
+
+/* template methods: settings, slots, summary tables */
+.vc-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.vc-ck { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--muted); margin: 4px 0; cursor: pointer; }
+.vc-ck input { accent-color: var(--accent); }
+.vc-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; font-size: 12.5px; color: var(--muted); }
+.vc-row span { width: 36px; }
+.vc-row select.fld-in { padding: 5px 8px; font-size: 12px; }
+.lab-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+.lab-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; color: var(--faint); }
+.lab-grid .fld-in.txt { padding: 6px 8px; font-size: 12.5px; }
+table.slot-table td { vertical-align: middle; }
+table.slot-table .fld-in.txt { padding: 5px 7px; font-size: 12px; min-width: 120px; }
+table.slot-table .fld-in.txt.sm { min-width: 80px; max-width: 110px; }
+table.slot-table select.fld-in { padding: 5px 6px; font-size: 12px; }
+table.slot-table select.fld-in.tier { min-width: 110px; }
+table.slot-table tr.slot-page > td { background: var(--bg); padding: 10px; }
+table.deal-list .fld-box.sm { min-width: 80px; }
+.deal-fill { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; font-size: 12px; color: var(--muted); }
+.deal-fill .fld-in.txt.sm { max-width: 140px; padding: 5px 8px; font-size: 12px; }
+.tpl-sum table.fin { white-space: nowrap; }
+.tpl-sum table.fin th { white-space: normal; min-width: 72px; }
+table.fin tr.tpl-target td { background: rgba(245, 185, 66, 0.10); }
+table.fin tr.tpl-excl td { color: var(--faint); }
+table.fin tr.tpl-stat td { font-weight: 700; background: rgba(255,255,255,0.03); }
+table.fin tr.tpl-stat.first td { border-top: 1px solid var(--border-strong); }
+table.fin tr.tpl-stat-h td { color: var(--faint); font-style: italic; font-size: 11px; background: none; padding-top: 10px; }
+.headline-pick { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 4px 0 12px; font-size: 12.5px; color: var(--muted); }
+.headline-pick select.fld-in { max-width: 320px; padding: 6px 9px; font-size: 12.5px; }
+@media (max-width: 900px) { .vc-grid { grid-template-columns: 1fr; } }

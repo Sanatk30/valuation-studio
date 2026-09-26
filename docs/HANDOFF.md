@@ -1,3 +1,22 @@
+# Update — comps & precedent on the templates (2026-09-26)
+
+Comparable Companies and Precedent Transactions were rebuilt on the user's
+*Comparable_Company_Analysis_Template.xlsx* and
+*Precedent_Transactions_Template.xlsx*: template company pages
+(`lib/engine/companyPage.js`, 1–10 fiscal years, optional YTD, LTM),
+selectable statistics (`lib/engine/templateStats.js`), rewritten `comps.js`,
+`precedent.js`, `regressionModel.js`, template workbooks
+(`lib/excel/templateXlsx.js`, `templateWorkbooks.js`), steps in
+`methods/steps/templateSteps.jsx`, page editor `components/TemplatePageEditor.jsx`,
+Excel paste `lib/templatePaste.js`. Old `compsCo.js`, `precedentDeal.js`,
+`CompanyPageEditor.jsx`, `DealPageEditor.jsx`, `compsPaste.js`,
+`compsSheets.js`, `precedentSheets.js` are deleted; saves on the old layout
+reset those two methods (`store.migrate`). Open question 9 below is settled
+(headline multiple picker on the output page). Tests: `template-excel`,
+`template`, `paste`. Next agreed job: the same rebuild for the 12 DCF templates.
+
+---
+
 # Status — rebuild complete (2026-09-25)
 
 Every stream below is finished and integrated: all eight methods run end to
