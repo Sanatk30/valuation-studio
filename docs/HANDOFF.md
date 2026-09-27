@@ -1,4 +1,4 @@
-# Update — comps, precedent and DCF on the templates (2026-09-26 / 27)
+# Update — comps, precedent, DCF and LBO on the templates (2026-09-26 / 27)
 
 Comparable Companies and Precedent Transactions were rebuilt on the user's
 *Comparable_Company_Analysis_Template.xlsx* and
@@ -26,6 +26,21 @@ tornado and the WACC surface (old `engine/dcf.js`, `engine/wacc.js`,
 `excel/dcfSheets.js` deleted; the shared projection sheet for LBO / IPO /
 3-Statement / Ratios now lives in `excel/projectionSheet.js`). Old DCF saves
 reset. Tests: `dcf-excel`, the DCF section of `engine`.
+
+The LBO followed on the user's three LBO templates: `lib/engine/lboTemplate.js`
+(one engine; the settings pick mandatory repayment / mandatory + cash sweep /
+cash sweep only; 1–10 historical and holding years; the growth sensitivity
+re-runs the model five times as the template's Sensitivity Engine),
+`lib/excel/lboWorkbook.js` (the chosen template, cell-for-cell at 3 + 5 years;
+it shares the Historicals and Assumptions writers with `dcfWorkbook.js`),
+`methods/steps/lboSteps.jsx`, `outputs/LboOutput.jsx`. Removed at the user's
+request (they follow the templates): the NOL in the LBO, the choice of exit
+year inside the hold, the hurdle-IRR floor price, the old fade drivers and the
+cash left at close (old `engine/lbo.js`, `outputs/parts/SensStepInputs.jsx`,
+the old LBO sheet and `SENS_DEFAULTS` deleted). The LBO is no longer part of
+Combined. Old LBO saves reset. `lib/currency.js` now converts the DCF and LBO
+template inputs (it still used the pre-template fields). Tests: `lbo-excel`,
+the LBO section of `engine`, `yahoo-fx` (conversion).
 
 ---
 

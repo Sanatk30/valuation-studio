@@ -4,7 +4,8 @@ import { NumBox } from '../wizard/Field.jsx';
 import { fmtTpl } from '../lib/format.js';
 
 /**
- * The Assumptions sheet of the DCF templates on screen: every driver with its
+ * The Assumptions sheet of the DCF / LBO templates on screen (`defs`: the
+ * template's driver rows, DCF by default): every driver with its
  * historical ratios (black, for reference) and one cream input per forecast
  * year, plus shortcuts that only fill cells — they never change a value you
  * did not ask for:
@@ -29,7 +30,7 @@ export function histAverage(refRow, fmt) {
   return fmt === 'pct' ? avg * 100 : avg;
 }
 
-export default function DriversGrid({ drivers, onChange, m, labels, refs, locale, unitLabel }) {
+export default function DriversGrid({ drivers, onChange, m, labels, refs, locale, unitLabel, defs = DRIVERS }) {
   const row = (key) => {
     const arr = Array.isArray(drivers?.[key]) ? drivers[key] : [];
     return Array.from({ length: m }, (_, j) => (fin(arr[j]) ? arr[j] : null));
@@ -48,7 +49,7 @@ export default function DriversGrid({ drivers, onChange, m, labels, refs, locale
   const avgFill = (d) => { const a = histAverage(refs[d.key], d.fmt); if (fin(a)) setRow(d.key, row(d.key).map(() => round(a, d.fmt))); };
   const fillBlanks = () => {
     const next = { ...drivers };
-    for (const d of DRIVERS.filter((x) => x.key)) {
+    for (const d of defs.filter((x) => x.key)) {
       const a = histAverage(refs[d.key], d.fmt);
       if (!fin(a)) continue;
       const r = row(d.key).map((v) => (v === null ? round(a, d.fmt) : v));
@@ -86,7 +87,7 @@ export default function DriversGrid({ drivers, onChange, m, labels, refs, locale
             </tr>
           </thead>
           <tbody>
-            {DRIVERS.map((d) => {
+            {defs.map((d) => {
               if (d.section) return <tr key={d.section} className="tp-sec dg-sec"><td colSpan={nHist + m + 3}>{d.section}</td></tr>;
               const r = row(d.key);
               return (

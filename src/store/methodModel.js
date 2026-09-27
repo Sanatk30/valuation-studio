@@ -5,7 +5,7 @@
  * shaped like the engines' assumption object `a` so the engines run unchanged.
  * A method only carries the sections it uses. Every numeric input starts as
  * `null` (= not entered); nothing is pre-filled except display-only settings
- * (sensitivity step sizes), which the user can edit on the output page.
+ * (the template methods' sensitivity step sizes).
  *
  * `toEngineInput(company, data)` turns a company record + a method's data into
  * the engine-ready `a`: company-level settings (currency, unit, period) are
@@ -17,13 +17,9 @@
 import { blankTargetCo } from '../lib/engine/comps.js';
 import { blankValuedCo } from '../lib/engine/precedent.js';
 import { blankDcfT } from '../lib/engine/dcfTemplate.js';
+import { blankLboT } from '../lib/engine/lboTemplate.js';
 
 export const METHOD_IDS = ['dcf', 'comps', 'precedent', 'lbo', 'ipo', 'ts', 'ratios', 'combined'];
-
-/** Display-only sensitivity step sizes — today's steps, editable on each output. */
-export const SENS_DEFAULTS = {
-  lbo: { entryStep: 0.5, exitStep: 0.5, hurdleStep: 2.5 },         // turns, turns, % pts (floor range)
-};
 
 const blankCompanySection = () => ({
   sharesOut: null, currentPrice: null, grossDebt: null, cash: null, taxRate: null, nol0: null,
@@ -46,15 +42,6 @@ const blankTs = () => ({
   interestRateDebt: null, interestRateCash: null, debtRepayPct: null, dividendPayout: null,
   startingPPE: null,       // opening net PP&E
   equity0: null,           // reported opening shareholders' equity
-});
-
-const blankLbo = () => ({
-  entryMultiple: null, exitMultiple: null, exitYear: null,
-  feesPctEV: null, finFeesPct: null,
-  cashAtClose: null,       // cash left on the balance sheet at close
-  seniorX: null, seniorRate: null, seniorAmort: null,
-  mezzX: null, mezzRate: null, mezzPIK: null,
-  sweepPct: null, minCash: null, hurdleRate: null,
 });
 
 const blankIpo = () => ({
@@ -95,14 +82,13 @@ const blankPrecedent = () => ({
   headline: null,
 });
 
-const sens = () => JSON.parse(JSON.stringify(SENS_DEFAULTS));
 
 /** Which sections each method owns. */
 const SECTIONS = {
   dcf: () => ({ dcf: blankDcfT() }),
   comps: () => ({ comps: blankComps(), regression: blankRegression() }),
   precedent: () => ({ precedent: blankPrecedent() }),
-  lbo: () => ({ company: blankCompanySection(), drivers: blankDrivers(), lbo: blankLbo(), history: null, listing: null, sens: sens() }),
+  lbo: () => ({ lbo: blankLboT() }),
   ipo: () => ({ company: blankCompanySection(), drivers: blankDrivers(), ts: blankTs(), ipo: blankIpo(), history: null, listing: null }),
   ts: () => ({ company: blankCompanySection(), drivers: blankDrivers(), ts: blankTs(), history: null, listing: null }),
   ratios: () => ({ company: blankCompanySection(), drivers: blankDrivers(), ts: blankTs(), history: null, listing: null, ratio: { span: null, histYears: null, freq: 'Y' } }),
@@ -134,7 +120,7 @@ const NAN_SECTIONS = {
   drivers: () => ({ ...nanify(blankDrivers()), growthCustom: null, marginCustom: null, perYear: null }),
   dcf: () => blankDcfT(),
   ts: () => nanify(blankTs()),
-  lbo: () => ({ ...nanify(blankLbo()), mezzPIK: false }),
+  lbo: () => blankLboT(),
   ipo: () => ({ ...nanify(blankIpo()), basis: 'pe', greenshoeType: 'primary' }),
   comps: () => blankComps(),
   regression: () => blankRegression(),
@@ -156,14 +142,12 @@ export function toEngineInput(company, data) {
     },
     history: d.history || null,
     listing: d.listing || null,
-    // per-group merge: a group added later still gets its display defaults
-    sens: Object.fromEntries(Object.entries(sens()).map(([g, v]) => [g, { ...v, ...(d.sens?.[g] || {}) }])),
     ratio: d.ratio || null,
   };
   for (const key of Object.keys(NAN_SECTIONS)) {
     if (d[key] === undefined) { a[key] = NAN_SECTIONS[key](); continue; }
     // the template methods keep their blanks: the template reads a blank cell as 0 itself
-    if (key === 'comps' || key === 'precedent' || key === 'dcf') a[key] = d[key];
+    if (key === 'comps' || key === 'precedent' || key === 'dcf' || key === 'lbo') a[key] = d[key];
     else if (key === 'regression') a.regression = d.regression;
     else a[key] = nanify(d[key]);
   }

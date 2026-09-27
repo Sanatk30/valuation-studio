@@ -5,15 +5,15 @@ import { projectOperations } from '../engine/drivers.js';
 import { openingNol } from '../engine/tax.js';
 import { otherNetAssetsOf } from '../engine/threeStatement.js';
 import { hasHistory, reportedHistory } from '../historyModel.js';
-import { SENS_DEFAULTS } from '../../store/methodModel.js';
 import {
   put, colL, styleSheet, edge, colRun, makeFormats, nv, na,
   C_INPUT, C_HDR_FILL, C_HDR_TEXT, C_SECTION_FILL, C_GRID_FILL, C_MUTED, C_TAB_ANALYSIS, C_INPUT_FILL,
 } from './xlsxUtil.js';
 import { writeProjectionSheet } from './projectionSheet.js';
-import { writeThreeStatementSheet, writePastRatiosSheet, writeLboSheet, writeIpoSheet } from './modelSheets.js';
+import { writeThreeStatementSheet, writePastRatiosSheet, writeIpoSheet } from './modelSheets.js';
 import { buildCompsWorkbook, buildPrecedentWorkbook } from './templateWorkbooks.js';
 import { buildDcfWorkbook } from './dcfWorkbook.js';
+import { buildLboWorkbook } from './lboWorkbook.js';
 
 /*
  * Live-formula Excel export — one file per method.
@@ -22,21 +22,19 @@ import { buildDcfWorkbook } from './dcfWorkbook.js';
  * = formula, green = cross-sheet link. A blank input is the text "NA", and
  * every figure built from it reads NA. The workbook recalculates on open and
  * reproduces the app's engines exactly (see the recalculation tests).
+ * Comps, precedent, the DCF and the LBO follow the user's template workbooks
+ * instead (their own sheet set: Instructions, Inputs, the template's sheets).
  */
 
 export const EXPORT_METHODS = ['dcf', 'comps', 'precedent', 'lbo', 'ipo', 'ts', 'ratios', 'combined'];
 
-/** Fixed sheet names, reserved so a company or deal sheet can never take one. */
-const RESERVED = ['Cover', 'Inputs', 'Projection', '3 Statement', 'LBO', 'IPO', 'Regression', 'Past Ratios', 'Combined'];
-
 /** Methods whose Company step collects the tax rate and the opening NOL. */
-const PROJ = new Set(['lbo', 'ipo', 'ts', 'ratios']);
+const PROJ = new Set(['ipo', 'ts', 'ratios']);
 
 const SHEET_NOTES = {
   Inputs: 'every input of this method (blue). Edit here and the whole file recalculates.',
   Projection: 'the operating projection every other sheet links to.',
   '3 Statement': 'linked income statement, cash flow, balance sheet and debt & cash schedule.',
-  LBO: 'sources & uses, the debt schedule and sweep, returns, the floor price and IRR grids.',
   IPO: 'pricing, deal structure, proceeds, pro-forma earnings, dilution and ownership.',
   Regression: 'the peer regression solved live, with the implied share price.',
   'Past Ratios': 'ratios on the reported history.',
@@ -107,7 +105,6 @@ function writeInputs(ws, a, F, methodId, opts) {
     r++;
   };
   const pct = (x) => (typeof x === 'number' && Number.isFinite(x) ? x / 100 : 'NA');
-  const bool = (x) => (x === true ? true : x === false ? false : 'NA');
   const txt = (x) => (x === null || x === undefined || x === '' ? '' : String(x));
 
   /* ---- company ---- */
@@ -158,34 +155,6 @@ function writeInputs(ws, a, F, methodId, opts) {
     r++;
   }
 
-  /* ---- LBO ---- */
-  if (methodId === 'lbo') {
-    const l = a.lbo;
-    const n = a.drivers.years;
-    const hasMezz = Number.isFinite(l.mezzX) && l.mezzX > 0;
-    section('ENTRY & EXIT');
-    inp('entryX', 'Entry EV / LTM EBITDA', nv(l.entryMultiple), F.x);
-    inp('lboExitX', 'Exit EV / EBITDA', nv(l.exitMultiple), F.x);
-    inp('exitYear', 'Exit year', Number.isFinite(l.exitYear) ? Math.min(Math.max(1, Math.round(l.exitYear)), n) : 'NA', F.int, `1 to ${n}`);
-    inp('feesPct', 'Transaction fees (% of entry EV)', pct(l.feesPctEV), F.pct);
-    inp('finFeesPct', 'Financing fees (% of new debt)', pct(l.finFeesPct), F.pct, 'Capitalised; amortised over the hold (non-cash, tax-deductible)');
-    inp('cashAtClose', 'Cash left on the balance sheet at close', nv(l.cashAtClose === undefined ? 0 : l.cashAtClose), F.money, 'Funded at close as part of the uses');
-    r++;
-    section('DEBT STRUCTURE');
-    inp('seniorX', 'Senior debt (x LTM EBITDA)', nv(l.seniorX), F.x);
-    inp('seniorRate', 'Senior interest rate', pct(l.seniorRate), F.pct);
-    inp('seniorAmort', 'Senior amortisation p.a. (% of original)', pct(l.seniorAmort), F.pct);
-    inp('mezzX', 'Mezzanine debt (x LTM EBITDA)', nv(l.mezzX), F.x);
-    inp('mezzRate', 'Mezzanine interest rate', hasMezz ? pct(l.mezzRate) : 'NA', F.pct, hasMezz ? '' : 'No mezzanine — not used');
-    inp('mezzPIK', 'Mezzanine PIK (TRUE / FALSE)', hasMezz ? bool(l.mezzPIK) : false, undefined, hasMezz ? 'PIK interest accrues to the balance' : 'No mezzanine — not used');
-    r++;
-    section('CASH SWEEP & HURDLE');
-    inp('sweepPct', 'Cash sweep (% of FCF after amortisation)', pct(l.sweepPct), F.pct, 'Senior first, then cash-pay mezzanine');
-    inp('minCash', 'Minimum operating cash', nv(l.minCash), F.money, 'The sweep never takes cash below this');
-    inp('hurdle', 'Sponsor IRR hurdle', pct(l.hurdleRate), F.pct, 'Sets the floor price');
-    r++;
-  }
-
   /* ---- IPO ---- */
   if (methodId === 'ipo') {
     const p = a.ipo;
@@ -207,18 +176,6 @@ function writeInputs(ws, a, F, methodId, opts) {
     r++;
   }
 
-  /* ---- sensitivity steps ---- */
-  const step = (group, key) => {
-    const g = a.sens?.[group];
-    const v = g && g[key] !== undefined ? g[key] : SENS_DEFAULTS[group][key];
-    return nv(v);
-  };
-  if (methodId === 'lbo') {
-    section('SENSITIVITY STEPS');
-    inp('sEntry', 'Entry multiple step (turns)', step('lbo', 'entryStep'), F.num);
-    inp('sExit', 'Exit multiple step (turns)', step('lbo', 'exitStep'), F.num);
-    inp('sHurdle', 'Hurdle step for the floor range (% points)', step('lbo', 'hurdleStep'), F.num, 'Floor low / high = the price at hurdle ± this step');
-  }
   return R;
 }
 
@@ -286,10 +243,11 @@ function writeCombinedSheet(ws, a, F, combined) {
 export function buildWorkbook(a, methodId, opts = {}) {
   if (!EXPORT_METHODS.includes(methodId)) throw new Error(`Unknown method "${methodId}"`);
   const skipped = opts.skipped || {};
-  // comps and precedent follow the user's template workbooks (their own sheet set, no cover)
+  // comps, precedent, the DCF and the LBO follow the user's template workbooks (their own sheet set, no cover)
   if (methodId === 'comps') return buildCompsWorkbook(a, { skipped });
   if (methodId === 'precedent') return buildPrecedentWorkbook(a);
   if (methodId === 'dcf') return buildDcfWorkbook(a);
+  if (methodId === 'lbo') return buildLboWorkbook(a);
   const wb = new ExcelJS.Workbook();
   wb.creator = 'Quant Value';
   wb.calcProperties = { fullCalcOnLoad: true };
@@ -297,7 +255,6 @@ export function buildWorkbook(a, methodId, opts = {}) {
   const sym = CURRENCIES[a.settings?.currency]?.symbol || '';
   const F = makeFormats(sym);
   const unit = a.settings?.unit || '';
-  const taken = new Set(RESERVED);
   const meta = METHOD_META[methodId];
 
   /* ---- cover ---- */
@@ -335,15 +292,12 @@ export function buildWorkbook(a, methodId, opts = {}) {
   const ops = PROJ.has(methodId) ? projectOperations(a) : null;
   const histFor = (m) => (!skipped.history && (m === 'ts' || m === 'ratios') ? reportedHistory(a) : null);
 
-  if (methodId === 'lbo' || methodId === 'ipo' || methodId === 'ts' || methodId === 'ratios') {
+  if (methodId === 'ipo' || methodId === 'ts' || methodId === 'ratios') {
     const projWs = wb.addWorksheet('Projection');
     const mode = methodId === 'ts' || methodId === 'ratios' ? 'fcff' : 'ops';
     const P = writeProjectionSheet(projWs, a, F, R, { unitNote: projNote, mode, ops, hist: histFor(methodId) });
     order.push('Projection');
-    if (methodId === 'lbo') {
-      writeLboSheet(wb.addWorksheet('LBO'), a, F, R, P);
-      order.push('LBO');
-    } else {
+    {
       const tsWs = wb.addWorksheet('3 Statement');
       const TS = writeThreeStatementSheet(tsWs, a, F, R, P, {
         balanceSheet: methodId !== 'ipo',

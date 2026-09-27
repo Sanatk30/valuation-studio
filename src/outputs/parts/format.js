@@ -57,13 +57,6 @@ export const rnd = (v, dp = 0) => (fin(v) ? +v.toFixed(dp) : null);
 /** Tone for a signed figure: 'pos' / 'neg' / undefined. */
 export const tone = (v) => (fin(v) ? (v >= 0 ? 'pos' : 'neg') : undefined);
 
-/** "12.3% upside" / "4.5% downside" — or null without a market price. */
-export function upsideText(value, market) {
-  const u = upsidePct(value, market);
-  if (!fin(u)) return null;
-  return `${fmtPct(Math.abs(u), 1)} ${u >= 0 ? 'upside' : 'downside'}`;
-}
-
 /**
  * Run an engine call without letting one bad input take the whole page down.
  * Returns { value } or { error }.

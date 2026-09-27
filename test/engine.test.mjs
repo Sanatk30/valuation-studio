@@ -2,7 +2,8 @@ import { SAMPLE_MODEL as A, withModel } from './fixtures/model.mjs';
 import { projectOperations, buildPerYearGrid } from '../src/lib/engine/drivers.js';
 import { computeDcfT, betaPeers, unlever } from '../src/lib/engine/dcfTemplate.js';
 import { computeThreeStatement } from '../src/lib/engine/threeStatement.js';
-import { computeLbo, lboSensitivity, lboHoldSensitivity } from '../src/lib/engine/lbo.js';
+import { computeLboT } from '../src/lib/engine/lboTemplate.js';
+import { sampleLboData } from './fixtures/lboSample.mjs';
 import { computeComps } from '../src/lib/engine/comps.js';
 import { runRegression, targetValues } from '../src/lib/engine/regressionModel.js';
 import { computePrecedent } from '../src/lib/engine/precedent.js';
@@ -117,44 +118,47 @@ ok(maxCheck < 1e-6, `3s: balance sheet ties out (max check ${maxCheck.toExponent
 ok(close(ts.closeCash[0] - ts.cash0, ts.deltaCash[0]), '3s: cash roll-forward');
 ok(close(ts.closeDebt[0], 1200 * 0.9), '3s: 10% mandatory repayment');
 
-/* ---- LBO ---- */
-const lbo = computeLbo(A);
-ok(close(lbo.entryEV, 11 * lbo.ebitda0), `lbo: entry EV = ${lbo.entryEV.toFixed(0)}`);
-ok(close(lbo.uses, lbo.entryEV + lbo.feesTxn + lbo.feesFin), 'lbo: uses = EV + txn fees + financing fees');
-ok(close(lbo.sponsorEquity, lbo.uses - lbo.totalDebt0), 'lbo: equity = uses - debt');
-ok(lbo.irr > 0 && lbo.irr < 60, `lbo: IRR = ${lbo.irr.toFixed(1)}% MOIC = ${lbo.moic.toFixed(2)}x`);
-ok(close(Math.pow(lbo.moic, 1 / lbo.exitYear) - 1, lbo.irr / 100, 1e-9), 'lbo: IRR = MOIC^(1/n)-1');
-// min cash floor: once cash reaches the floor it must not be swept below it
-for (let i = 1; i < 5; i++) {
-  if (lbo.cashBal[i - 1] >= A.lbo.minCash && lbo.cashBal[i] < A.lbo.minCash - 1e-9 && (lbo.sweepSenior[i] + lbo.sweepMezz[i]) > 1e-9) {
-    failures++; console.error(`FAIL: lbo sweep pushed cash below floor in year ${i + 1}`);
+/* ---- LBO (the three LBO templates) ---- */
+{
+  const L = (settings = {}, mut) => { const d = sampleLboData({ settings }); if (mut) mut(d); return computeLboT({ settings: { period: { startYear: 2027 } }, lbo: d }); };
+  for (const repay of ['mandatory', 'both', 'sweep']) {
+    const l = L({ repay });
+    const tag = `lbo ${repay}`;
+    ok(close(l.entry.ev, 10 * l.entry.ebitda), `${tag}: entry EV = multiple × latest EBITDA`);
+    ok(close(l.su.totalSources, l.su.totalUses) && l.su.check === 0, `${tag}: sources = uses (sponsor equity balances)`);
+    ok(close(l.su.sponsor, l.entry.ev * 1.02 + l.totalDebt.fee - l.C.netDebt[0] - l.entry.nci), `${tag}: sponsor equity = EV + fees − entry net debt − NCI`);
+    ok(close(l.bridge.exit, l.exit.equity, 1e-6) && l.bridge.check === 0, `${tag}: value creation bridge ties to exit equity`);
+    ok(close((1 + l.irr) ** l.m, l.moic, 1e-9), `${tag}: IRR = MOIC^(1/m) − 1 (IRR ${(l.irr * 100).toFixed(1)}%, MOIC ${l.moic.toFixed(2)}x)`);
+    ok(close(l.sens.growthIrr[2][2], l.irr, 1e-9) && close(l.sens.multIrr[2][2], l.irr, 1e-9) && close(l.sens.multMoic[2][2], l.moic, 1e-9), `${tag}: sensitivity centres = base case`);
+    ok(l.sens.engineCheck === 0, `${tag}: the growth engine's base case = the model`);
+    ok(l.S.aClose.every((x) => x >= -1e-9) && l.S.bClose.every((x) => x >= -1e-9), `${tag}: senior balances never negative`);
+    ok(l.S.mClose.every((x, j) => close(x, (j ? l.S.mClose[j - 1] : l.tranches.mezz.amount) * 1.03)), `${tag}: mezzanine accretes PIK (3%)`);
+    const feeTotal = l.S.feeAmort.reduce((x, y) => x + y, 0);
+    ok(close(feeTotal, l.tranches.senA.fee + l.tranches.senB.fee * 5 / 7 + l.tranches.mezz.fee * 5 / 8), `${tag}: financing fees amortise over each tranche's tenor`);
+    if (repay === 'sweep') ok(l.S.aMand.every((x) => x === 0) && l.S.bMand.every((x) => x === 0), `${tag}: no scheduled amortisation`);
+    else ok(close(l.S.aMand[0], l.tranches.senA.amount * 0.1) && close(l.S.bMand[0], l.tranches.senB.amount * 0.01), `${tag}: scheduled amortisation = % of original`);
+    if (repay === 'mandatory') ok(l.S.sweep.every((x) => x === 0) && l.S.cashClose.every((x, j) => close(x, l.S.cashOpen[j] + l.S.fcf[j] - l.S.mand[j])), `${tag}: no sweep — excess cash stays on the balance sheet`);
+    else {
+      ok(l.S.cashClose.every((x, j) => l.S.avail[j] === 0 || l.S.aClose[j] + l.S.bClose[j] < 1e-9 || close(x, 150, 1e-6)), `${tag}: the sweep leaves exactly the minimum cash while senior debt is outstanding`);
+      ok(l.S.aSweep.every((x, j) => l.S.bSweep[j] === 0 || l.S.aClose[j] < 1e-9), `${tag}: Senior A is swept before Senior B`);
+    }
   }
+  const lboBoth = L();
+  const lboMand = L({ repay: 'mandatory' });
+  ok(lboBoth.C.netDebt[lboBoth.m] < lboBoth.C.netDebt[0], 'lbo: net debt falls over the hold');
+  ok(lboBoth.C.intCover[4] > lboBoth.C.intCover[0], 'lbo: interest cover improves');
+  ok(close(lboBoth.C.netDebt[0], lboMand.C.netDebt[0]), 'lbo: the repayment type does not change entry net debt');
+  const short = L({ repay: 'mandatory' }, (d) => { d.debt.senA.amort = 60; d.deal.cashUsed = 600; });
+  ok(short.C.shortfall.includes('SHORTFALL'), 'lbo: a cash shortfall is flagged');
+  const over = L({}, (d) => { d.debt.senA.x = 9; d.debt.senB.x = 4; });
+  ok(over.su.sponsor < 0 && over.su.equityFlag === 'CHECK' && over.irr === 'NM' && over.moic === 'NM', 'lbo: negative sponsor equity → CHECK and NM returns');
+  const loss = L({}, (d) => { d.drivers.materials = [80, 80, 80, 80, 80]; });
+  ok(loss.S.tax.every((x) => x >= 0) && loss.S.pbt.some((x) => x < 0), 'lbo: loss years pay no tax');
+  const up = L({}, (d) => { d.settings.growthStep = 2; });
+  ok(up.sens.cases[4].exitEbitda > up.sens.cases[2].exitEbitda && up.sens.cases[0].exitEbitda < up.sens.cases[2].exitEbitda, 'lbo: growth cases move exit EBITDA the right way');
+  const yrs = L({ histYears: 1, holdYears: 10, labels: null });
+  ok(yrs.n === 1 && yrs.m === 10 && yrs.labels.fcst.length === 10 && yrs.S.fcf.length === 10, 'lbo: 1 historical year and a 10-year hold');
 }
-ok(true, 'lbo: sweep never pushes cash below the operating floor');
-// value-creation bridge identity
-const b = lbo.bridge;
-ok(close(b.entryEquity + b.fees + b.ebitdaGrowth + b.multipleChange + b.deleveraging, b.exitEquity, 1e-6),
-  'lbo: value-creation bridge ties to exit equity');
-// fee amortization is fully tax-deducted over the hold
-ok(close(lbo.feeAmort * lbo.exitYear, lbo.feesFin), 'lbo: financing fees amortize fully over the hold');
-// PIK: cash interest drops, mezz balance accretes
-const pik = computeLbo({ ...A, lbo: { ...A.lbo, mezzPIK: true } });
-ok(pik.cashInterest[0] < lbo.cashInterest[0], 'lbo: PIK reduces cash interest');
-ok(pik.closeMezz[0] > pik.openMezz[0] - 1e-9, 'lbo: PIK mezz balance accretes');
-ok(close(pik.pikAccrual[0], pik.openMezz[0] * 0.13), 'lbo: PIK accrual = mezz rate x opening');
-// hurdle floor: buying at the max EV must produce exactly the hurdle IRR
-const floorMult = lbo.entryEvMax / lbo.ebitda0;
-const atFloor = computeLbo({ ...A, lbo: { ...A.lbo, entryMultiple: floorMult } });
-ok(close(atFloor.irr, A.lbo.hurdleRate, 1e-6), `lbo: entry at floor price yields hurdle IRR (${atFloor.irr.toFixed(2)}%)`);
-ok(isFinite(lbo.floorPrice), `lbo: floor price = ${lbo.floorPrice.toFixed(1)}`);
-const lsens = lboSensitivity(A);
-ok(close(lsens.grid[2][2], lbo.irr, 1e-6), 'lbo: entry x exit grid center = base IRR');
-const hsens = lboHoldSensitivity(A);
-const hr = hsens.years.indexOf(lbo.exitYear);
-ok(close(hsens.grid[hr][2], lbo.irr, 1e-6), 'lbo: hold x exit grid center = base IRR');
-// credit stats sanity
-ok(lbo.levGross[0] > lbo.levGross[4], 'lbo: gross leverage declines');
-ok(lbo.coverage[4] > lbo.coverage[0], 'lbo: interest coverage improves');
 
 /* ---- comps (Comparable Company Analysis template) ---- */
 const comps = computeComps(A);
@@ -265,8 +269,6 @@ ok(ipo.freeFloat > 0 && ipo.freeFloat < 1, `ipo: free float ${(ipo.freeFloat * 1
   const loss = withModel({ drivers: { ...A.drivers, marginStart: 2, marginEnd: 24 }, company: { ...A.company, nol0: 500 } });
   const tl = computeThreeStatement(loss);
   ok(tl.taxAmt.every((x) => x >= 0) && Math.max(...tl.check.map(Math.abs)) < 1e-6, 'nol: 3-statement tax ≥ 0 and still balances');
-  const ll = computeLbo(loss);
-  ok(ll.taxAmt.every((x) => x >= 0), 'nol: LBO tax never negative');
 }
 
 /* ---- reported history (projection pages) ---- */
@@ -286,24 +288,6 @@ ok(ipo.freeFloat > 0 && ipo.freeFloat < 1, `ipo: free float ${(ipo.freeFloat * 1
   const oe = computeThreeStatement(withModel({ ts: { ...A.ts, equity0: 2600 } }));
   ok(close(oe.otherNetAssets, 300), '3s: other net assets = reported equity − (cash + NWC + PP&E − debt)');
   ok(close(oe.equity0, 2600) && Math.max(...oe.check.map(Math.abs)) < 1e-6, '3s: ties to reported equity every year');
-}
-
-/* ---- LBO: cash left at close ---- */
-{
-  const lc = computeLbo(withModel({ lbo: { ...A.lbo, cashAtClose: 150 } }));
-  ok(close(lc.uses, lc.entryEV + lc.feesTxn + lc.feesFin + 150), 'lbo: uses include the cash left at close');
-  ok(close(lc.sponsorEquity, lbo.sponsorEquity + 150), 'lbo: the sponsor funds the cash at close');
-  ok(close(lc.ndEntry, lc.totalDebt0 - 150), 'lbo: entry net debt nets the cash at close');
-  const lb = lc.bridge;
-  ok(close(lb.entryEquity + lb.fees + lb.ebitdaGrowth + lb.multipleChange + lb.deleveraging, lb.exitEquity, 1e-6), 'lbo: bridge ties with cash at close');
-  const fm = lc.entryEvMax / lc.ebitda0;
-  const af = computeLbo(withModel({ lbo: { ...A.lbo, cashAtClose: 150, entryMultiple: fm } }));
-  ok(close(af.irr, A.lbo.hurdleRate, 1e-6), 'lbo: floor solve includes the cash at close');
-  ok(lc.floorLow < lc.floorPrice && lc.floorPrice < lc.floorHigh, 'lbo: floor range = hurdle ± step');
-  // no mezzanine: its rate and PIK choice are never asked, so they arrive blank
-  const nm = computeLbo(withModel({ lbo: { ...A.lbo, mezzX: 0, mezzRate: NaN, mezzPIK: null } }));
-  ok(Number.isFinite(nm.irr) && Number.isFinite(nm.floorPrice) && nm.cashInterest.every(Number.isFinite), 'lbo: no mezzanine → a blank mezz rate does not make the model NA');
-  ok(close(nm.cashInterest[0], nm.senior0 * A.lbo.seniorRate / 100), 'lbo: no mezzanine → senior interest only');
 }
 
 /* ---- ratios ---- */

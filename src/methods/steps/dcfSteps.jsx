@@ -35,27 +35,33 @@ function resultOf(company, data) {
 
 /* ============================== Settings ============================== */
 
-function DcfLabelsEditor({ data, setData, company }) {
-  const lab = labelsOf(data, company);
+/** Period-label editor for the DCF / LBO templates (historical + forecast labels). */
+export function PeriodLabelsCard({ labels, onChange, latestName = 'Historical (latest actual)', fcstName = (i) => `Forecast year ${i + 1}` }) {
   const set = (part, i, v) => {
-    const next = { hist: [...lab.hist], fcst: [...lab.fcst] };
+    const next = { hist: [...labels.hist], fcst: [...labels.fcst] };
     next[part][i] = v;
-    setData((d) => ({ ...d, dcf: { ...d.dcf, settings: { ...d.dcf.settings, labels: next } } }));
+    onChange(next);
   };
+  return (
+    <div className="tool-card">
+      <div className="tool-h">Period labels <span className="fld-opt">labels only — change freely</span></div>
+      <div className="lab-grid">
+        {labels.hist.map((l, i) => (
+          <label key={`h${i}`}>{i === labels.hist.length - 1 ? latestName : `Historical year ${i + 1}`}<input className="fld-in txt" value={l} onChange={(e) => set('hist', i, e.target.value)} /></label>
+        ))}
+        {labels.fcst.map((l, i) => (
+          <label key={`f${i}`}>{fcstName(i, labels.fcst.length)}<input className="fld-in txt" value={l} onChange={(e) => set('fcst', i, e.target.value)} /></label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DcfLabelsEditor({ data, setData, company }) {
   const s = S(data);
   return (
     <div className="step-tools">
-      <div className="tool-card">
-        <div className="tool-h">Period labels <span className="fld-opt">labels only — change freely</span></div>
-        <div className="lab-grid">
-          {lab.hist.map((l, i) => (
-            <label key={`h${i}`}>{i === lab.hist.length - 1 ? 'Historical (latest actual)' : `Historical year ${i + 1}`}<input className="fld-in txt" value={l} onChange={(e) => set('hist', i, e.target.value)} /></label>
-          ))}
-          {lab.fcst.map((l, i) => (
-            <label key={`f${i}`}>{`Forecast year ${i + 1}`}<input className="fld-in txt" value={l} onChange={(e) => set('fcst', i, e.target.value)} /></label>
-          ))}
-        </div>
-      </div>
+      <PeriodLabelsCard labels={labelsOf(data, company)} onChange={(labels) => setData((d) => ({ ...d, dcf: { ...d.dcf, settings: { ...d.dcf.settings, labels } } }))} />
       {s.cf && s.tv && s.coe && (
         <div className="readout">
           Template <b>{templateName(s)}.xlsx</b> — {CF_KINDS.find((k) => k.value === s.cf)?.long}, terminal value by {s.tv === 'exit' ? `exit ${exitMultipleName(s.cf)}` : 'Gordon growth'}, cost of equity by {s.coe === 'capm' ? 'CAPM' : 'the build-up method'}.

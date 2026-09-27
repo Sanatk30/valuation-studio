@@ -1,7 +1,7 @@
 /**
  * Structure of every method's Excel file: it writes and reads back, carries
- * exactly Cover + Inputs + its own calculation sheets (comps, precedent and
- * the DCF: the user's template set — Instructions, Inputs and the template's
+ * exactly Cover + Inputs + its own calculation sheets (comps, precedent, the
+ * DCF and the LBO: the user's template set — Instructions, Inputs and the template's
  * sheets), the Inputs sheet holds
  * only that method's inputs, every formula's references resolve to a sheet in
  * the file (and, across sheets, to a non-empty cell), parentheses balance,
@@ -18,7 +18,7 @@ const ok = (cond, msg) => { checks++; if (!cond) { failures++; console.error('FA
 const COMBINED = { rows: [{ method: 'DCF', figureLabel: 'FCFF', value: 900, low: 800, high: 1000, weight: 100 }], marketPrice: 850 };
 const EXPECT = {
   dcf: ['Instructions', 'Inputs', 'FCFF - Gordon Growth', 'Historicals', 'Assumptions', 'Forecast', 'Cost of Equity (CAPM)', 'WACC'],
-  lbo: ['Cover', 'Inputs', 'Projection', 'LBO'],
+  lbo: ['Instructions', 'Inputs', 'Sources & Uses', 'Returns', 'Sensitivity', 'LBO Model', 'Historicals', 'Assumptions', 'Sensitivity Engine'],
   ipo: ['Cover', 'Inputs', 'Projection', '3 Statement', 'IPO'],
   ts: ['Cover', 'Inputs', 'Projection', '3 Statement'],
   ratios: ['Cover', 'Inputs', 'Projection', '3 Statement'],
@@ -60,10 +60,10 @@ async function checkFile(a, method, opts = {}, expect = EXPECT[method]) {
   await rb.xlsx.load(buf);
   const names = rb.worksheets.map((w) => w.name);
   if (expect) ok(names.join('|') === expect.join('|'), `${method}: sheets [${names.join(', ')}]`);
-  const template = method === 'comps' || method === 'precedent' || method === 'dcf';
+  const template = method === 'comps' || method === 'precedent' || method === 'dcf' || method === 'lbo';
   ok(names[0] === (template ? 'Instructions' : 'Cover'), `${method}: ${template ? 'Instructions' : 'Cover'} first`);
   if (method !== 'combined') ok(names[1] === 'Inputs', `${method}: Inputs second`);
-  if (method !== 'dcf') ok(!names.includes('Assumptions') && !names.includes('Summary'), `${method}: no legacy Assumptions / Summary sheet`);
+  if (method !== 'dcf' && method !== 'lbo') ok(!names.includes('Assumptions') && !names.includes('Summary'), `${method}: no legacy Assumptions / Summary sheet`);
 
   const sheets = Object.fromEntries(rb.worksheets.map((w) => [w.name, w]));
   // Inputs: only this method's inputs, all blue

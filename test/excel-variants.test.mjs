@@ -6,7 +6,7 @@
  * template methods (comps, precedent, DCF) have their own variant tests.
  */
 import { withModel, SAMPLE_MODEL } from './fixtures/model.mjs';
-import { checkTs, checkLbo, checkIpo, checkComps, checkCombined } from './helpers/excelChecks.mjs';
+import { checkTs, checkIpo, checkComps, checkCombined } from './helpers/excelChecks.mjs';
 import { buildPerYearGrid } from '../src/lib/engine/drivers.js';
 import { blankManualHistory } from '../src/lib/historyModel.js';
 
@@ -54,21 +54,13 @@ function history({ quarterly = false } = {}) {
 const losses = { drivers: { ...SAMPLE_MODEL.drivers, marginStart: -6, marginEnd: 21 } };
 const nolHeavy = { company: { ...SAMPLE_MODEL.company, nol0: 2600 } };
 
-/* the projection models (LBO, IPO, 3-Statement) across horizons and forecast inputs;
-   the DCF's own variants are in dcf-excel.test.mjs */
+/* the projection models (IPO, 3-Statement) across horizons and forecast inputs;
+   the DCF's and LBO's own variants are in dcf-excel.test.mjs and lbo-excel.test.mjs */
 const projVariants = {
   'per-year grid, absolute amounts': [withModel({ drivers: { ...SAMPLE_MODEL.drivers, perYear: { ...buildPerYearGrid(SAMPLE_MODEL.drivers), revenueMode: 'abs', revenue: [5600, 6100, 6700, 7200, 7800], ebitdaMode: 'abs', ebitda: [1250, 1380, 1540, 1700, 1900], capexMode: 'abs', capex: [330, 360, 400, 430, 460] } } })],
-  'years = 3': [withModel({ drivers: { ...SAMPLE_MODEL.drivers, years: 3 }, lbo: { exitYear: 3 } })],
-  'years = 10': [withModel({ drivers: { ...SAMPLE_MODEL.drivers, years: 10 }, lbo: { exitYear: 7 } })],
+  'years = 3': [withModel({ drivers: { ...SAMPLE_MODEL.drivers, years: 3 }})],
+  'years = 10': [withModel({ drivers: { ...SAMPLE_MODEL.drivers, years: 10 }})],
   'custom per-year arrays': [withModel({ drivers: { ...SAMPLE_MODEL.drivers, growthCustom: [15, 14, 6, 9, 2], marginCustom: [20, 21, 25, 23, 26] } })],
-};
-
-const lboVariants = {
-  'no mezzanine (rate not asked)': [withModel({ lbo: { mezzX: 0, mezzRate: NaN, mezzPIK: null } })],
-  'PIK mezzanine': [withModel({ lbo: { mezzPIK: true } })],
-  'cash at close + exit year 3 + hurdle step 5': [withModel({ lbo: { cashAtClose: 300, exitYear: 3 }, sens: { ...SAMPLE_MODEL.sens, lbo: { entryStep: 1, exitStep: 0.75, hurdleStep: 5 } } })],
-  'NOL carried in': [withModel(nolHeavy)],
-  'heavy leverage → loss years': [withModel({ lbo: { seniorX: 6.5, seniorRate: 13, mezzX: 1.5 }, ...losses })],
 };
 
 const ipoVariants = {
@@ -108,11 +100,9 @@ const run = (name, T) => {
   for (const f of T.failures.slice(0, 15)) console.error('   ', f);
 };
 for (const [name, [a, o = {}]] of Object.entries(projVariants)) {
-  run(`lbo — ${name}`, checkLbo(a, { ...o, tag: name }));
   run(`ipo — ${name}`, checkIpo(a, { ...o, tag: name }));
   run(`ts — ${name}`, checkTs(a, { ...o, tag: name }, 'ts'));
 }
-for (const [name, [a, o = {}]] of Object.entries(lboVariants)) run(`lbo — ${name}`, checkLbo(a, { ...o, tag: name }));
 for (const [name, [a, o = {}]] of Object.entries(ipoVariants)) run(`ipo — ${name}`, checkIpo(a, { ...o, tag: name }));
 for (const [name, [a, o = {}]] of Object.entries(tsVariants)) run(`ts — ${name}`, checkTs(a, { ...o, tag: name }, 'ts'));
 for (const [name, [a, o = {}]] of Object.entries(ratioVariants)) run(`ratios — ${name}`, checkTs(a, { ...o, tag: name }, 'ratios'));

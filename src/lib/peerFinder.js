@@ -33,7 +33,6 @@ import { searchSymbols, fetchRecommendations, parseListing, ltmPeriod, ebitdaSus
 import { fetchLiveRates } from './fx.js';
 
 export const WEIGHTS = { industry: 30, market: 15, size: 25, margin: 15, growth: 15 };
-export const SIGNALS = Object.keys(WEIGHTS);
 const SIZE_SPAN = 1;        // log10 distance at which size scores 0 (10×)
 const MARGIN_SPAN = 0.20;   // 20 percentage points
 const GROWTH_SPAN = 0.25;   // 25 percentage points

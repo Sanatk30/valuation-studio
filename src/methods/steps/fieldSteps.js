@@ -1,52 +1,6 @@
 import { f } from '../fields.js';
 import { hasHistory } from '../../lib/historyModel.js';
 
-/* ================================ LBO ================================ */
-
-export const lboEntryStep = () => ({
-  id: 'lboEntry',
-  title: 'Entry & exit',
-  blurb: 'Purchase and exit multiples on EBITDA, the holding period, fees and the cash left in the business at close.',
-  fields: (data) => [
-    f.x('lbo.entryMultiple', 'Entry EV / LTM EBITDA'),
-    f.x('lbo.exitMultiple', 'Exit EV / EBITDA'),
-    f.int('lbo.exitYear', 'Exit year', { min: 1, max: Number.isInteger(data.drivers?.years) ? data.drivers.years : undefined, hint: Number.isInteger(data.drivers?.years) ? `1 to ${data.drivers.years} (the forecast horizon)` : 'Within the forecast horizon' }),
-    f.pct('lbo.feesPctEV', 'Transaction fees (% of entry EV)', { min: 0 }),
-    f.pct('lbo.finFeesPct', 'Financing fees (% of new debt)', { min: 0, hint: 'Capitalised and amortised over the hold (tax-deductible, non-cash)' }),
-    f.money('lbo.cashAtClose', 'Cash left on the balance sheet at close', { hint: 'Funded at close as part of the uses; 0 for a cash-free deal' }),
-  ],
-});
-
-export const lboDebtStep = () => ({
-  id: 'lboDebt',
-  title: 'Debt structure',
-  blurb: 'New acquisition debt, sized as multiples of LTM EBITDA.',
-  fields: (data) => {
-    const hasMezz = Number.isFinite(data.lbo?.mezzX) && data.lbo.mezzX > 0;
-    return [
-      f.x('lbo.seniorX', 'Senior debt (x LTM EBITDA)', { gt: undefined, min: 0 }),
-      f.pct('lbo.seniorRate', 'Senior interest rate', { min: 0 }),
-      f.pct('lbo.seniorAmort', 'Senior amortisation p.a. (% of original)', { min: 0, max: 100 }),
-      f.x('lbo.mezzX', 'Mezzanine debt (x LTM EBITDA)', { gt: undefined, min: 0, hint: '0 if none' }),
-      ...(hasMezz ? [
-        f.pct('lbo.mezzRate', 'Mezzanine interest rate', { min: 0 }),
-        f.bool('lbo.mezzPIK', 'Is mezzanine interest PIK?', { yes: 'PIK — accrues to the balance', no: 'Cash-pay' }),
-      ] : []),
-    ];
-  },
-});
-
-export const lboSweepStep = () => ({
-  id: 'lboSweep',
-  title: 'Cash sweep & hurdle',
-  blurb: 'How free cash flow repays debt, the operating cash floor, and the return a sponsor requires.',
-  fields: () => [
-    f.pct('lbo.sweepPct', 'Cash sweep (% of FCF after amortisation)', { min: 0, max: 100 }),
-    f.money('lbo.minCash', 'Minimum operating cash', { hint: 'The sweep never takes cash below this' }),
-    f.pct('lbo.hurdleRate', 'Sponsor IRR hurdle', { gt: 0, hint: 'Sets the LBO floor price — the most a sponsor could pay and still earn it' }),
-  ],
-});
-
 /* ================================ IPO ================================ */
 
 export const financingSpecs = ({ ppe = false } = {}) => [

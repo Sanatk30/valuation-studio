@@ -5,7 +5,7 @@ import { METHOD_META } from './labels.js';
 import { fmtPrice, fmtPct } from '../lib/format.js';
 
 /** Methods that can feed the Combined valuation. */
-export const COMBINABLE = ['dcf', 'comps', 'precedent', 'lbo', 'ipo'];
+export const COMBINABLE = ['dcf', 'comps', 'precedent', 'ipo'];
 const fin = Number.isFinite;
 
 /**

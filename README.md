@@ -9,10 +9,13 @@ method changes another. The **Combined** method weights the results of the
 methods you have finished.
 
 **No hidden assumptions.** Every number the model uses is either typed by you or
-reported by the company (via the Yahoo Finance search). Nothing is back-cast,
-nothing is defaulted, and a missing figure shows as **NA**, never as 0. The only
-pre-filled values are display settings (sensitivity-grid step sizes), which you
-can change on each output page.
+reported by the company (via the Yahoo Finance search). Nothing is back-cast
+and nothing is defaulted. In the IPO, 3-Statement and Ratio methods a missing
+figure shows as **NA**, never as 0; the methods built on the user's Excel
+templates (comps, precedent, DCF, LBO) follow the templates instead — a blank
+cell counts as 0, as it does in Excel, and NM marks a zero or negative
+denominator. The only pre-filled values are the sensitivity-grid step sizes
+(the templates' examples), which you can change.
 
 ## Run it
 
@@ -81,9 +84,9 @@ xattr -dr com.apple.quarantine "Valuation Studio.app"
 | **DCF** | Settings (FCFF / FCFE / DDM × Gordon / exit multiple × CAPM / build-up, years) → Company & historicals → Assumptions (per-year drivers) → Discount rate → Terminal value |
 | **Comparable companies** | Settings → Target company (full company page) → Peers (as many as you choose, each with its company page, include flag and tier) → Regression *(optional)* |
 | **Precedent transactions** | Settings → Company being valued (company page) → Deal list (as many as you choose) → Deal financials (one page per deal) |
-| **LBO** | Company → Forecast → Entry & exit (incl. cash left at close) → Debt structure → Cash sweep & hurdle |
+| **LBO** | Settings (mandatory repayment / mandatory + cash sweep / cash sweep only, years) → Company & historicals → Assumptions (per-year drivers) → Transaction & debt → Exit & sensitivity |
 | **IPO** | Company → Forecast → Financing rates → Pricing basis → Offer structure (greenshoe size, % exercised, primary or secondary) |
-| **Combined** | Pick completed methods, the figure each contributes and its weight (must total 100 %); optional market price |
+| **Combined** | Pick completed methods (DCF, comps, precedent, IPO — the LBO gives a return, not a value, so it is left out), the figure each contributes and its weight (must total 100 %); optional market price |
 | **3-Statement Analysis** | Company → Historical financials *(optional)* → Forecast → Financing & balance sheet (incl. reported opening equity) |
 | **Ratio Analysis** | Company → Historical financials *(optional)* → Forecast → Financing & balance sheet → Ratio settings (past only if history exists) |
 
@@ -94,7 +97,7 @@ carryforward (NOL). The **Forecast** step asks LTM revenue, **LTM EBITDA** and
 year-by-year grid (paste from Excel supported). Both steps offer *Copy from
 another method* — a one-off copy; the methods stay independent afterwards.
 
-Modelling conventions that are stated rather than assumed (LBO, IPO,
+Modelling conventions that are stated rather than assumed (IPO,
 3-Statement, Ratios): tax is never negative — losses build an NOL balance used
 against later profits; interest accrues on opening balances (no circular
 references); forecasts are annual.
@@ -132,6 +135,41 @@ and NM where the discount rate ≤ g or there are no shares. The output page
 shows the valuation sheet, the 5 × 5 sensitivity table, the forecast, the
 drivers and the cost of capital; Combined takes the value per share with the
 sensitivity grid's range.
+
+## Leveraged buyout
+
+The LBO follows the user's three LBO templates
+(`LBO_Mandatory_Repayment_Only.xlsx`, `LBO_Mandatory_Plus_CashSweep.xlsx`,
+`LBO_CashSweep_Only.xlsx`). The **Settings** step picks how Senior A and
+Senior B are repaid — scheduled amortisation only (excess cash builds up and is
+added to equity at exit), amortisation then a sweep of the cash above the
+minimum balance (Senior A first, then Senior B), or the sweep only — plus
+**1–10 historical and 1–10 holding-period years** (template: 3 and 5), the
+lease toggle and the period labels. Entry is at the end of the latest actual
+year, exit at the end of the last holding year.
+
+- **Company & historicals** — the Historicals sheet (as the DCF), with Yahoo
+  fill and *Paste from Excel*. Entry EBITDA, the borrowings refinanced, leases,
+  cash and NCI come from the latest year.
+- **Assumptions** — one value per holding year for each operating driver, with
+  the historical ratios and the same fill shortcuts as the DCF.
+- **Transaction & debt** — entry EV / EBITDA, existing cash used, transaction
+  fees, the three tranches (Senior A, Senior B, Mezzanine: x EBITDA, cash rate,
+  PIK rate for the mezzanine, amortisation % of original, tenor, financing fee
+  %) and, with a sweep, the sweep % and minimum cash.
+- **Exit & sensitivity** — the exit multiple and the step sizes of the four
+  sensitivity tables (exit multiple, entry multiple, revenue growth shift).
+
+As in the templates: interest on opening balances, financing fees amortised
+over each tranche's tenor, tax = max(0, PBT after LBO interest) × rate, other
+income not forecast, leases and NCI held at the entry level, sponsor equity is
+the balancing figure, a single entry and exit (IRR = Excel's IRR on those two
+flows), a cash-shortfall flag when cash goes negative, and a blank cell counts
+as 0 (the output names the years with blank drivers). The growth-shift tables
+re-run the whole model for five cases, as the template's Sensitivity Engine.
+The output page shows the IRR, MOIC, the value creation bridge, the debt
+paydown, Sources & Uses, the exit waterfall, the four sensitivity tables, the
+LBO model and the drivers. The LBO is not part of Combined.
 
 ## Comparable companies and precedent transactions
 
@@ -220,7 +258,7 @@ black = formula, green = cross-sheet link) for that method only:
 | DCF | The chosen template: Instructions · Inputs · the valuation sheet (e.g. *FCFF - Gordon Growth*) · Historicals · Assumptions · Forecast · Cost of Equity (CAPM or Build-Up) · WACC (FCFF only) — at 3 + 5 years cell-for-cell the template |
 | Comps | Instructions · Inputs · Comps Summary (Table 1 multiples, Table 2 benchmarking, statistics overall and per tier) · Implied Valuation · Regression *(when not skipped)* · Target · one page per peer — the template's layout |
 | Precedent | Instructions · Inputs · Transaction Summary · Implied Valuation · Company Being Valued · one page per deal — the template's layout |
-| LBO | Cover · Inputs · Projection · LBO |
+| LBO | The chosen template: Instructions · Inputs · Sources & Uses · Returns · Sensitivity · LBO Model · Historicals · Assumptions · Sensitivity Engine — at 3 + 5 years cell-for-cell the template |
 | IPO | Cover · Inputs · Projection · 3 Statement · IPO |
 | 3-Statement | Cover · Inputs · Projection · 3 Statement (with the forecast ratio block) |
 | Ratios | as 3-Statement, plus Past Ratios when reported history was entered |
@@ -228,14 +266,15 @@ black = formula, green = cross-sheet link) for that method only:
 
 The **Inputs** sheet holds only that method's inputs, including the
 sensitivity-grid step sizes; a blank input is the text `NA` and every figure
-built from it reads NA. The comps, precedent and DCF workbooks keep their
+built from it reads NA. The comps, precedent, DCF and LBO workbooks keep their
 templates' rules instead (a blank cell is 0; NM where a denominator is zero or
 negative). The test suite recalculates every method's workbook with
 HyperFormula and requires it to match the app's engines cell for cell, on the
 sample model and on more than 70 edge cases (tax losses, blanks, optional
 steps, horizons, 1 / 5 / 10 fiscal years, YTD off, every statistics choice,
 no or excluded peers, blank deals, all twelve DCF combinations, 1–10 historical
-and forecast years, Hamada beta, NM cases).
+and forecast years, Hamada beta, NM cases, the three LBO repayment types with
+1–10 historical and holding years, cash shortfalls and over-levered deals).
 
 ## Project layout
 

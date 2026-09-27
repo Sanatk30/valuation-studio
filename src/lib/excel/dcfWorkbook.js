@@ -21,6 +21,18 @@ import { T, NF, w, fx, title, note, hdr } from './templateXlsx.js';
 
 /** The templates spell the unit out (₹ Crore; shares in crore). */
 const UNIT_WORDS = { Cr: 'Crore', Lakh: 'Lakh', Mn: 'Million', Bn: 'Billion', K: 'Thousand' };
+/** Currency and unit wording of the DCF / LBO templates. */
+export function unitNames(a) {
+  const sym = CURRENCIES[a.settings?.currency]?.symbol || '';
+  const unitCode = a.settings?.unit;
+  const unitWord = UNIT_WORDS[unitCode] || UNITS[unitCode] || unitCode || '';
+  return {
+    sym,
+    unitShort: `${sym} ${UNITS[unitCode] || unitCode || ''}`.trim(),   // e.g. ₹ Cr (table headers)
+    unitLabel: `${sym} ${unitWord}`.trim(),                            // e.g. ₹ Crore, as the templates
+    unit: unitWord.toLowerCase(),                                      // share counts, e.g. (crore)
+  };
+}
 const KEY = 'FFEAF1DD';                 // the templates' key-result fill (Ke, WACC, FCF, Equity Value, Value per Share)
 const NF4 = '0.0000';
 const NFB = '0.00';
@@ -41,12 +53,7 @@ export function buildDcfWorkbook(a) {
   const s = r.settings;
   const { n, m, cf, tv } = r;
   const coeKind = r.coeKind;
-  const sym = CURRENCIES[a.settings?.currency]?.symbol || '';
-  const unitCode = a.settings?.unit;
-  const unitShort = `${sym} ${UNITS[unitCode] || unitCode || ''}`.trim();          // e.g. ₹ Cr (the valuation header)
-  const unitWord = UNIT_WORDS[unitCode] || UNITS[unitCode] || unitCode || '';        // e.g. Crore
-  const unitLabel = `${sym} ${unitWord}`.trim();                                     // e.g. ₹ Crore, as the templates
-  const unit = unitWord.toLowerCase();                                               // share counts, e.g. (crore)
+  const { sym, unitShort, unitLabel, unit } = unitNames(a);
   const CF = cf.toUpperCase();
   const TVN = tv === 'exit' ? 'Exit Multiple' : 'Gordon Growth';
   const multN = exitMultipleName(cf);
@@ -160,111 +167,9 @@ export function buildDcfWorkbook(a) {
     else row(IN.tvStep, 'Exit multiple step', num(s.multStep), NF.x, 'e.g. 1.0x');
   }
 
-  /* ============================== Historicals ============================== */
-  {
-    const ws = wb.addWorksheet('Historicals');
-    ws.getColumn(1).width = 52;
-    for (let i = 0; i < n; i++) ws.getColumn(2 + i).width = 13;
-    ws.views = [{ state: 'frozen', xSplit: 1, ySplit: 4, topLeftCell: 'B5' }];
-    w(ws, 'A1', fx(`IF(Inputs!$B$5="","Historical Financials",Inputs!$B$5&" – Historical Financials")`), { bold: true, size: 14, link: true });
-    note(ws, 'A2', `Consolidated, ${unitLabel}. Expenses positive in P&L; outflows negative in cash flow. Example format: Revenue 5,300.0`);
-    hdr(ws, 'A4', 'Particulars', { align: 'left', wrap: false });
-    for (let i = 0; i < n; i++) hdr(ws, `${H(i)}4`, fx(inRef(IN.hist(i))), { wrap: false });
-    const sec = (rr, text) => { w(ws, `A${rr}`, text, { bold: true, fill: T.sec }); for (let i = 0; i < n; i++) w(ws, `${H(i)}${rr}`, null, { fill: T.sec }); };
-    const SUB = { bold: true, fill: T.sub, top: true };
-    const F = {
-      opex: (X) => `SUM(${X}9:${X}11)`, ebitda: (X) => `${X}7-${X}12`, ebit: (X) => `${X}13-${X}14`,
-      pbt: (X) => `${X}15+${X}8-${X}16+${X}17`, pat: (X) => `${X}18-${X}19`, patOwners: (X) => `${X}20+${X}21-${X}22`,
-      eps: (X) => `IFERROR(${X}23/${X}24,0)`,
-      totalNca: (X) => `SUM(${X}29:${X}33)`, totalCa: (X) => `SUM(${X}36:${X}41)`, totalAssets: (X) => `${X}34+${X}42`,
-      eqOwners: (X) => `${X}46+${X}47`, totalEquity: (X) => `${X}48+${X}49`, totalNcl: (X) => `SUM(${X}52:${X}54)`,
-      totalCl: (X) => `SUM(${X}57:${X}60)`, totalEL: (X) => `${X}50+${X}55+${X}61`, check: (X) => `ROUND(${X}43-${X}62,1)`,
-      cfo: (X) => `SUM(${X}66:${X}71)`, cfi: (X) => `SUM(${X}73:${X}77)`, cff: (X) => `SUM(${X}79:${X}84)`,
-      netCash: (X) => `${X}72+${X}78+${X}85`, fcf: (X) => `${X}72+${X}73`,
-    };
-    const lines = (list) => {
-      for (const line of list) {
-        if (line.key === 'totalIncome') continue;
-        const rr = hRow(line);
-        if (line.head) { w(ws, `A${rr}`, line.head, { bold: true, underline: true }); continue; }
-        const fmt = line.key === 'shares' || line.key === 'eps' ? NF.n2 : NF.n1;
-        const label = line.kind === 'shares' ? `${line.label} (${unit})` : line.kind === 'pershare' ? `${line.label} (${sym})` : line.label;
-        const st = line.sub ? SUB : {};
-        w(ws, `A${rr}`, label, st);
-        for (let i = 0; i < n; i++) {
-          const X = H(i);
-          if (line.input) {
-            const v = fyValues(d.company?.page?.lines?.[line.key], n)[i];
-            w(ws, `${X}${rr}`, num(v), { input: true, fmt });
-          } else w(ws, `${X}${rr}`, fx(F[line.key](X)), { fmt, ...st });
-        }
-      }
-    };
-    sec(6, 'INCOME STATEMENT'); lines(IS_LINES);
-    sec(27, 'BALANCE SHEET'); lines(BS_LINES);
-    sec(65, 'CASH FLOW STATEMENT'); lines(CF_LINES);
-  }
-
-  /* ============================== Assumptions ============================== */
-  {
-    const ws = wb.addWorksheet('Assumptions');
-    const exCol = colL(2 + n + m + 1), noteCol = colL(2 + n + m + 2);
-    ws.getColumn(1).width = 44;
-    allCols.forEach((c) => { ws.getColumn(c).width = 12; });
-    ws.getColumn(colL(2 + n + m)).width = 3;
-    ws.getColumn(exCol).width = 14; ws.getColumn(noteCol).width = 55;
-    ws.views = [{ state: 'frozen', xSplit: 1, ySplit: 4, topLeftCell: 'B5' }];
-    title(ws, 'A1', 'Forecast Assumptions (Drivers)');
-    note(ws, 'A2', 'Historical ratios (black) are calculated for reference. Type forecast drivers in the cream cells.');
-    w(ws, 'B3', 'Historical (reference)', { bold: true });
-    w(ws, `${Fc(0)}3`, 'Forecast (inputs)', { bold: true });
-    hdr(ws, 'A4', 'Driver', { align: 'left', wrap: false });
-    for (let i = 0; i < n; i++) hdr(ws, `${H(i)}4`, fx(inRef(IN.hist(i))), { wrap: false });
-    for (let j = 0; j < m; j++) hdr(ws, `${Fc(j)}4`, fx(inRef(IN.fcst(j))), { wrap: false });
-    hdr(ws, `${exCol}4`, 'Format example', { wrap: false });
-    hdr(ws, `${noteCol}4`, 'Basis / note', { wrap: false });
-    const Hs = (X, row) => `Historicals!${X}${row}`;
-    const refF = {
-      materials: (X) => `IFERROR(${Hs(X, 9)}/${Hs(X, 7)},"")`,
-      employee: (X) => `IFERROR(${Hs(X, 10)}/${Hs(X, 7)},"")`,
-      otherExp: (X) => `IFERROR(${Hs(X, 11)}/${Hs(X, 7)},"")`,
-      da: (X) => `IFERROR(${Hs(X, 14)}/${Hs(X, 7)},"")`,
-      otherInc: (X) => `IFERROR(${Hs(X, 8)}/${Hs(X, 7)},"")`,
-      tax: (X) => `IFERROR(${Hs(X, 19)}/${Hs(X, 18)},"")`,
-      capex: (X) => `IFERROR(-${Hs(X, 73)}/${Hs(X, 7)},"")`,
-      invDays: (X) => `IFERROR(${Hs(X, 36)}/${Hs(X, 9)}*365,"")`,
-      recDays: (X) => `IFERROR(${Hs(X, 37)}/${Hs(X, 7)}*365,"")`,
-      payDays: (X) => `IFERROR(${Hs(X, 59)}/${Hs(X, 9)}*365,"")`,
-      oca: (X) => `IFERROR(${Hs(X, 41)}/${Hs(X, 7)},"")`,
-      ocl: (X) => `IFERROR(${Hs(X, 60)}/${Hs(X, 7)},"")`,
-      netBorrow: (X) => `IFERROR(${Hs(X, 79)},"")`,
-      payout: (X) => `IFERROR(-${Hs(X, 81)}/${Hs(X, 23)},"")`,
-    };
-    for (const dr of DRIVERS) {
-      if (dr.section) {
-        w(ws, `A${dr.row}`, dr.section, { bold: true, fill: T.sec });
-        allCols.forEach((c) => w(ws, `${c}${dr.row}`, null, { fill: T.sec }));
-        continue;
-      }
-      const fmt = dr.fmt === 'pct' ? NF.pct : dr.fmt === 'days' ? NF.n0 : NF.n1;
-      w(ws, `A${dr.row}`, dr.fmt === 'money' ? `${dr.label} (${unitShort})` : dr.label);
-      for (let i = 0; i < n; i++) {
-        const X = H(i);
-        if (dr.key === 'gRev' || dr.key === 'intRate') {
-          if (i === 0) { w(ws, `${X}${dr.row}`, 'n.a.', { italic: true, size: 9, color: T.grey, align: 'right', fmt }); continue; }
-          const P = H(i - 1);
-          const f = dr.key === 'gRev' ? `IFERROR(${Hs(X, 7)}/${Hs(P, 7)}-1,"")` : `IFERROR(${Hs(X, 16)}/(${Hs(P, 52)}+${Hs(P, 57)}),"")`;
-          w(ws, `${X}${dr.row}`, fx(f), { fmt });
-        } else w(ws, `${X}${dr.row}`, fx(refF[dr.key](X)), { fmt });
-      }
-      for (let j = 0; j < m; j++) {
-        const v = d.drivers?.[dr.key]?.[j];
-        w(ws, `${Fc(j)}${dr.row}`, dr.fmt === 'pct' ? pc(v) : num(v), { input: true, fmt });
-      }
-      w(ws, `${exCol}${dr.row}`, dr.example, { italic: true, size: 9, color: T.grey, align: 'right' });
-      note(ws, `${noteCol}${dr.row}`, dr.note || '');
-    }
-  }
+  const label = (k) => inRef(k < n ? IN.hist(k) : IN.fcst(k - n));
+  writeHistoricals(wb, { page: d.company?.page, n, label, unitLabel, unit, sym });
+  writeAssumptions(wb, { defs: DRIVERS, drivers: d.drivers, n, m, label, unitShort });
 
   /* ============================== Forecast ============================== */
   {
@@ -279,7 +184,7 @@ export function buildDcfWorkbook(a) {
     hdr(ws, 'A4', unitLabel, { align: 'left', wrap: false });
     for (let i = 0; i < n; i++) hdr(ws, `${H(i)}4`, fx(inRef(IN.hist(i))), { wrap: false });
     for (let j = 0; j < m; j++) hdr(ws, `${Fc(j)}4`, fx(inRef(IN.fcst(j))), { wrap: false });
-    const sec = (rr, text) => { w(ws, `A${rr}`, text, { bold: true, fill: T.sec }); allCols.forEach((c) => w(ws, `${c}${rr}`, null, { fill: T.sec })); };
+    const sec = (rr, text) => { w(ws, `A${rr}`, text, { bold: true, fill: T.sec }); allCols.forEach((c) => w(ws, `${c}${rr}`, null, { size: 11, fill: T.sec })); };
     const SUB = { bold: true, fill: T.sub, top: true };
     const NAc = (X, rr, fmt) => w(ws, `${X}${rr}`, 'n.a.', { italic: true, size: 9, color: T.grey, align: 'right', fmt });
     const prev = (X) => colL(allCols.indexOf(X) + 1);          // the column before X (B → A never used: first column handled apart)
@@ -295,7 +200,7 @@ export function buildDcfWorkbook(a) {
         const isH = k < n;
         if (k === 0 && o.firstNa) return NAc(X, rr, fmt);
         if (isH) return w(ws, `${X}${rr}`, fx(hist(X, prev(X))), { fmt, ...st, ...(o.histLink ? { link: true, bold: false } : {}) });
-        if (o.fcstNa) return w(ws, `${X}${rr}`, null, { fill: T.na, fmt });
+        if (o.fcstNa) return w(ws, `${X}${rr}`, null, { size: 11, fill: T.na, fmt });
         return w(ws, `${X}${rr}`, fx(fcst(X, prev(X))), { fmt, ...st });
       });
     };
@@ -340,7 +245,7 @@ export function buildDcfWorkbook(a) {
       const block = (rr, label, f, o = {}) => {
         w(ws, `A${rr}`, label, o.key ? { bold: true, fill: KEY } : o.sub ? SUB : {});
         allCols.forEach((X, k) => {
-          if (k < n) return w(ws, `${X}${rr}`, null, { fill: T.na, fmt: NF.n1 });
+          if (k < n) return w(ws, `${X}${rr}`, null, { size: 11, fill: T.na, fmt: NF.n1 });
           return w(ws, `${X}${rr}`, fx(f(X)), { fmt: NF.n1, ...(o.key ? { bold: true, fill: KEY } : o.sub ? SUB : {}) });
         });
       };
@@ -368,7 +273,7 @@ export function buildDcfWorkbook(a) {
   {
     const ws = wb.addWorksheet(coeSheet);
     ws.getColumn(1).width = 46; ws.getColumn(2).width = 14; ws.getColumn(3).width = 72;
-    hdr(ws, 'A4', 'Component'); hdr(ws, 'B4', 'Value'); hdr(ws, 'C4', 'Format example / source');
+    hdr(ws, 'A4', 'Component', { wrap: false }); hdr(ws, 'B4', 'Value', { wrap: false }); hdr(ws, 'C4', 'Format example / source', { wrap: false });
     const KEYST = { bold: true, fill: KEY, top: true };
     if (coeKind === 'capm') {
       const cp = d.capm || {};
@@ -449,7 +354,7 @@ export function buildDcfWorkbook(a) {
     ws.getColumn(1).width = 46; ws.getColumn(2).width = 14; ws.getColumn(3).width = 70;
     title(ws, 'A1', 'Weighted Average Cost of Capital (WACC)');
     note(ws, 'A2', 'WACC = E/(D+E) × Ke + D/(D+E) × Kd × (1 − t)');
-    hdr(ws, 'A4', 'Component'); hdr(ws, 'B4', 'Value'); hdr(ws, 'C4', 'Format example / note');
+    hdr(ws, 'A4', 'Component', { wrap: false }); hdr(ws, 'B4', 'Value', { wrap: false }); hdr(ws, 'C4', 'Format example / note', { wrap: false });
     const U = { bold: true, underline: true };
     const KEYST = { bold: true, fill: KEY, top: true };
     w(ws, 'A5', 'Cost of equity', U);
@@ -613,3 +518,121 @@ export function buildDcfWorkbook(a) {
   return wb;
 }
 
+
+/**
+ * The Historicals sheet shared by the DCF and LBO templates: the company page
+ * (P&L, balance sheet, cash flow) for n years, inputs blue on cream.
+ * o: { page, n, label(k) → the Inputs period-label ref, unitLabel, unit, sym }.
+ */
+export function writeHistoricals(wb, { page, n, label, unitLabel, unit, sym }) {
+  const H = (i) => colL(2 + i);
+  const ws = wb.addWorksheet('Historicals');
+  ws.getColumn(1).width = 52;
+  for (let i = 0; i < n; i++) ws.getColumn(2 + i).width = 13;
+  ws.views = [{ state: 'frozen', xSplit: 1, ySplit: 4, topLeftCell: 'B5' }];
+  w(ws, 'A1', fx(`IF(Inputs!$B$5="","Historical Financials",Inputs!$B$5&" – Historical Financials")`), { bold: true, size: 14, link: true });
+  note(ws, 'A2', `Consolidated, ${unitLabel}. Expenses positive in P&L; outflows negative in cash flow. Example format: Revenue 5,300.0`);
+  hdr(ws, 'A4', 'Particulars', { align: 'left', wrap: false });
+  for (let i = 0; i < n; i++) hdr(ws, `${H(i)}4`, fx(label(i)), { wrap: false });
+  const sec = (rr, text) => { w(ws, `A${rr}`, text, { bold: true, fill: T.sec }); for (let i = 0; i < n; i++) w(ws, `${H(i)}${rr}`, null, { size: 11, fill: T.sec }); };
+  const SUB = { bold: true, fill: T.sub, top: true };
+  const F = {
+    opex: (X) => `SUM(${X}9:${X}11)`, ebitda: (X) => `${X}7-${X}12`, ebit: (X) => `${X}13-${X}14`,
+    pbt: (X) => `${X}15+${X}8-${X}16+${X}17`, pat: (X) => `${X}18-${X}19`, patOwners: (X) => `${X}20+${X}21-${X}22`,
+    eps: (X) => `IFERROR(${X}23/${X}24,0)`,
+    totalNca: (X) => `SUM(${X}29:${X}33)`, totalCa: (X) => `SUM(${X}36:${X}41)`, totalAssets: (X) => `${X}34+${X}42`,
+    eqOwners: (X) => `${X}46+${X}47`, totalEquity: (X) => `${X}48+${X}49`, totalNcl: (X) => `SUM(${X}52:${X}54)`,
+    totalCl: (X) => `SUM(${X}57:${X}60)`, totalEL: (X) => `${X}50+${X}55+${X}61`, check: (X) => `ROUND(${X}43-${X}62,1)`,
+    cfo: (X) => `SUM(${X}66:${X}71)`, cfi: (X) => `SUM(${X}73:${X}77)`, cff: (X) => `SUM(${X}79:${X}84)`,
+    netCash: (X) => `${X}72+${X}78+${X}85`, fcf: (X) => `${X}72+${X}73`,
+  };
+  const lines = (list) => {
+    for (const line of list) {
+      if (line.key === 'totalIncome') continue;
+      const rr = hRow(line);
+      if (line.head) { w(ws, `A${rr}`, line.head, { bold: true, underline: true }); continue; }
+      const fmt = line.key === 'shares' || line.key === 'eps' ? NF.n2 : NF.n1;
+      const lab = line.kind === 'shares' ? `${line.label} (${unit})` : line.kind === 'pershare' ? `${line.label} (${sym})` : line.label;
+      const st = line.sub ? SUB : {};
+      w(ws, `A${rr}`, lab, st);
+      for (let i = 0; i < n; i++) {
+        const X = H(i);
+        if (line.input) {
+          const v = fyValues(page?.lines?.[line.key], n)[i];
+          w(ws, `${X}${rr}`, num(v), { input: true, fmt });
+        } else w(ws, `${X}${rr}`, fx(F[line.key](X)), { fmt, ...st });
+      }
+    }
+  };
+  sec(6, 'INCOME STATEMENT'); lines(IS_LINES);
+  sec(27, 'BALANCE SHEET'); lines(BS_LINES);
+  sec(65, 'CASH FLOW STATEMENT'); lines(CF_LINES);
+}
+
+/**
+ * The Assumptions sheet shared by the DCF and LBO templates: each driver row
+ * of `defs` with its historical reference ratios (live formulas on
+ * Historicals) and one cream input per forecast year.
+ * o: { defs, drivers (stored values, % as 12 = 12 %), n, m, label(k), unitShort }.
+ */
+export function writeAssumptions(wb, { defs, drivers, n, m, label, unitShort }) {
+  const H = (i) => colL(2 + i);
+  const Fc = (j) => colL(2 + n + j);
+  const allCols = [...Array(n)].map((_, i) => H(i)).concat([...Array(m)].map((_, j) => Fc(j)));
+  const ws = wb.addWorksheet('Assumptions');
+  const exCol = colL(2 + n + m + 1), noteCol = colL(2 + n + m + 2);
+  ws.getColumn(1).width = 44;
+  allCols.forEach((c) => { ws.getColumn(c).width = 12; });
+  ws.getColumn(colL(2 + n + m)).width = 3;
+  ws.getColumn(exCol).width = 14; ws.getColumn(noteCol).width = 55;
+  ws.views = [{ state: 'frozen', xSplit: 1, ySplit: 4, topLeftCell: 'B5' }];
+  title(ws, 'A1', 'Forecast Assumptions (Drivers)');
+  note(ws, 'A2', 'Historical ratios (black) are calculated for reference. Type forecast drivers in the cream cells.');
+  w(ws, 'B3', 'Historical (reference)', { bold: true });
+  w(ws, `${Fc(0)}3`, 'Forecast (inputs)', { bold: true });
+  hdr(ws, 'A4', 'Driver', { align: 'left', wrap: false });
+  allCols.forEach((c, k) => hdr(ws, `${c}4`, fx(label(k)), { wrap: false }));
+  hdr(ws, `${exCol}4`, 'Format example', { wrap: false });
+  hdr(ws, `${noteCol}4`, 'Basis / note', { wrap: false });
+  const Hs = (X, row) => `Historicals!${X}${row}`;
+  const refF = {
+    materials: (X) => `IFERROR(${Hs(X, 9)}/${Hs(X, 7)},"")`,
+    employee: (X) => `IFERROR(${Hs(X, 10)}/${Hs(X, 7)},"")`,
+    otherExp: (X) => `IFERROR(${Hs(X, 11)}/${Hs(X, 7)},"")`,
+    da: (X) => `IFERROR(${Hs(X, 14)}/${Hs(X, 7)},"")`,
+    otherInc: (X) => `IFERROR(${Hs(X, 8)}/${Hs(X, 7)},"")`,
+    tax: (X) => `IFERROR(${Hs(X, 19)}/${Hs(X, 18)},"")`,
+    capex: (X) => `IFERROR(-${Hs(X, 73)}/${Hs(X, 7)},"")`,
+    invDays: (X) => `IFERROR(${Hs(X, 36)}/${Hs(X, 9)}*365,"")`,
+    recDays: (X) => `IFERROR(${Hs(X, 37)}/${Hs(X, 7)}*365,"")`,
+    payDays: (X) => `IFERROR(${Hs(X, 59)}/${Hs(X, 9)}*365,"")`,
+    oca: (X) => `IFERROR(${Hs(X, 41)}/${Hs(X, 7)},"")`,
+    ocl: (X) => `IFERROR(${Hs(X, 60)}/${Hs(X, 7)},"")`,
+    netBorrow: (X) => `IFERROR(${Hs(X, 79)},"")`,
+    payout: (X) => `IFERROR(-${Hs(X, 81)}/${Hs(X, 23)},"")`,
+  };
+  for (const dr of defs) {
+    if (dr.section) {
+      w(ws, `A${dr.row}`, dr.section, { bold: true, fill: T.sec });
+      allCols.forEach((c) => w(ws, `${c}${dr.row}`, null, { size: 11, fill: T.sec }));
+      continue;
+    }
+    const fmt = dr.fmt === 'pct' ? NF.pct : dr.fmt === 'days' ? NF.n0 : NF.n1;
+    w(ws, `A${dr.row}`, dr.fmt === 'money' ? `${dr.label} (${unitShort})` : dr.label);
+    for (let i = 0; i < n; i++) {
+      const X = H(i);
+      if (dr.key === 'gRev' || dr.key === 'intRate') {
+        if (i === 0) { w(ws, `${X}${dr.row}`, 'n.a.', { italic: true, size: 9, color: T.grey, align: 'right', fmt }); continue; }
+        const P = H(i - 1);
+        const f = dr.key === 'gRev' ? `IFERROR(${Hs(X, 7)}/${Hs(P, 7)}-1,"")` : `IFERROR(${Hs(X, 16)}/(${Hs(P, 52)}+${Hs(P, 57)}),"")`;
+        w(ws, `${X}${dr.row}`, fx(f), { fmt });
+      } else w(ws, `${X}${dr.row}`, fx(refF[dr.key](X)), { fmt });
+    }
+    for (let j = 0; j < m; j++) {
+      const v = drivers?.[dr.key]?.[j];
+      w(ws, `${Fc(j)}${dr.row}`, dr.fmt === 'pct' ? pc(v) : num(v), { input: true, fmt });
+    }
+    w(ws, `${exCol}${dr.row}`, dr.example, { italic: true, size: 9, color: T.grey, align: 'right' });
+    note(ws, `${noteCol}${dr.row}`, dr.note || '');
+  }
+}

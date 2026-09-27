@@ -2,8 +2,9 @@ import { lazy } from 'react';
 import { METHOD_META } from './labels.js';
 import { companyStep, historyStep, forecastStep } from './steps/common.jsx';
 import { dcfSettingsStep, dcfCompanyStep, dcfDriversStep, dcfRateStep, dcfTerminalStep } from './steps/dcfSteps.jsx';
+import { lboSettingsStep, lboCompanyStep, lboDriversStep, lboTransactionStep, lboExitStep } from './steps/lboSteps.jsx';
 import {
-  lboEntryStep, lboDebtStep, lboSweepStep, ipoFinancingStep, ipoPricingStep, ipoStructureStep,
+  ipoFinancingStep, ipoPricingStep, ipoStructureStep,
   financingStep, ratioSettingsStep,
 } from './steps/fieldSteps.js';
 import {
@@ -16,6 +17,7 @@ import { combinedStep } from './combined.jsx';
 import { toEngineInput } from '../store/methodModel.js';
 import { projectOperations } from '../lib/engine/drivers.js';
 import { computeDcfT, templateName } from '../lib/engine/dcfTemplate.js';
+import { computeLboT, repayKind } from '../lib/engine/lboTemplate.js';
 import { computeThreeStatement } from '../lib/engine/threeStatement.js';
 import { fmtMoney, fmtPct, fmtX, fmtPrice } from '../lib/format.js';
 
@@ -106,15 +108,20 @@ export const METHODS = {
     },
   },
   lbo: {
-    steps: [companyStep(PROJ), forecastStep(), lboEntryStep(), lboDebtStep(), lboSweepStep()],
+    steps: [lboSettingsStep(), lboCompanyStep(), lboDriversStep(), lboTransactionStep(), lboExitStep()],
     Output: out.lbo,
     preview(def, a, states, company) {
-      const rows = [];
-      if (valid(def, states, 'company', 'forecast')) rows.push(...opsRows(a, company));
-      if (valid(def, states, 'forecast', 'lboEntry')) rows.push({ label: 'Entry enterprise value', value: fmtMoney(a.lbo.entryMultiple * a.drivers.ebitda0, company) });
-      if (valid(def, states, 'forecast', 'lboEntry', 'lboDebt')) {
-        const debt = (a.lbo.seniorX + a.lbo.mezzX) * a.drivers.ebitda0;
-        rows.push({ label: 'New debt', value: `${fmtMoney(debt, company)} (${fmtX(a.lbo.seniorX + a.lbo.mezzX, 1)})` });
+      if (!valid(def, states, 'lboSettings')) return [];
+      const r = computeLboT(a);
+      const rows = [{ label: 'Debt repayment', value: repayKind(r.repay).label }];
+      if (valid(def, states, 'lboCompany')) rows.push({ label: 'Entry EBITDA', value: fmtMoney(r.entry.ebitda, company) });
+      if (valid(def, states, 'lboTransaction')) {
+        rows.push({ label: 'Entry enterprise value', value: fmtMoney(r.entry.ev, company) });
+        rows.push({ label: 'Sponsor equity', value: fmtMoney(r.su.sponsor, company) }, { label: 'Total debt', value: `${fmtMoney(r.totalDebt.amount, company)} (${fmtX(r.totalDebt.x, 1)})` });
+      }
+      if (valid(def, states, 'lboExit')) {
+        if (fin(r.irr)) rows.push({ label: 'IRR', value: fmtPct(r.irr * 100, 1) });
+        if (fin(r.moic)) rows.push({ label: 'MOIC', value: fmtX(r.moic, 2) });
       }
       return rows;
     },

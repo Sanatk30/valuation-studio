@@ -75,6 +75,23 @@ function convertPage(page, cv) {
 /** A company slot (comps target / peer, precedent company): price, diluted shares and its page. */
 const convertSlot = (x, cv) => (x ? { ...keys(keys(x, ['price'], cv.price), ['shares'], cv.shares), page: convertPage(x.page, cv) } : x);
 
+/** The DCF template inputs (engine/dcfTemplate.js): the company slot and the one money driver (net borrowing). */
+function convertDcfT(x, cv) {
+  if (!x) return x;
+  return { ...x, company: convertSlot(x.company, cv), drivers: x.drivers ? { ...x.drivers, netBorrow: mapArr(x.drivers.netBorrow, cv.money) } : x.drivers };
+}
+
+/** The LBO template inputs (engine/lboTemplate.js): the company page, existing cash used and the minimum cash balance. */
+function convertLboT(x, cv) {
+  if (!x) return x;
+  return {
+    ...x,
+    company: x.company ? { ...x.company, page: convertPage(x.company.page, cv) } : x.company,
+    deal: keys(x.deal, ['cashUsed'], cv.money),
+    cash: keys(x.cash, ['minCash'], cv.money),
+  };
+}
+
 function convertComps(comps, cv) {
   if (!comps) return comps;
   return { ...comps, target: convertSlot(comps.target, cv), peers: (comps.peers || []).map((p) => convertSlot(p, cv)) };
@@ -119,7 +136,8 @@ function convertMethodData(data, cv, meta) {
   if (data.company) out.company = convertCompanySection(data.company, cv);
   if (data.drivers) out.drivers = convertDrivers(data.drivers, cv);
   if (data.ts) out.ts = keys(data.ts, ['startingPPE', 'equity0'], cv.money);
-  if (data.lbo) out.lbo = keys(data.lbo, ['cashAtClose', 'minCash'], cv.money);
+  if (data.dcf) out.dcf = convertDcfT(data.dcf, cv);
+  if (data.lbo) out.lbo = convertLboT(data.lbo, cv);
   if (data.ipo) out.ipo = keys(data.ipo, ['primaryRaise'], cv.money);
   if (data.comps) out.comps = convertComps(data.comps, cv);
   if (data.regression) out.regression = convertRegression(data.regression, cv);

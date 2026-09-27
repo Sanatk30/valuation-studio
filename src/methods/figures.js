@@ -4,7 +4,6 @@ import { computeComps } from '../lib/engine/comps.js';
 import { runRegression } from '../lib/engine/regressionModel.js';
 import { computePrecedent } from '../lib/engine/precedent.js';
 import { STAT_SHORT } from '../lib/engine/templateStats.js';
-import { computeLbo } from '../lib/engine/lbo.js';
 import { computeIpo } from '../lib/engine/ipo.js';
 
 /**
@@ -73,10 +72,6 @@ const FIGURES = {
   precedent: (a) => {
     const p = computePrecedent(a);
     return impliedFigures('prec', 'Precedent', p.implied, a.precedent?.headline, `deal ${statRange(p.statSel)}`);
-  },
-  lbo: (a) => {
-    const l = computeLbo(a);
-    return [{ key: 'lboFloor', label: 'LBO — floor price at the hurdle IRR', value: l.floorPrice, low: l.floorLow, high: l.floorHigh, rangeNote: `hurdle ± ${l.hurdleStep} pts` }];
   },
   ipo: (a) => {
     const i = computeIpo(a);

@@ -1,6 +1,6 @@
 import { sampleCompsData, samplePrecedentData } from './templateSample.mjs';
 import { sampleDcfData } from './dcfSample.mjs';
-import { SENS_DEFAULTS } from '../../src/store/methodModel.js';
+import { sampleLboData } from './lboSample.mjs';
 
 /**
  * A complete engine-input fixture (the shape `toEngineInput` produces) for the
@@ -16,7 +16,6 @@ export const SAMPLE_MODEL = {
   settings: { currency: 'INR', unit: 'Cr', period: { startYear: 2026, fyEndMonth: 12 }, scenario: 'base' },
   history: null,
   listing: null,
-  sens: JSON.parse(JSON.stringify(SENS_DEFAULTS)),
   ratio: { span: 'future', histYears: null, freq: 'Y' },
   company: {
     name: 'Sample Industries Ltd',
@@ -48,20 +47,7 @@ export const SAMPLE_MODEL = {
     startingPPE: 2500,
     equity0: 2300,      // reported opening equity (= cash + NWC + PP&E − debt = 400 + 600 + 2500 − 1200, so no other net assets)
   },
-  lbo: {
-    entryMultiple: 11.0,
-    exitMultiple: 11.0,
-    exitYear: 5,
-    seniorX: 3.5, seniorRate: 9.5, seniorAmort: 7.5,
-    mezzX: 1.0, mezzRate: 13.0,
-    mezzPIK: false,
-    feesPctEV: 2.0,
-    finFeesPct: 2.5,
-    cashAtClose: 0,
-    minCash: 100,
-    sweepPct: 75,
-    hurdleRate: 20,
-  },
+  lbo: sampleLboData(),
   ipo: {
     basis: 'pe',
     offerPE: 24.0,

@@ -8,13 +8,13 @@
  */
 import { buildWorkbook } from '../../src/lib/excel/exportExcel.js';
 import { computeThreeStatement } from '../../src/lib/engine/threeStatement.js';
-import { computeLbo, lboSensitivity, lboHoldSensitivity } from '../../src/lib/engine/lbo.js';
 import { computeIpo } from '../../src/lib/engine/ipo.js';
 import { computeForecastRatios, computeHistoryRatios } from '../../src/lib/engine/ratios.js';
 import { hasHistory } from '../../src/lib/historyModel.js';
 import { recalc, colLetter } from './recalc.mjs';
 import { checkCompsWorkbook, checkPrecedentWorkbook } from './templateChecks.mjs';
 import { checkDcfWorkbook } from './dcfChecks.mjs';
+import { checkLboWorkbook } from './lboChecks.mjs';
 
 const isNum = (x) => typeof x === 'number' && Number.isFinite(x);
 /** Scale a numeric cell (a % shown as a fraction); text such as "NA" passes through. */
@@ -107,46 +107,6 @@ export function checkTs(a, opts = {}, methodId = 'ts') {
   return T;
 }
 
-/* ================================================================== LBO */
-
-export function checkLbo(a, opts = {}) {
-  const T = ctx(`lbo${opts.tag ? ` [${opts.tag}]` : ''}`);
-  const { X } = open(a, 'lbo', opts, T);
-  const l = computeLbo(a);
-  const S = 'LBO';
-  const b = (label, eng, msg = label, scale = 1) => T.same(sc(X.get(S, `B${need(T, X.row(S, label), label)}`), scale), eng, msg);
-  b('Total uses', l.uses);
-  b('Sponsor equity (plug)', l.sponsorEquity);
-  b('Exit equity value', l.exitEquity);
-  b('Net debt at exit', l.netDebtExit);
-  b('MOIC', l.moic);
-  b('IRR (no interim distributions)', l.irr, 'IRR', 100);
-  b('Exit equity (check)', l.exitEquity, 'value-creation bridge ties');
-  b('Max entry enterprise value', l.entryEvMax);
-  b('Floor price per share (at the hurdle)', l.floorPrice);
-  b('Floor price — hurdle + step (low)', l.floorLow);
-  b('Floor price — hurdle − step (high)', l.floorHigh);
-  const n = l.ops.n;
-  const per = (label, arr, msg, sign = 1) => {
-    const r = need(T, X.row(S, label), label);
-    for (let i = 0; i < n; i++) T.same(sc(X.get(S, `${colLetter(3 + i)}${r}`), sign), arr[i], `${msg} Y${i + 1}`);
-  };
-  per('Net income', l.netIncome, 'net income');
-  per('Free cash flow', l.fcf, 'FCF');
-  per('Tax losses carried forward', l.nolClose, 'NOL');
-  per('Cash balance', l.cashBal, 'cash');
-  per('Closing senior debt', l.closeSenior, 'senior');
-  per('Closing mezzanine debt', l.closeMezz, 'mezz');
-  per('Less: Cash interest', l.cashInterest, 'cash interest', -1);
-  const s1 = lboSensitivity(a);
-  const g1 = need(T, X.row(S, 'SENSITIVITY — IRR: ENTRY (rows) × EXIT MULTIPLE (cols)'), 'entry grid');
-  for (let i = 0; i < 5; i++) for (let j = 0; j < 5; j++) T.same(sc(X.get(S, `${colLetter(2 + j)}${g1 + 2 + i}`), 100), s1.grid[i][j], `entry×exit [${i}][${j}]`);
-  const s2 = lboHoldSensitivity(a);
-  const g2 = need(T, X.row(S, 'SENSITIVITY — IRR: HOLDING PERIOD (rows) × EXIT MULTIPLE (cols)'), 'hold grid');
-  s2.years.forEach((y, i) => { for (let j = 0; j < 5; j++) T.same(sc(X.get(S, `${colLetter(2 + j)}${g2 + 2 + i}`), 100), s2.grid[i][j], `hold ${y}y [${j}]`); });
-  return T;
-}
-
 /* ================================================================== IPO */
 
 export function checkIpo(a, opts = {}) {
@@ -187,6 +147,7 @@ const adapt = (label, res) => ({ failures: res.fails.map((f) => `${label}: ${f}`
 export const checkComps = (a, opts = {}) => adapt(`comps${opts.tag ? ` [${opts.tag}]` : ''}`, checkCompsWorkbook(a, opts));
 export const checkPrecedent = (a, opts = {}) => adapt(`precedent${opts.tag ? ` [${opts.tag}]` : ''}`, checkPrecedentWorkbook(a, opts));
 export const checkDcf = (a, opts = {}) => adapt(`dcf${opts.tag ? ` [${opts.tag}]` : ''}`, checkDcfWorkbook(a, opts));
+export const checkLbo = (a, opts = {}) => adapt(`lbo${opts.tag ? ` [${opts.tag}]` : ''}`, checkLboWorkbook(a, opts));
 
 /* ============================================================= Combined */
 
