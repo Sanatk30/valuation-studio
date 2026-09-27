@@ -2,18 +2,18 @@ import ExcelJS from 'exceljs';
 import { CURRENCIES } from '../format.js';
 import { METHOD_META } from '../../methods/labels.js';
 import { projectOperations } from '../engine/drivers.js';
-import { dcfReportedHistory } from '../engine/dcf.js';
 import { openingNol } from '../engine/tax.js';
 import { otherNetAssetsOf } from '../engine/threeStatement.js';
-import { hasHistory } from '../historyModel.js';
+import { hasHistory, reportedHistory } from '../historyModel.js';
 import { SENS_DEFAULTS } from '../../store/methodModel.js';
 import {
   put, colL, styleSheet, edge, colRun, makeFormats, nv, na,
   C_INPUT, C_HDR_FILL, C_HDR_TEXT, C_SECTION_FILL, C_GRID_FILL, C_MUTED, C_TAB_ANALYSIS, C_INPUT_FILL,
 } from './xlsxUtil.js';
-import { writeDcfSheet, writeDcfLower, writeWaccSheet } from './dcfSheets.js';
+import { writeProjectionSheet } from './projectionSheet.js';
 import { writeThreeStatementSheet, writePastRatiosSheet, writeLboSheet, writeIpoSheet } from './modelSheets.js';
 import { buildCompsWorkbook, buildPrecedentWorkbook } from './templateWorkbooks.js';
+import { buildDcfWorkbook } from './dcfWorkbook.js';
 
 /*
  * Live-formula Excel export — one file per method.
@@ -27,15 +27,13 @@ import { buildCompsWorkbook, buildPrecedentWorkbook } from './templateWorkbooks.
 export const EXPORT_METHODS = ['dcf', 'comps', 'precedent', 'lbo', 'ipo', 'ts', 'ratios', 'combined'];
 
 /** Fixed sheet names, reserved so a company or deal sheet can never take one. */
-const RESERVED = ['Cover', 'Inputs', 'DCF', 'WACC', 'Projection', '3 Statement', 'LBO', 'IPO', 'Regression', 'Past Ratios', 'Combined'];
+const RESERVED = ['Cover', 'Inputs', 'Projection', '3 Statement', 'LBO', 'IPO', 'Regression', 'Past Ratios', 'Combined'];
 
 /** Methods whose Company step collects the tax rate and the opening NOL. */
-const PROJ = new Set(['dcf', 'lbo', 'ipo', 'ts', 'ratios']);
+const PROJ = new Set(['lbo', 'ipo', 'ts', 'ratios']);
 
 const SHEET_NOTES = {
   Inputs: 'every input of this method (blue). Edit here and the whole file recalculates.',
-  DCF: 'reported history, LTM and the projection; unlevered free cash flow, the valuation blocks, FCFE and sensitivity grids.',
-  WACC: 'the CAPM + Hamada build, the peer beta reference table and the WACC surface.',
   Projection: 'the operating projection every other sheet links to.',
   '3 Statement': 'linked income statement, cash flow, balance sheet and debt & cash schedule.',
   LBO: 'sources & uses, the debt schedule and sweep, returns, the floor price and IRR grids.',
@@ -138,46 +136,8 @@ function writeInputs(ws, a, F, methodId, opts) {
     inp('ebitda0', 'LTM EBITDA', nv(ops.ebitda0), F.money);
     inp('nwc0', 'Opening net working capital', nv(ops.nwc0), F.money, 'Year-0 NWC; the forecast years use the per-year NWC % of sales');
     put(ws, `A${r}`, 'Growth, margin, D&A, capex and NWC by year', { italic: true });
-    put(ws, `C${r}`, `The blue per-year rows at the foot of the ${methodId === 'dcf' ? 'DCF' : 'Projection'} sheet`, { italic: true, color: C_MUTED });
+    put(ws, `C${r}`, 'The blue per-year rows at the foot of the Projection sheet', { italic: true, color: C_MUTED });
     r += 2;
-  }
-
-  /* ---- cost of capital & DCF ---- */
-  if (methodId === 'dcf') {
-    const w = a.wacc;
-    section('COST OF CAPITAL (CAPM + HAMADA)');
-    inp('rf', 'Risk-free rate', pct(w.riskFree), F.pct);
-    inp('erp', 'Equity risk premium', pct(w.erp), F.pct);
-    inp('wd', 'Target debt weight D/(D+E)', pct(w.debtWeight), F.pct);
-    calc('de', 'Target D/E', na(`${R.wd}/(1-${R.wd})`), F.num3);
-    if (w.betaMode === 'direct') {
-      inp('beta', 'Levered beta βL', nv(w.beta), F.num3, 'Entered directly');
-      calc('bu', 'Unlevered (asset) beta βU', na(`${R.beta}/(1+(1-${R.tax})*${R.de})`), F.num3, 'Hamada inverse');
-    } else {
-      inp('bu', 'Unlevered (asset) beta βU', w.betaMode === 'hamada' ? nv(w.unleveredBeta) : 'NA', F.num3, 'Relevered below at the target D/E');
-      calc('beta', 'Levered beta βL (Hamada)', na(`${R.bu}*(1+(1-${R.tax})*${R.de})`), F.num3, 'βL = βU × (1 + (1 − t) × D/E)');
-    }
-    inp('sizePrem', 'Size / company-specific premium', pct(w.sizePremium), F.pct);
-    calc('coe', 'Cost of equity (CAPM)', na(`${R.rf}+${R.beta}*${R.erp}+${R.sizePrem}`), F.pct2, 'rf + βL × ERP + premium');
-    inp('kd', 'Pre-tax cost of debt', pct(w.costDebt), F.pct);
-    calc('katd', 'After-tax cost of debt', na(`${R.kd}*(1-${R.tax})`), F.pct2);
-    calc('wacc', 'WACC', na(`(1-${R.wd})*${R.coe}+${R.wd}*${R.katd}`), F.pct2);
-    r++;
-    section('TERMINAL VALUE & DISCOUNTING');
-    inp('tg', 'Terminal growth rate', pct(a.dcf.terminalGrowth), F.pct, 'Gordon growth — must be below the WACC (and the cost of equity for FCFE)');
-    inp('dcfExitX', 'Exit EV/EBITDA multiple', nv(a.dcf.exitMultiple), F.x);
-    inp('midYear', 'Mid-year convention (TRUE / FALSE)', bool(a.dcf.midYear), undefined, 'TRUE discounts each year at t − 0.5');
-    inp(null, 'Headline terminal-value method', a.dcf.primaryTV === 'exit' ? 'Exit multiple' : a.dcf.primaryTV === 'gordon' ? 'Perpetuity growth' : 'NA', undefined, 'Display only — both methods are on the DCF sheet');
-    r++;
-    if (!skipped.fcfe) {
-      section('FCFE FINANCING');
-      inp('intDebt', 'Interest rate on debt', pct(a.ts.interestRateDebt), F.pct, 'On opening debt');
-      inp('intCash', 'Interest earned on cash', pct(a.ts.interestRateCash), F.pct, 'On opening cash (3-statement net income for the exit P/E)');
-      inp('repayPct', 'Mandatory debt repayment (% of opening)', pct(a.ts.debtRepayPct), F.pct, 'Negative net borrowing in FCFE');
-      inp('payout', 'Dividend payout (% of net income)', pct(a.ts.dividendPayout), F.pct);
-      inp('dcfExitPE', 'Exit P/E multiple (FCFE)', nv(a.dcf.exitPE), F.x);
-      r++;
-    }
   }
 
   /* ---- financing (3-statement, ratios, IPO) ---- */
@@ -253,15 +213,6 @@ function writeInputs(ws, a, F, methodId, opts) {
     const v = g && g[key] !== undefined ? g[key] : SENS_DEFAULTS[group][key];
     return nv(v);
   };
-  if (methodId === 'dcf') {
-    section('SENSITIVITY GRID STEPS (each grid is base ± 1 and ± 2 steps)');
-    inp('sWacc', 'WACC step (% points)', step('dcf', 'waccStep'), F.num);
-    inp('sG', 'Terminal growth step (% points)', step('dcf', 'gStep'), F.num);
-    inp('sMult', 'Exit multiple step (turns)', step('dcf', 'multStep'), F.num);
-    if (!skipped.fcfe) inp('sCoe', 'Cost of equity step (% points)', step('dcf', 'coeStep'), F.num);
-    inp('sWd', 'Debt weight step (% points, WACC surface)', step('wacc', 'wdStep'), F.num, 'Rows clamped to 0–90 %');
-    inp('sKd', 'Cost of debt step (% points, WACC surface)', step('wacc', 'kdStep'), F.num);
-  }
   if (methodId === 'lbo') {
     section('SENSITIVITY STEPS');
     inp('sEntry', 'Entry multiple step (turns)', step('lbo', 'entryStep'), F.num);
@@ -329,7 +280,7 @@ function writeCombinedSheet(ws, a, F, combined) {
 
 /**
  * Build one method's workbook.
- * methodId ∈ EXPORT_METHODS; opts = { skipped: { fcfe?, regression?, history? },
+ * methodId ∈ EXPORT_METHODS; opts = { skipped: { regression?, history? },
  * combined?: { rows: [{ method, figureLabel, value, low, high, weight }], marketPrice } }.
  */
 export function buildWorkbook(a, methodId, opts = {}) {
@@ -338,6 +289,7 @@ export function buildWorkbook(a, methodId, opts = {}) {
   // comps and precedent follow the user's template workbooks (their own sheet set, no cover)
   if (methodId === 'comps') return buildCompsWorkbook(a, { skipped });
   if (methodId === 'precedent') return buildPrecedentWorkbook(a);
+  if (methodId === 'dcf') return buildDcfWorkbook(a);
   const wb = new ExcelJS.Workbook();
   wb.creator = 'Quant Value';
   wb.calcProperties = { fullCalcOnLoad: true };
@@ -381,21 +333,12 @@ export function buildWorkbook(a, methodId, opts = {}) {
   }
 
   const ops = PROJ.has(methodId) ? projectOperations(a) : null;
-  const histFor = (m) => (!skipped.history && (m === 'dcf' || m === 'ts' || m === 'ratios') ? dcfReportedHistory(a) : null);
-
-  if (methodId === 'dcf') {
-    const dcfWs = wb.addWorksheet('DCF');
-    const waccWs = wb.addWorksheet('WACC');
-    const P = writeDcfSheet(dcfWs, a, F, R, { unitNote: projNote, mode: 'dcf', ops, hist: histFor('dcf') });
-    writeDcfLower(dcfWs, a, F, R, P, { fcfe: !skipped.fcfe });
-    writeWaccSheet(waccWs, a, F, R, { unitNote: `(${sym} in ${unit})` });
-    order.push('DCF', 'WACC');
-  }
+  const histFor = (m) => (!skipped.history && (m === 'ts' || m === 'ratios') ? reportedHistory(a) : null);
 
   if (methodId === 'lbo' || methodId === 'ipo' || methodId === 'ts' || methodId === 'ratios') {
     const projWs = wb.addWorksheet('Projection');
     const mode = methodId === 'ts' || methodId === 'ratios' ? 'fcff' : 'ops';
-    const P = writeDcfSheet(projWs, a, F, R, { unitNote: projNote, mode, ops, hist: histFor(methodId) });
+    const P = writeProjectionSheet(projWs, a, F, R, { unitNote: projNote, mode, ops, hist: histFor(methodId) });
     order.push('Projection');
     if (methodId === 'lbo') {
       writeLboSheet(wb.addWorksheet('LBO'), a, F, R, P);

@@ -78,7 +78,7 @@ xattr -dr com.apple.quarantine "Valuation Studio.app"
 
 | Method | Steps |
 | --- | --- |
-| **DCF** | Company → Historical financials *(optional)* → Forecast → Cost of capital (CAPM, Hamada or direct beta, optional beta-peer list) → Terminal value → FCFE financing *(optional — skip for FCFF only)* |
+| **DCF** | Settings (FCFF / FCFE / DDM × Gordon / exit multiple × CAPM / build-up, years) → Company & historicals → Assumptions (per-year drivers) → Discount rate → Terminal value |
 | **Comparable companies** | Settings → Target company (full company page) → Peers (as many as you choose, each with its company page, include flag and tier) → Regression *(optional)* |
 | **Precedent transactions** | Settings → Company being valued (company page) → Deal list (as many as you choose) → Deal financials (one page per deal) |
 | **LBO** | Company → Forecast → Entry & exit (incl. cash left at close) → Debt structure → Cash sweep & hurdle |
@@ -94,11 +94,44 @@ carryforward (NOL). The **Forecast** step asks LTM revenue, **LTM EBITDA** and
 year-by-year grid (paste from Excel supported). Both steps offer *Copy from
 another method* — a one-off copy; the methods stay independent afterwards.
 
-Modelling conventions that are stated rather than assumed: tax is never negative
-— losses build an NOL balance used against later profits, and the DCF terminal
-value uses a fully-taxed final-year flow with the remaining NOL valued as its own
-line; interest accrues on opening balances (no circular references); forecasts
-are annual.
+Modelling conventions that are stated rather than assumed (LBO, IPO,
+3-Statement, Ratios): tax is never negative — losses build an NOL balance used
+against later profits; interest accrues on opening balances (no circular
+references); forecasts are annual.
+
+## Discounted cash flow
+
+The DCF follows the user's twelve DCF templates
+(`DCF_<FCFF|FCFE|DDM>_<GordonGrowth|ExitEVEBITDA|ExitPE>_<CAPM|BuildUp>.xlsx`).
+The **Settings** step picks one combination — the cash flow (FCFF at the WACC;
+FCFE or dividends at the cost of equity), the terminal value (Gordon growth, or
+an exit multiple: EV/EBITDA for FCFF, P/E for FCFE and DDM) and the cost of
+equity (CAPM or build-up) — plus **1–10 historical and 1–10 forecast years**
+(template: 3 and 5), the valuation date, the lease toggle and the period
+labels. The later steps ask only what that template asks:
+
+- **Company & historicals** — ticker, share price, diluted shares and the
+  Historicals sheet (the comps company page without YTD / LTM); Yahoo fill and
+  *Paste from Excel* as on the comps pages.
+- **Assumptions** — one value per forecast year for each driver (growth, cost
+  and D&A %, other income, tax rate, capex %, working-capital days and %, net
+  borrowing, interest rate, payout), with the historical ratios beside them and
+  shortcuts: copy the first year across, a straight line first → last year,
+  the historical average, or *fill blanks from history*.
+- **Discount rate** — CAPM (levered beta typed, or a peer unlevered beta
+  re-levered with Hamada, with an optional beta-peer list) or the build-up
+  premia; for an FCFF also the pre-tax cost of debt, marginal tax rate and
+  target D/(D+E).
+- **Terminal value** — the growth rate or exit multiple and the sensitivity
+  step sizes.
+
+As in the templates: end-of-year discounting (the value is as at the end of
+the last historical year), interest on opening debt, tax = max(0, PBT) × rate,
+no forecast of exceptional items, associates or NCI, a blank cell counts as 0,
+and NM where the discount rate ≤ g or there are no shares. The output page
+shows the valuation sheet, the 5 × 5 sensitivity table, the forecast, the
+drivers and the cost of capital; Combined takes the value per share with the
+sensitivity grid's range.
 
 ## Comparable companies and precedent transactions
 
@@ -184,7 +217,7 @@ black = formula, green = cross-sheet link) for that method only:
 
 | Method | Sheets |
 | --- | --- |
-| DCF | Cover · Inputs · DCF (reported history, LTM, projection, NOL schedule, FCFF valuation, FCFE when not skipped, sensitivity grids) · WACC (CAPM + Hamada build, beta-peer reference, WACC surface) |
+| DCF | The chosen template: Instructions · Inputs · the valuation sheet (e.g. *FCFF - Gordon Growth*) · Historicals · Assumptions · Forecast · Cost of Equity (CAPM or Build-Up) · WACC (FCFF only) — at 3 + 5 years cell-for-cell the template |
 | Comps | Instructions · Inputs · Comps Summary (Table 1 multiples, Table 2 benchmarking, statistics overall and per tier) · Implied Valuation · Regression *(when not skipped)* · Target · one page per peer — the template's layout |
 | Precedent | Instructions · Inputs · Transaction Summary · Implied Valuation · Company Being Valued · one page per deal — the template's layout |
 | LBO | Cover · Inputs · Projection · LBO |
@@ -195,13 +228,14 @@ black = formula, green = cross-sheet link) for that method only:
 
 The **Inputs** sheet holds only that method's inputs, including the
 sensitivity-grid step sizes; a blank input is the text `NA` and every figure
-built from it reads NA. The comps and precedent workbooks keep their
+built from it reads NA. The comps, precedent and DCF workbooks keep their
 templates' rules instead (a blank cell is 0; NM where a denominator is zero or
 negative). The test suite recalculates every method's workbook with
 HyperFormula and requires it to match the app's engines cell for cell, on the
 sample model and on more than 70 edge cases (tax losses, blanks, optional
 steps, horizons, 1 / 5 / 10 fiscal years, YTD off, every statistics choice,
-no or excluded peers, blank deals). The DCF tornado is an on-screen analysis only.
+no or excluded peers, blank deals, all twelve DCF combinations, 1–10 historical
+and forecast years, Hamada beta, NM cases).
 
 ## Project layout
 

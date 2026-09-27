@@ -16,16 +16,13 @@
 
 import { blankTargetCo } from '../lib/engine/comps.js';
 import { blankValuedCo } from '../lib/engine/precedent.js';
+import { blankDcfT } from '../lib/engine/dcfTemplate.js';
 
 export const METHOD_IDS = ['dcf', 'comps', 'precedent', 'lbo', 'ipo', 'ts', 'ratios', 'combined'];
 
 /** Display-only sensitivity step sizes — today's steps, editable on each output. */
 export const SENS_DEFAULTS = {
-  dcf: { waccStep: 0.5, gStep: 0.5, multStep: 1, coeStep: 0.5 },   // % pts, % pts, turns, % pts
-  wacc: { wdStep: 5, kdStep: 0.5 },                                // % pts of D/(D+E), % pts of Kd
   lbo: { entryStep: 0.5, exitStep: 0.5, hurdleStep: 2.5 },         // turns, turns, % pts (floor range)
-  // DCF tornado: each lever moved down and up by its bump (% pts)
-  tornado: { waccBump: 1, gBump: 1, marginBump: 1, growthBump: 1, capexBump: 1, taxBump: 1 },
 };
 
 const blankCompanySection = () => ({
@@ -43,20 +40,6 @@ const blankDrivers = () => ({
   growthCustom: null, marginCustom: null,
   mode: null,         // UI only: 'fade' (start → end) | 'grid' (year by year → perYear)
   perYear: null,      // per-year grid (see engine/drivers.js buildPerYearGrid)
-});
-
-const blankWacc = () => ({
-  riskFree: null, erp: null,
-  betaMode: null,          // 'hamada' | 'direct'
-  beta: null, unleveredBeta: null,
-  sizePremium: null, costDebt: null, debtWeight: null,
-  betaPeers: [],           // [{ id, name, leveredBeta, de, taxRate }] — DCF-owned reference list
-});
-
-const blankDcf = () => ({
-  terminalGrowth: null, exitMultiple: null, exitPE: null,
-  midYear: null,           // true | false — must be chosen
-  primaryTV: null,         // 'gordon' | 'exit'
 });
 
 const blankTs = () => ({
@@ -116,7 +99,7 @@ const sens = () => JSON.parse(JSON.stringify(SENS_DEFAULTS));
 
 /** Which sections each method owns. */
 const SECTIONS = {
-  dcf: () => ({ company: blankCompanySection(), drivers: blankDrivers(), wacc: blankWacc(), dcf: blankDcf(), ts: blankTs(), history: null, listing: null, sens: sens() }),
+  dcf: () => ({ dcf: blankDcfT() }),
   comps: () => ({ comps: blankComps(), regression: blankRegression() }),
   precedent: () => ({ precedent: blankPrecedent() }),
   lbo: () => ({ company: blankCompanySection(), drivers: blankDrivers(), lbo: blankLbo(), history: null, listing: null, sens: sens() }),
@@ -149,8 +132,7 @@ const nanify = (obj) => {
 const NAN_SECTIONS = {
   company: () => nanify(blankCompanySection()),
   drivers: () => ({ ...nanify(blankDrivers()), growthCustom: null, marginCustom: null, perYear: null }),
-  wacc: () => ({ ...nanify(blankWacc()), betaMode: 'direct', betaPeers: [] }),
-  dcf: () => ({ ...nanify(blankDcf()), midYear: false, primaryTV: 'gordon' }),
+  dcf: () => blankDcfT(),
   ts: () => nanify(blankTs()),
   lbo: () => ({ ...nanify(blankLbo()), mezzPIK: false }),
   ipo: () => ({ ...nanify(blankIpo()), basis: 'pe', greenshoeType: 'primary' }),
@@ -174,14 +156,14 @@ export function toEngineInput(company, data) {
     },
     history: d.history || null,
     listing: d.listing || null,
-    // per-group merge: a group added later (e.g. the tornado) still gets its display defaults
+    // per-group merge: a group added later still gets its display defaults
     sens: Object.fromEntries(Object.entries(sens()).map(([g, v]) => [g, { ...v, ...(d.sens?.[g] || {}) }])),
     ratio: d.ratio || null,
   };
   for (const key of Object.keys(NAN_SECTIONS)) {
     if (d[key] === undefined) { a[key] = NAN_SECTIONS[key](); continue; }
-    // comps / precedent pages keep their blanks: the template reads a blank cell as 0 itself
-    if (key === 'comps' || key === 'precedent') a[key] = d[key];
+    // the template methods keep their blanks: the template reads a blank cell as 0 itself
+    if (key === 'comps' || key === 'precedent' || key === 'dcf') a[key] = d[key];
     else if (key === 'regression') a.regression = d.regression;
     else a[key] = nanify(d[key]);
   }
@@ -191,7 +173,6 @@ export function toEngineInput(company, data) {
     a.drivers.growthCustom = d.drivers.growthCustom || null;
     a.drivers.marginCustom = d.drivers.marginCustom || null;
   }
-  if (d.wacc) a.wacc.betaPeers = d.wacc.betaPeers || [];
   a.company.name = company.name;
   return a;
 }

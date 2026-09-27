@@ -1,156 +1,327 @@
 import React from 'react';
-import { f, fieldErrors } from '../fields.js';
+import { f } from '../fields.js';
 import { NumBox } from '../../wizard/Field.jsx';
+import TemplatePageEditor from '../../components/TemplatePageEditor.jsx';
+import DriversGrid from '../../components/DriversGrid.jsx';
+import { YahooSearch, mergeFetch } from '../../components/PeerYahoo.jsx';
+import { FetchNote } from './templateSteps.jsx';
 import { toEngineInput } from '../../store/methodModel.js';
-import { computeWacc, unleverBeta } from '../../lib/engine/wacc.js';
-import { fmtNum, fmtPct } from '../../lib/format.js';
+import {
+  CF_KINDS, TV_KINDS, COE_KINDS, exitMultipleName, templateName, computeDcfT, dcfLabels, clampN, betaPeers,
+} from '../../lib/engine/dcfTemplate.js';
+import { MIN_YEARS, MAX_YEARS } from '../../lib/engine/companyPage.js';
+import { fmtNum, fmtTpl, CURRENCIES, UNITS } from '../../lib/format.js';
 
+/**
+ * Wizard steps for the DCF, following the user's twelve DCF templates:
+ *   Settings · Company & historicals · Assumptions · Discount rate · Terminal value
+ * The Settings step picks the combination (FCFF / FCFE / DDM × Gordon Growth /
+ * Exit Multiple × CAPM / Build-Up); the other steps ask only what that
+ * combination's template asks. Blank cells behave as in the templates (0).
+ */
+
+const fin = Number.isFinite;
 const pid = () => `bp${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+const S = (data) => data.dcf?.settings || {};
+const nHist = (data) => clampN(S(data).histYears, 3);
+const nFcst = (data) => clampN(S(data).fcstYears, 5);
+const labelsOf = (data, company) => dcfLabels(S(data).labels, nHist(data), nFcst(data), company?.startYear);
+const pct2 = (v) => (fin(v) ? `${(v * 100).toFixed(2)}%` : 'NM');
 
-/* ------------------------------------------------------------ WACC step */
-
-export function waccSpecs(data) {
-  const w = data.wacc || {};
-  return [
-    f.pct('wacc.riskFree', 'Risk-free rate', { hint: 'e.g. the 10-year government bond yield in your valuation currency' }),
-    f.pct('wacc.erp', 'Equity risk premium'),
-    f.choice('wacc.betaMode', 'How will you enter beta?', [
-      { value: 'hamada', label: 'Unlevered βU (relever with Hamada)' },
-      { value: 'direct', label: 'Levered βL directly' },
-    ]),
-    ...(w.betaMode === 'hamada' ? [f.num('wacc.unleveredBeta', 'Unlevered (asset) beta βU', { gt: 0, hint: 'Relevered at your target D/E: βL = βU × (1 + (1 − t) × D/E)' })] : []),
-    ...(w.betaMode === 'direct' ? [f.num('wacc.beta', 'Levered beta βL', { gt: 0 })] : []),
-    f.pct('wacc.sizePremium', 'Size / company-specific premium', { hint: '0 if none' }),
-    f.pct('wacc.costDebt', 'Pre-tax cost of debt', { min: 0 }),
-    f.pct('wacc.debtWeight', 'Target debt weight D/(D+E)', { min: 0, lt: 100 }),
-  ];
+/** The whole engine on the current data (null when it cannot run yet). */
+function resultOf(company, data) {
+  try { return computeDcfT(toEngineInput(company, data)); } catch { return null; }
 }
 
-/** The DCF-owned beta-peer list: reference only, never drives the rate unless you press Use. */
-function BetaPeers({ data, setData, company }) {
-  const peers = data.wacc.betaPeers || [];
-  const setPeers = (fn) => setData((d) => ({ ...d, wacc: { ...d.wacc, betaPeers: fn(d.wacc.betaPeers || []) } }));
-  const rows = peers.map((p) => ({
-    ...p,
-    bu: Number.isFinite(p.leveredBeta) && Number.isFinite(p.de) && Number.isFinite(p.taxRate) ? unleverBeta(p.leveredBeta, p.de, p.taxRate) : NaN,
-  }));
-  const bus = rows.map((r) => r.bu).filter(Number.isFinite).sort((a, b) => a - b);
-  const mean = bus.length ? bus.reduce((s, v) => s + v, 0) / bus.length : NaN;
-  const median = bus.length ? (bus.length % 2 ? bus[(bus.length - 1) / 2] : (bus[bus.length / 2 - 1] + bus[bus.length / 2]) / 2) : NaN;
-  const b3 = (v) => (Number.isFinite(v) ? fmtNum(v, 3, 'en-US') : 'NA');
-  const useBu = (v) => setData((d) => ({ ...d, wacc: { ...d.wacc, betaMode: 'hamada', unleveredBeta: Math.round(v * 1000) / 1000 } }));
+/* ============================== Settings ============================== */
 
+function DcfLabelsEditor({ data, setData, company }) {
+  const lab = labelsOf(data, company);
+  const set = (part, i, v) => {
+    const next = { hist: [...lab.hist], fcst: [...lab.fcst] };
+    next[part][i] = v;
+    setData((d) => ({ ...d, dcf: { ...d.dcf, settings: { ...d.dcf.settings, labels: next } } }));
+  };
+  const s = S(data);
+  return (
+    <div className="step-tools">
+      <div className="tool-card">
+        <div className="tool-h">Period labels <span className="fld-opt">labels only — change freely</span></div>
+        <div className="lab-grid">
+          {lab.hist.map((l, i) => (
+            <label key={`h${i}`}>{i === lab.hist.length - 1 ? 'Historical (latest actual)' : `Historical year ${i + 1}`}<input className="fld-in txt" value={l} onChange={(e) => set('hist', i, e.target.value)} /></label>
+          ))}
+          {lab.fcst.map((l, i) => (
+            <label key={`f${i}`}>{`Forecast year ${i + 1}`}<input className="fld-in txt" value={l} onChange={(e) => set('fcst', i, e.target.value)} /></label>
+          ))}
+        </div>
+      </div>
+      {s.cf && s.tv && s.coe && (
+        <div className="readout">
+          Template <b>{templateName(s)}.xlsx</b> — {CF_KINDS.find((k) => k.value === s.cf)?.long}, terminal value by {s.tv === 'exit' ? `exit ${exitMultipleName(s.cf)}` : 'Gordon growth'}, cost of equity by {s.coe === 'capm' ? 'CAPM' : 'the build-up method'}.
+        </div>
+      )}
+    </div>
+  );
+}
+
+export const dcfSettingsStep = () => ({
+  id: 'dcfSettings',
+  title: 'Settings',
+  blurb: 'Which DCF you run — the cash flow, the terminal value and the cost of equity pick one of the twelve templates — and how many historical and forecast years it carries.',
+  fields: (data) => [
+    f.choice('dcf.settings.cf', 'Cash flow discounted', CF_KINDS.map((k) => ({ value: k.value, label: `${k.label} — ${k.long}`, hint: k.note }))),
+    f.choice('dcf.settings.tv', 'Terminal value', TV_KINDS.map((k) => ({
+      value: k.value,
+      label: k.value === 'exit' ? `Exit multiple (${S(data).cf ? exitMultipleName(S(data).cf) : 'EV / EBITDA for FCFF, P / E otherwise'})` : k.label,
+      hint: k.note,
+    }))),
+    f.choice('dcf.settings.coe', 'Cost of equity', COE_KINDS.map((k) => ({ value: k.value, label: k.label, hint: k.note }))),
+    f.int('dcf.settings.histYears', 'Historical years', { min: MIN_YEARS, max: MAX_YEARS, hint: `${MIN_YEARS} to ${MAX_YEARS}. Template: 3.` }),
+    f.int('dcf.settings.fcstYears', 'Forecast years', { min: MIN_YEARS, max: MAX_YEARS, hint: `${MIN_YEARS} to ${MAX_YEARS}. Template: 5.` }),
+    f.date('dcf.settings.valDate', 'Valuation date', { hint: 'End of the last historical year — cash flows are discounted from here (end-of-year convention: forecast year t at t years).' }),
+    f.choice('dcf.settings.lease', 'Include lease liabilities in net debt?', [
+      { value: 1, label: 'Yes (1)' }, { value: 0, label: 'No (0)' },
+    ], { hint: 'Template: 1 — under Ind AS 116 rent sits below EBITDA, so lease liabilities are debt-like.' }),
+  ],
+  Extra: DcfLabelsEditor,
+  extraBelow: true,
+});
+
+/* ======================= Company & historicals ======================= */
+
+function CompanyExtra({ data, setData, company }) {
+  const c = data.dcf.company;
+  const n = nHist(data);
+  const lab = labelsOf(data, company);
+  const setCo = (fn) => setData((d) => ({ ...d, dcf: { ...d.dcf, company: fn(d.dcf.company) } }));
+  return (
+    <div className="step-tools">
+      <div className="tool-card">
+        <div className="tool-h">Fill from Yahoo Finance <span className="fld-opt">optional</span></div>
+        <YahooSearch company={company} action="Fill the historicals" onPick={(m) => setCo((cur) => mergeFetch(cur, m, company, { n }))} />
+        {c._fetched && <FetchNote f={c._fetched} />}
+      </div>
+      <div className="tool-card">
+        <div className="tool-h">{company.name} — historical financials</div>
+        <TemplatePageEditor
+          historicals page={c.page} onChange={(page) => setCo((cur) => ({ ...cur, page }))}
+          n={n} labels={{ fy: lab.hist, p: '', c: '', ltm: '' }} toggle={S(data).lease === 0 ? 0 : 1} company={company}
+          notes={<div className="fld-h">Consolidated. {n} fiscal year{n === 1 ? '' : 's'}, oldest first — the latest is the base the forecast grows from.</div>}
+        />
+      </div>
+    </div>
+  );
+}
+
+export const dcfCompanyStep = () => ({
+  id: 'dcfCompany',
+  title: 'Company & historicals',
+  blurb: 'Share data and the historical income statement, balance sheet and cash flow (the template’s Historicals sheet).',
+  fields: () => [
+    f.text('dcf.company.ticker', 'NSE / BSE ticker'),
+    f.price('dcf.company.price', 'Current share price', { required: false, hint: 'For the upside and, in an FCFF, the market-value weights shown for reference.' }),
+    f.shares('dcf.company.shares', 'Diluted shares outstanding', { hint: 'Value per share = equity value ÷ diluted shares.' }),
+  ],
+  Extra: CompanyExtra,
+  extraBelow: true,
+});
+
+/* ============================ Assumptions ============================ */
+
+function AssumptionsExtra({ data, setData, company }) {
+  const r = resultOf(company, data);
+  if (!r) return null;
+  const locale = CURRENCIES[company.currency]?.locale;
+  const unit = `${CURRENCIES[company.currency]?.symbol || ''} ${UNITS[company.unit] || ''}`.trim();
+  const setDrivers = (drivers) => setData((d) => ({ ...d, dcf: { ...d.dcf, drivers } }));
+  const n = r.n, m = r.m;
+  const F = r.F;
+  const cashLabel = r.cf === 'fcff' ? 'Free cash flow to firm' : r.cf === 'fcfe' ? 'Free cash flow to equity' : 'Dividends';
+  const rows = [
+    ['Revenue', F.rev.slice(n), 'n1'], ['EBITDA', F.ebitda.slice(n), 'n1'], ['EBITDA margin', F.margin.slice(n), 'pct'],
+    ['PAT', F.pat.slice(n), 'n1'], [cashLabel, r.flows.cash, 'n1'],
+  ];
+  return (
+    <div className="step-tools">
+      <div className="tool-card">
+        <div className="tool-h">Forecast drivers</div>
+        <DriversGrid drivers={data.dcf.drivers} onChange={setDrivers} m={m} labels={r.labels} refs={r.ref} locale={locale} unitLabel={unit} />
+      </div>
+      <div className="tool-card">
+        <div className="tool-h">What the drivers give <span className="fld-opt">{unit}</span></div>
+        <div className="tablewrap">
+          <table className="fin compact">
+            <thead><tr><th />{r.labels.fcst.map((l) => <th key={l}>{l}</th>)}</tr></thead>
+            <tbody>
+              {rows.map(([lab, vals, fmt]) => (
+                <tr key={lab}><td>{lab}</td>{vals.map((v, j) => <td key={j}>{fmtTpl(v, fmt, locale)}</td>)}</tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="fld-h">Capex and costs as positive % of revenue; working capital on closing balances (365 days); interest = opening debt × rate; tax = max(0, PBT) × rate; exceptional items, associates and NCI are not forecast.</div>
+      </div>
+    </div>
+  );
+}
+
+export const dcfDriversStep = () => ({
+  id: 'dcfDrivers',
+  title: 'Assumptions',
+  blurb: 'One value per forecast year for each driver — the historical ratios sit beside them for reference. A blank cell counts as 0, as in the template.',
+  fields: () => [],
+  Extra: AssumptionsExtra,
+  extraBelow: true,
+});
+
+/* ============================ Discount rate ============================ */
+
+function BetaPeersCard({ data, setData }) {
+  const cp = data.dcf.capm || {};
+  const peers = cp.peers || [];
+  const setCapm = (fn) => setData((d) => ({ ...d, dcf: { ...d.dcf, capm: fn(d.dcf.capm || {}) } }));
+  const setPeers = (fn) => setCapm((c) => ({ ...c, peers: fn(c.peers || []) }));
+  const st = betaPeers(cp);
+  const b3 = (v) => (fin(v) ? fmtNum(v, 3, 'en-US') : '—');
+  const use = (v) => setCapm((c) => ({ ...c, betaMode: 'hamada', peerBeta: Math.round(v * 1000) / 1000 }));
   return (
     <div className="tool-card">
-      <div className="tool-h">Beta from comparable companies <span className="fld-opt">optional</span></div>
+      <div className="tool-h">Beta from comparable companies <span className="fld-opt">optional — Hamada</span></div>
       <div className="fld-h" style={{ marginBottom: 8 }}>
-        Type each peer’s observed levered beta, its debt-to-equity ratio and tax rate; each is unlevered with its own tax rate.
-        This list belongs to this DCF only.
+        Each peer’s levered beta is unlevered at its own debt / equity and tax rate: βu = βL ÷ (1 + (1 − t) × D/E). Use the mean or median as the peer unlevered beta; it is re-levered at your target D/E.
       </div>
       {peers.length > 0 && (
         <table className="fin compact bp-table">
-          <thead><tr><th>Peer</th><th>Levered β</th><th>D/E (x)</th><th>Tax %</th><th>Unlevered β</th><th /></tr></thead>
+          <thead><tr><th>Peer</th><th>Levered beta</th><th>D / E (%)</th><th>Tax (%)</th><th>Unlevered beta</th><th /></tr></thead>
           <tbody>
-            {rows.map((p) => (
+            {st.rows.map((p) => (
               <tr key={p.id}>
-                <td><input className="fld-in txt" value={p.name} placeholder="Name" onChange={(e) => setPeers((ps) => ps.map((x) => (x.id === p.id ? { ...x, name: e.target.value } : x)))} /></td>
-                {['leveredBeta', 'de', 'taxRate'].map((k) => (
-                  <td key={k}><NumBox small value={p[k]} onChange={(v) => setPeers((ps) => ps.map((x) => (x.id === p.id ? { ...x, [k]: v } : x)))} /></td>
+                <td><input className="fld-in txt" value={p.name || ''} placeholder="Name" onChange={(e) => setPeers((ps) => ps.map((x) => (x.id === p.id ? { ...x, name: e.target.value } : x)))} /></td>
+                {['beta', 'de', 'taxRate'].map((k) => (
+                  <td key={k}><NumBox small value={p[k] ?? null} onChange={(v) => setPeers((ps) => ps.map((x) => (x.id === p.id ? { ...x, [k]: v } : x)))} /></td>
                 ))}
                 <td className="calc">{b3(p.bu)}</td>
-                <td><button className="peer-del" onClick={() => setPeers((ps) => ps.filter((x) => x.id !== p.id))} title="Remove">×</button></td>
+                <td><button className="peer-del" title="Remove" onClick={() => setPeers((ps) => ps.filter((x) => x.id !== p.id))}>×</button></td>
               </tr>
             ))}
-            <tr className="bold"><td>Mean</td><td /><td /><td /><td className="calc">{b3(mean)}</td><td /></tr>
-            <tr className="bold"><td>Median</td><td /><td /><td /><td className="calc">{b3(median)}</td><td /></tr>
+            <tr className="bold"><td>Mean</td><td /><td /><td /><td className="calc">{b3(st.mean)}</td><td /></tr>
+            <tr className="bold"><td>Median</td><td /><td /><td /><td className="calc">{b3(st.median)}</td><td /></tr>
           </tbody>
         </table>
       )}
       <div className="row-btns">
-        <button className="btn sm" onClick={() => setPeers((ps) => [...ps, { id: pid(), name: '', leveredBeta: null, de: null, taxRate: null }])}>+ Add peer</button>
-        {Number.isFinite(median) && <button className="btn sm" onClick={() => useBu(median)}>Use median βU ({b3(median)})</button>}
-        {Number.isFinite(mean) && <button className="btn sm" onClick={() => useBu(mean)}>Use mean βU ({b3(mean)})</button>}
+        <button className="btn sm" onClick={() => setPeers((ps) => [...ps, { id: pid(), name: '', beta: null, de: null, taxRate: null }])}>+ Add peer</button>
+        {fin(st.median) && <button className="btn sm" onClick={() => use(st.median)}>Use median βu ({b3(st.median)})</button>}
+        {fin(st.mean) && <button className="btn sm" onClick={() => use(st.mean)}>Use mean βu ({b3(st.mean)})</button>}
       </div>
     </div>
   );
 }
 
-function waccOf(company, data) {
-  if (Object.keys(fieldErrors(waccSpecs(data), data)).length) return null;
-  if (!Number.isFinite(data.company?.taxRate)) return null;
-  return computeWacc(toEngineInput(company, data));
+function RateExtra({ data, setData }) {
+  if (S(data).coe !== 'capm') return null;
+  return <div className="step-tools"><BetaPeersCard data={data} setData={setData} /></div>;
 }
 
-function WaccReadout({ data, company }) {
-  const k = waccOf(company, data);
-  if (!k) return null;
+function RateReadout({ data, company }) {
+  const r = resultOf(company, data);
+  if (!r) return null;
+  const w = r.wacc;
   return (
     <div className="readout">
-      Levered β <b>{fmtNum(k.leveredBeta, 3, 'en-US')}</b> · Cost of equity <b>{fmtPct(k.costEquity, 2)}</b> ·
-      After-tax Kd <b>{fmtPct(k.afterTaxKd, 2)}</b> · WACC <b className="acc">{fmtPct(k.wacc, 2)}</b>
+      {r.coeKind === 'capm' && <>Beta <b>{fmtNum(r.coe.beta, 3, 'en-US')}</b> · </>}
+      Cost of equity <b className={w ? '' : 'acc'}>{pct2(r.coe.ke)}</b>
+      {w && <> · After-tax Kd <b>{pct2(w.kdAfter)}</b> · Current D/(D+E) <b>{pct2(w.currentWd)}</b> (reference) · WACC <b className="acc">{pct2(w.wacc)}</b></>}
     </div>
   );
 }
 
-export const waccStep = () => ({
-  id: 'wacc',
-  title: 'Cost of capital',
-  blurb: 'CAPM cost of equity, after-tax cost of debt and the target capital structure give the WACC.',
-  fields: (data) => waccSpecs(data),
-  Extra: BetaPeers,
+export const dcfRateStep = () => ({
+  id: 'dcfRate',
+  title: 'Discount rate',
+  blurb: 'The cost of equity (CAPM or build-up) and, for an FCFF, the WACC.',
+  fields: (data) => {
+    const s = S(data);
+    const cp = data.dcf?.capm || {};
+    const out = [];
+    if (s.coe === 'buildup') {
+      out.push(
+        f.pct('dcf.buildup.rf', 'Risk-free rate', { hint: 'e.g. 6.5% – 10-year Government of India bond yield on the valuation date' }),
+        f.pct('dcf.buildup.erp', 'Equity risk premium', { hint: 'e.g. 7.0% – state your source' }),
+        f.pct('dcf.buildup.size', 'Size premium', { required: false, hint: 'e.g. 2.0% for small / mid-size companies; 0% for large caps. Blank = 0.' }),
+        f.pct('dcf.buildup.industry', 'Industry risk premium (+/−)', { required: false, hint: 'e.g. 1.0% – can be negative for low-risk industries. Blank = 0.' }),
+        f.pct('dcf.buildup.specific', 'Company-specific risk premium', { required: false, hint: 'e.g. 1.5% – key-person risk, customer concentration, governance. Blank = 0.' }),
+        f.pct('dcf.buildup.country', 'Country risk premium', { required: false, hint: 'e.g. 0.0% – usually 0% with an INR risk-free rate for an Indian company. Blank = 0.' }),
+      );
+    } else {
+      out.push(
+        f.pct('dcf.capm.rf', 'Risk-free rate', { hint: 'e.g. 6.5% – 10-year Government of India bond yield on the valuation date (RBI / CCIL)' }),
+        f.pct('dcf.capm.erp', 'Equity risk premium', { hint: 'e.g. 7.0% – state your source (e.g. Damodaran India ERP)' }),
+        f.choice('dcf.capm.betaMode', 'Beta', [
+          { value: 'direct', label: 'Levered beta typed', hint: 'e.g. a regression against the Nifty 50 (2–5 years)' },
+          { value: 'hamada', label: 'Re-levered from a peer unlevered beta', hint: 'βL = βu × (1 + (1 − t) × D/E)' },
+        ]),
+      );
+      if (cp.betaMode === 'hamada') {
+        out.push(
+          f.num('dcf.capm.peerBeta', 'Peer average unlevered beta (βu)', { gt: 0, hint: 'e.g. 0.85 — or use the peer list below' }),
+          f.pct('dcf.capm.targetDe', 'Company target debt / equity', { min: 0, hint: 'e.g. 15.0% – consistent with the target weight used in the WACC' }),
+          f.pct('dcf.capm.taxRate', 'Marginal tax rate (for re-levering)', { min: 0, max: 100, hint: 'e.g. 25.2%' }),
+        );
+      } else if (cp.betaMode === 'direct') {
+        out.push(f.num('dcf.capm.beta', 'Levered beta', { hint: 'e.g. 1.05' }));
+      }
+    }
+    if (s.cf === 'fcff') {
+      out.push(
+        f.pct('dcf.wacc.kd', 'Pre-tax cost of debt', { min: 0, hint: 'e.g. 8.5% – current borrowing rate / rating-based yield' }),
+        f.pct('dcf.wacc.taxRate', 'Marginal tax rate', { min: 0, max: 100, hint: 'e.g. 25.2% (Sec 115BAA incl. surcharge & cess) – confirm for the company' }),
+        f.pct('dcf.wacc.targetWd', 'Target D / (D + E)', { min: 0, lt: 100, hint: 'e.g. 15.0% – long-run target; peer median or the current weight are common choices' }),
+      );
+    }
+    return out;
+  },
+  Extra: RateExtra,
   extraBelow: true,
-  Readout: WaccReadout,
+  Readout: RateReadout,
 });
 
-/* -------------------------------------------------------- terminal value */
+/* ============================ Terminal value ============================ */
 
-export function terminalSpecs() {
-  return [
-    f.choice('dcf.primaryTV', 'Headline terminal-value method', [
-      { value: 'gordon', label: 'Perpetuity growth (Gordon)' },
-      { value: 'exit', label: 'Exit EV/EBITDA multiple' },
-    ], { hint: 'Both are always calculated and shown; this picks the headline figure' }),
-    f.pct('dcf.terminalGrowth', 'Terminal growth rate', { hint: 'Must be below the WACC' }),
-    f.x('dcf.exitMultiple', 'Exit EV/EBITDA multiple', { hint: 'Applied to final-year EBITDA' }),
-    f.bool('dcf.midYear', 'Mid-year discounting?', { yes: 'Yes — cash flows mid-year', no: 'No — year-end' }),
-  ];
+function TerminalReadout({ data, company }) {
+  const r = resultOf(company, data);
+  if (!r) return null;
+  const v = r.valuation;
+  const locale = CURRENCIES[company.currency]?.locale;
+  const sym = CURRENCIES[company.currency]?.symbol || '';
+  if (r.tv === 'gordon' && !(v.rate > v.g)) {
+    return <div className="readout warn">The discount rate ({pct2(v.rate)}) is not above the terminal growth ({pct2(v.g)}) — the terminal value is NM, as in the template.</div>;
+  }
+  return (
+    <div className="readout">
+      Value per share <b className="acc">{fin(v.perShare) ? `${sym}${fmtTpl(v.perShare, 'n2', locale)}` : 'NM'}</b>
+      {' '}· terminal value {fin(v.tvShare) ? `${(v.tvShare * 100).toFixed(1)}%` : 'NM'} of the total
+      {' '}· {r.tv === 'gordon' ? `implied exit ${exitMultipleName(r.cf)} ${fin(v.implied) ? `${v.implied.toFixed(1)}x` : 'NM'}` : `implied perpetual growth ${pct2(v.implied)}`}
+    </div>
+  );
 }
 
-export const terminalStep = () => ({
-  id: 'terminal',
+export const dcfTerminalStep = () => ({
+  id: 'dcfTerminal',
   title: 'Terminal value',
-  blurb: 'How the business is valued beyond the forecast horizon.',
-  fields: () => terminalSpecs(),
-  validate: (data, { company }) => {
-    const k = waccOf(company, data);
-    const g = data.dcf?.terminalGrowth;
-    if (k && Number.isFinite(g) && !(g < k.wacc)) return [`Terminal growth (${fmtPct(g, 2)}) must be below the WACC (${fmtPct(k.wacc, 2)}).`];
-    return [];
+  blurb: 'The value beyond the forecast horizon, and the step sizes of the sensitivity table.',
+  fields: (data) => {
+    const s = S(data);
+    return [
+      ...(s.tv === 'exit'
+        ? [f.x('dcf.settings.exitMultiple', `Exit ${exitMultipleName(s.cf)} multiple`, { hint: `e.g. ${s.cf === 'fcff' ? '12.0x' : '20.0x'} – can take the median from your comps / precedent analysis` })]
+        : [f.pct('dcf.settings.growth', 'Terminal (perpetual) growth rate', { hint: 'e.g. 5.0% – should not exceed long-run nominal GDP growth' })]),
+      f.pct('dcf.settings.rateStep', 'Sensitivity: discount-rate step', { gt: 0, hint: 'Template example 0.5%' }),
+      ...(s.tv === 'exit'
+        ? [f.x('dcf.settings.multStep', 'Sensitivity: exit-multiple step', { hint: 'Template example 1.0x' })]
+        : [f.pct('dcf.settings.gStep', 'Sensitivity: terminal-growth step', { gt: 0, hint: 'Template example 0.5%' })]),
+    ];
   },
-});
-
-/* ------------------------------------------------------------ FCFE step */
-
-export function fcfeSpecs() {
-  return [
-    f.pct('ts.interestRateDebt', 'Interest rate on debt', { min: 0, hint: 'Charged on opening debt each year' }),
-    f.pct('ts.interestRateCash', 'Interest earned on cash', { min: 0, hint: 'On opening cash' }),
-    f.pct('ts.debtRepayPct', 'Mandatory debt repayment', { min: 0, max: 100, hint: '% of opening debt repaid each year' }),
-    f.pct('ts.dividendPayout', 'Dividend payout', { min: 0, max: 100, hint: '% of net income' }),
-    f.x('dcf.exitPE', 'Exit P/E multiple', { hint: 'For the FCFE exit-multiple terminal value' }),
-  ];
-}
-
-export const fcfeStep = () => ({
-  id: 'fcfe',
-  title: 'FCFE financing',
-  optional: true,
-  blurb: 'Adds a levered (FCFE) valuation at the cost of equity. Skip it to value on FCFF only.',
-  fields: () => fcfeSpecs(),
-  validate: (data, { company }) => {
-    const k = waccOf(company, data);
-    const g = data.dcf?.terminalGrowth;
-    if (k && Number.isFinite(g) && !(g < k.costEquity)) return [`Terminal growth must be below the cost of equity (${fmtPct(k.costEquity, 2)}).`];
-    return [];
-  },
+  Readout: TerminalReadout,
 });

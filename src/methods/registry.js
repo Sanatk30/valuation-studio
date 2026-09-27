@@ -1,7 +1,7 @@
 import { lazy } from 'react';
 import { METHOD_META } from './labels.js';
 import { companyStep, historyStep, forecastStep } from './steps/common.jsx';
-import { waccStep, terminalStep, fcfeStep } from './steps/dcfSteps.jsx';
+import { dcfSettingsStep, dcfCompanyStep, dcfDriversStep, dcfRateStep, dcfTerminalStep } from './steps/dcfSteps.jsx';
 import {
   lboEntryStep, lboDebtStep, lboSweepStep, ipoFinancingStep, ipoPricingStep, ipoStructureStep,
   financingStep, ratioSettingsStep,
@@ -15,9 +15,9 @@ import { computePrecedent } from '../lib/engine/precedent.js';
 import { combinedStep } from './combined.jsx';
 import { toEngineInput } from '../store/methodModel.js';
 import { projectOperations } from '../lib/engine/drivers.js';
-import { computeWacc } from '../lib/engine/wacc.js';
+import { computeDcfT, templateName } from '../lib/engine/dcfTemplate.js';
 import { computeThreeStatement } from '../lib/engine/threeStatement.js';
-import { fmtMoney, fmtPct, fmtX } from '../lib/format.js';
+import { fmtMoney, fmtPct, fmtX, fmtPrice } from '../lib/format.js';
 
 /**
  * Every method: its steps (in order), its output page and a running preview of
@@ -55,15 +55,21 @@ function opsRows(a, company) {
 
 export const METHODS = {
   dcf: {
-    steps: [companyStep(PROJ), historyStep(), forecastStep(), waccStep(), terminalStep(), fcfeStep()],
+    steps: [dcfSettingsStep(), dcfCompanyStep(), dcfDriversStep(), dcfRateStep(), dcfTerminalStep()],
     Output: out.dcf,
     preview(def, a, states, company) {
-      const rows = [];
-      if (valid(def, states, 'company', 'forecast')) rows.push(...opsRows(a, company));
-      if (valid(def, states, 'company', 'wacc')) {
-        const k = computeWacc(a);
-        rows.push({ label: 'Cost of equity', value: fmtPct(k.costEquity, 2) }, { label: 'WACC', value: fmtPct(k.wacc, 2) });
+      if (!valid(def, states, 'dcfSettings')) return [];
+      const r = computeDcfT(a);
+      const rows = [{ label: 'Template', value: templateName(r.settings) }];
+      if (valid(def, states, 'dcfCompany')) {
+        const T = r.n + r.m - 1;
+        rows.push({ label: `Revenue, ${r.labels.fcst[r.m - 1]}`, value: fmtMoney(r.F.rev[T], company) }, { label: `EBITDA margin, ${r.labels.fcst[r.m - 1]}`, value: fmtPct(r.F.margin[T] * 100, 1) });
       }
+      if (valid(def, states, 'dcfRate')) {
+        rows.push({ label: 'Cost of equity', value: fmtPct(r.coe.ke * 100, 2) });
+        if (r.wacc) rows.push({ label: 'WACC', value: fmtPct(r.wacc.wacc * 100, 2) });
+      }
+      if (valid(def, states, 'dcfTerminal') && fin(r.valuation.perShare)) rows.push({ label: 'Value per share', value: fmtPrice(r.valuation.perShare, company, 2) });
       return rows;
     },
   },

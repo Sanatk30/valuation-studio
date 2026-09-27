@@ -175,7 +175,7 @@ function CompsTargetExtra({ data, setData, company }) {
   );
 }
 
-function FetchNote({ f: fx }) {
+export function FetchNote({ f: fx }) {
   return (
     <div className="fld-h" style={{ marginTop: 6 }}>
       Filled from <b>{fx.symbol}</b> ({fx.financialCurrency}{fx.fyDates?.length ? `, ${fx.fyDates[0]} → ${fx.fyDates[fx.fyDates.length - 1]}` : ''}).

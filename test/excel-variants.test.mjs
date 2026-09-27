@@ -1,12 +1,12 @@
 /**
  * Excel ↔ engine under edge cases: tax losses (NOL), loss years, blank inputs
- * (NA), the optional FCFE / history / regression steps, beta peers, clamped
- * WACC rows, custom grid steps, absolute per-year forecasts, horizons of 3 and
- * 10 years, PIK / no-mezzanine LBOs, IPO greenshoe types and bases, and
- * regression specifications on the comparable companies.
+ * (NA), the optional history / regression steps, absolute per-year forecasts,
+ * horizons of 3 and 10 years, PIK / no-mezzanine LBOs, IPO greenshoe types and
+ * bases, and regression specifications on the comparable companies. The
+ * template methods (comps, precedent, DCF) have their own variant tests.
  */
 import { withModel, SAMPLE_MODEL } from './fixtures/model.mjs';
-import { checkDcf, checkTs, checkLbo, checkIpo, checkComps, checkCombined } from './helpers/excelChecks.mjs';
+import { checkTs, checkLbo, checkIpo, checkComps, checkCombined } from './helpers/excelChecks.mjs';
 import { buildPerYearGrid } from '../src/lib/engine/drivers.js';
 import { blankManualHistory } from '../src/lib/historyModel.js';
 
@@ -53,29 +53,14 @@ function history({ quarterly = false } = {}) {
 /* ----------------------------------------------------------------- models */
 const losses = { drivers: { ...SAMPLE_MODEL.drivers, marginStart: -6, marginEnd: 21 } };
 const nolHeavy = { company: { ...SAMPLE_MODEL.company, nol0: 2600 } };
-const peers3 = [
-  { id: 'b1', name: 'Alpha', leveredBeta: 1.12, de: 0.35, taxRate: 25 },
-  { id: 'b2', name: 'Beta', leveredBeta: 0.94, de: 0.12, taxRate: 30 },
-  { id: 'b3', name: 'Gamma (no tax)', leveredBeta: 1.3, de: 0.5, taxRate: null },
-  { id: 'b4', name: 'Delta', leveredBeta: 1.05, de: 0.2, taxRate: 21 },
-];
 
-const dcfVariants = {
-  'NOL carried in': [withModel(nolHeavy)],
-  'loss years build an NOL': [withModel(losses)],
-  'no mid-year, exit headline, direct beta': [withModel({ dcf: { midYear: false, primaryTV: 'exit' }, wacc: { betaMode: 'direct', beta: 1.18 } })],
-  'beta peers + clamped WACC rows + custom steps': [withModel({
-    wacc: { betaPeers: peers3, debtWeight: 85 },
-    sens: { ...SAMPLE_MODEL.sens, dcf: { waccStep: 1, gStep: 0.25, multStep: 2, coeStep: 0.75 }, wacc: { wdStep: 5, kdStep: 1 } },
-  })],
-  'FCFE skipped': [withModel({}), { skipped: { fcfe: true } }],
-  'reported history columns': [withModel({ history: history() })],
-  'history skipped': [withModel({ history: history() }), { skipped: { history: true } }],
+/* the projection models (LBO, IPO, 3-Statement) across horizons and forecast inputs;
+   the DCF's own variants are in dcf-excel.test.mjs */
+const projVariants = {
   'per-year grid, absolute amounts': [withModel({ drivers: { ...SAMPLE_MODEL.drivers, perYear: { ...buildPerYearGrid(SAMPLE_MODEL.drivers), revenueMode: 'abs', revenue: [5600, 6100, 6700, 7200, 7800], ebitdaMode: 'abs', ebitda: [1250, 1380, 1540, 1700, 1900], capexMode: 'abs', capex: [330, 360, 400, 430, 460] } } })],
   'years = 3': [withModel({ drivers: { ...SAMPLE_MODEL.drivers, years: 3 }, lbo: { exitYear: 3 } })],
   'years = 10': [withModel({ drivers: { ...SAMPLE_MODEL.drivers, years: 10 }, lbo: { exitYear: 7 } })],
   'custom per-year arrays': [withModel({ drivers: { ...SAMPLE_MODEL.drivers, growthCustom: [15, 14, 6, 9, 2], marginCustom: [20, 21, 25, 23, 26] } })],
-  'private company (no price)': [withModel({ company: { ...SAMPLE_MODEL.company, currentPrice: NaN } })],
 };
 
 const lboVariants = {
@@ -95,6 +80,8 @@ const ipoVariants = {
 };
 
 const tsVariants = {
+  'reported history columns': [withModel({ history: history() })],
+  'history skipped': [withModel({ history: history() }), { skipped: { history: true } }],
   'other net assets ≠ 0': [withModel({ ts: { equity0: 2750 } })],
   'NOL + losses': [withModel({ ...losses, ...nolHeavy })],
   'years = 10': [withModel({ drivers: { ...SAMPLE_MODEL.drivers, years: 10 } })],
@@ -120,13 +107,10 @@ const run = (name, T) => {
   console.log(`${T.failures.length ? 'FAIL' : 'ok  '}: ${name} (${T.checks} checks)`);
   for (const f of T.failures.slice(0, 15)) console.error('   ', f);
 };
-for (const [name, [a, o = {}]] of Object.entries(dcfVariants)) {
-  run(`dcf — ${name}`, checkDcf(a, { ...o, tag: name }));
-  if (name.startsWith('years') || name.includes('grid') || name.includes('arrays')) {
-    run(`lbo — ${name}`, checkLbo(a, { ...o, tag: name }));
-    run(`ipo — ${name}`, checkIpo(a, { ...o, tag: name }));
-    run(`ts — ${name}`, checkTs(a, { ...o, tag: name }, 'ts'));
-  }
+for (const [name, [a, o = {}]] of Object.entries(projVariants)) {
+  run(`lbo — ${name}`, checkLbo(a, { ...o, tag: name }));
+  run(`ipo — ${name}`, checkIpo(a, { ...o, tag: name }));
+  run(`ts — ${name}`, checkTs(a, { ...o, tag: name }, 'ts'));
 }
 for (const [name, [a, o = {}]] of Object.entries(lboVariants)) run(`lbo — ${name}`, checkLbo(a, { ...o, tag: name }));
 for (const [name, [a, o = {}]] of Object.entries(ipoVariants)) run(`ipo — ${name}`, checkIpo(a, { ...o, tag: name }));

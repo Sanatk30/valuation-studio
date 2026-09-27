@@ -67,9 +67,6 @@ export function nolStep(pretax, t, nolOpen) {
   return { used: s.used[0], close: s.close[0], tax: s.tax[0] };
 }
 
-/** Fully-taxed tax on a normalised (terminal) year: no NOL, never negative. */
-export const fullTax = (pretax, t) => Math.max(0, pretax) * t;
-
 /**
  * A boolean input that must have been chosen: true / false, anything else
  * (null, NaN from a blank step) is "not chosen" → null.

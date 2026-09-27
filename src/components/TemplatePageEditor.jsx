@@ -16,10 +16,13 @@ import PasteDialog from './PasteDialog.jsx';
  *   onLabels optional: makes the header row editable (precedent pages carry
  *            their own labels)
  *   market   { price, shares } (listed) or { dealEquity, stake, consideration }
+ *   historicals  the DCF templates' Historicals sheet: fiscal years only — no
+ *            YTD or LTM column, no Total Income row, no market block, no ratios
  */
 export default function TemplatePageEditor({
-  page, onChange, n, ytd = true, labels, onLabels, toggle = 1, market = {}, company, notes, actions,
+  page, onChange, n, ytd: ytdIn = true, labels, onLabels, toggle = 1, market = {}, company, notes, actions, historicals = false,
 }) {
+  const ytd = historicals ? false : ytdIn;
   const [open, setOpen] = useState({ is: true, bs: false, cf: false, ratios: false });
   const [pasting, setPasting] = useState(false);
   const r = useMemo(() => computePage(page, { n, toggle, ytd, market }), [page, n, toggle, ytd, market]);
@@ -33,6 +36,7 @@ export default function TemplatePageEditor({
     ...Array.from({ length: n }, (_, i) => ({ id: i, label: labels.fy[i] })),
     ...(ytd ? [{ id: 'p', label: labels.p }, { id: 'c', label: labels.c }] : []),
   ];
+  const span = inputCols.length + (historicals ? 1 : 2);
   const colIndex = (id) => (id === 'p' ? n : id === 'c' ? n + 1 : id);
   const L = n + 2;
 
@@ -59,14 +63,14 @@ export default function TemplatePageEditor({
             {onLabels ? <input className="tp-lab" value={c.label || ''} onChange={(e) => setLabel(c.id, e.target.value)} /> : c.label}
           </th>
         ))}
-        <th className="tp-ltm">{onLabels ? <input className="tp-lab" value={labels.ltm || ''} onChange={(e) => setLabel('ltm', e.target.value)} /> : labels.ltm}</th>
+        {!historicals && <th className="tp-ltm">{onLabels ? <input className="tp-lab" value={labels.ltm || ''} onChange={(e) => setLabel('ltm', e.target.value)} /> : labels.ltm}</th>}
       </tr>
     </thead>
   );
 
   const fmtFor = (line) => (line.kind === 'shares' || line.kind === 'pershare' ? 'n2' : 'n1');
-  const statementRows = (lines, group) => lines.map((line) => {
-    if (line.head) return <tr key={`h${line.row}`} className="tp-head"><td colSpan={inputCols.length + 2}>{line.head}</td></tr>;
+  const statementRows = (lines, group) => lines.filter((line) => !(historicals && line.key === 'totalIncome')).map((line) => {
+    if (line.head) return <tr key={`h${line.row}`} className="tp-head"><td colSpan={span}>{line.head}</td></tr>;
     const vals = r.v[line.key];
     const bad = line.key === 'check' && vals.some((x) => typeof x === 'number' && x !== 0);
     return (
@@ -84,13 +88,13 @@ export default function TemplatePageEditor({
           }
           return <td key={String(c.id)}>{fmtTpl(vals[colIndex(c.id)], fmtFor(line), locale)}</td>;
         })}
-        <td className="tp-ltm">{fmtTpl(vals[L], fmtFor(line), locale)}</td>
+        {!historicals && <td className="tp-ltm">{fmtTpl(vals[L], fmtFor(line), locale)}</td>}
       </tr>
     );
   });
 
   const ratioRows = RATIO_LINES.map((line) => {
-    if (line.head) return <tr key={`h${line.row}`} className="tp-head"><td colSpan={inputCols.length + 2}>{line.head}</td></tr>;
+    if (line.head) return <tr key={`h${line.row}`} className="tp-head"><td colSpan={span}>{line.head}</td></tr>;
     const vals = r.v[line.key];
     const fmt = line.fmt === 'days' ? 'n0' : line.fmt;
     return (
@@ -131,7 +135,7 @@ export default function TemplatePageEditor({
   const section = (id, title, body) => (
     <>
       <tr className="tp-sec" onClick={() => setOpen((o) => ({ ...o, [id]: !o[id] }))}>
-        <td colSpan={inputCols.length + 2}>{open[id] ? '▾' : '▸'} {title}</td>
+        <td colSpan={span}>{open[id] ? '▾' : '▸'} {title}</td>
       </tr>
       {open[id] && body}
     </>
@@ -141,8 +145,8 @@ export default function TemplatePageEditor({
 
   return (
     <div className="tp">
-      <div className="tp-top">
-        <div className="tp-mkt">
+      <div className={historicals ? 'tp-top tp-top-h' : 'tp-top'}>
+        {!historicals && <div className="tp-mkt">
           <div className="tp-mkt-h">{deal ? 'Deal Terms & Implied Transaction Value' : 'Market Data & Enterprise Value'} <span>{sym} {unit}</span></div>
           <table className="fin compact">
             <tbody>
@@ -150,7 +154,7 @@ export default function TemplatePageEditor({
             </tbody>
           </table>
           <div className="fld-h">Balance-sheet items use the LTM column{ytd ? ' (the interim balance sheet when entered, else the latest FY)' : ' (the latest FY)'}.</div>
-        </div>
+        </div>}
         <div className="tp-side">
           {notes}
           <div className="row-btns">
@@ -160,7 +164,7 @@ export default function TemplatePageEditor({
           {checkBad && <div className="fld-e">The balance sheet does not balance in at least one column — see the Balance Check row.</div>}
           <div className="fld-h">
             {sym} {unit} unless stated. Expenses positive in the P&amp;L (exceptional items: gain +, loss −); cash-flow outflows negative, as reported.
-            {ytd ? ' P&L and cash flow LTM = latest FY + current YTD − prior YTD (blank YTD → LTM = latest FY).' : ' No YTD columns: LTM = latest FY.'}
+            {historicals ? '' : ytd ? ' P&L and cash flow LTM = latest FY + current YTD − prior YTD (blank YTD → LTM = latest FY).' : ' No YTD columns: LTM = latest FY.'}
             {' '}A blank cell counts as 0.
           </div>
         </div>
@@ -173,7 +177,7 @@ export default function TemplatePageEditor({
             {section('is', 'INCOME STATEMENT', statementRows(IS_LINES, 'is'))}
             {section('bs', 'BALANCE SHEET', statementRows(BS_LINES, 'bs'))}
             {section('cf', 'CASH FLOW STATEMENT', statementRows(CF_LINES, 'cf'))}
-            {section('ratios', 'KEY RATIOS (fiscal years & LTM)', ratioRows)}
+            {!historicals && section('ratios', 'KEY RATIOS (fiscal years & LTM)', ratioRows)}
           </tbody>
         </table>
       </div>

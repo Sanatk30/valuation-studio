@@ -1,4 +1,5 @@
 import { sampleCompsData, samplePrecedentData } from './templateSample.mjs';
+import { sampleDcfData } from './dcfSample.mjs';
 import { SENS_DEFAULTS } from '../../src/store/methodModel.js';
 
 /**
@@ -38,22 +39,7 @@ export const SAMPLE_MODEL = {
     nwcPct: 12.0,       // NWC balance as % of revenue (forecast years)
     perYear: null,
   },
-  wacc: {
-    riskFree: 7.0, erp: 6.5,
-    betaMode: 'hamada',
-    beta: 1.10,
-    unleveredBeta: 0.88,
-    sizePremium: 0.0,
-    costDebt: 9.0, debtWeight: 25,
-    betaPeers: [],
-  },
-  dcf: {
-    terminalGrowth: 5.0,
-    exitMultiple: 12.0,
-    exitPE: 22.0,
-    midYear: true,
-    primaryTV: 'gordon',
-  },
+  dcf: sampleDcfData(),
   ts: {
     interestRateDebt: 9.0,
     interestRateCash: 4.0,

@@ -16,14 +16,15 @@ const KEY = 'quant-value-v1';
 const uid = () => `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
 
 /**
- * Comps and precedent moved to the template layout (company pages with N
- * fiscal years, peer / deal slots). A save from the earlier layout has no
+ * Comps, precedent and the DCF moved to the template layout (company pages
+ * with N fiscal years, peer / deal slots, per-year drivers). A save from the
+ * earlier layout has no
  * `settings` block; that method starts blank again — its old inputs cannot be
  * mapped line for line onto the new pages. Every other method is untouched.
  */
 export function migrate(state) {
   for (const rec of Object.values(state.companies || {})) {
-    for (const id of ['comps', 'precedent']) {
+    for (const id of ['comps', 'precedent', 'dcf']) {
       const d = rec.methods?.[id]?.data;
       if (d && !d[id]?.settings) rec.methods[id] = blankMethodState(id);
     }

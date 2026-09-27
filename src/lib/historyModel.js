@@ -128,3 +128,52 @@ export function historyReference(h) {
   }
   return { rows, cagr, cagrYears: valid.length >= 2 ? valid[valid.length - 1][1] - valid[0][1] : 0, label: h.label };
 }
+
+/**
+ * Reported operating history for the projection page's historical columns — straight
+ * from `a.history.annual` (Yahoo or typed), NEVER back-cast. Only fiscal years
+ * that end before the base (LTM) year are shown (base year = startYear − 1, the
+ * Year-0 column), the latest `maxYears` of them, oldest first. A line that was
+ * not reported is NaN (NA). Returns null when there is no reported history.
+ *
+ * growth / margin are in % (like the projection); growth for the oldest shown
+ * year uses the reported year before it when the history carries one.
+ * EBIT = EBITDA − D&A, only where both were reported.
+ */
+export function reportedHistory(a, maxYears = 3) {
+  const h = a?.history;
+  if (!hasHistory(h)) return null;
+  const startYear = a?.settings?.period?.startYear;
+  if (!Number.isFinite(startYear)) return null;
+  const baseYear = startYear - 1;
+
+  const dates = h.annual.dates;
+  const idx = dates
+    .map((d, i) => [Number(String(d).slice(0, 4)), i])
+    .filter(([y]) => Number.isFinite(y) && y < baseYear)
+    .map(([, i]) => i);
+  const m = Math.max(0, Math.round(maxYears));
+  const keep = m ? idx.slice(-m) : [];
+  if (!keep.length) return null;
+
+  const rev = historyLine(h, 'revenue');
+  const eb = historyLine(h, 'ebitda');
+  const da = historyLine(h, 'da');
+  const cx = historyLine(h, 'capex');
+  const pick = (arr) => keep.map((i) => arr[i]);
+  const revenue = pick(rev);
+  const ebitda = pick(eb);
+  const daK = pick(da);
+  return {
+    n: keep.length,
+    dates: keep.map((i) => dates[i]),
+    labels: keep.map((i) => fyLabel(dates[i])),
+    revenue,
+    growth: keep.map((i) => (i > 0 && rev[i - 1] !== 0 ? (rev[i] / rev[i - 1] - 1) * 100 : NaN)),
+    ebitda,
+    margin: ebitda.map((e, k) => (revenue[k] !== 0 ? (e / revenue[k]) * 100 : NaN)),
+    da: daK,
+    ebit: ebitda.map((e, k) => e - daK[k]),
+    capex: pick(cx),
+  };
+}

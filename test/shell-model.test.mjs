@@ -21,13 +21,16 @@ const numericLeaves = (obj, path = '') => Object.entries(obj || {}).flatMap(([k,
 });
 for (const m of METHOD_IDS) {
   const d = blankMethodData(m);
-  const filled = numericLeaves(d).filter(([p, v]) => !p.startsWith('sens.') && typeof v === 'number');
+  // display-only step sizes: the sens groups, and the DCF sensitivity steps (the template's examples)
+  const display = (p) => p.startsWith('sens.') || /^dcf\.settings\.(rateStep|gStep|multStep)$/.test(p);
+  const filled = numericLeaves(d).filter(([p, v]) => !display(p) && typeof v === 'number');
   ok(filled.length === 0, `${m}: blank data carries no numbers outside the display-only sens steps (${filled.map(([p]) => p).join(', ') || 'none'})`);
   const st = blankMethodState(m);
   ok(st.step === 0 && Object.keys(st.skipped).length === 0, `${m}: blank state starts at step 0, nothing skipped`);
 }
-ok(blankMethodData('dcf').sens.dcf.waccStep === SENS_DEFAULTS.dcf.waccStep, 'sens defaults copied into method data');
-ok(blankMethodData('dcf').sens !== blankMethodData('dcf').sens, 'each blank data gets its own sens copy');
+ok(blankMethodData('lbo').sens.lbo.entryStep === SENS_DEFAULTS.lbo.entryStep, 'sens defaults copied into method data');
+ok(blankMethodData('lbo').sens !== blankMethodData('lbo').sens, 'each blank data gets its own sens copy');
+ok(blankMethodData('dcf').dcf.settings.rateStep === 0.5 && blankMethodData('dcf').dcf.settings.cf === null, 'dcf: sensitivity steps pre-filled (template examples), the combination left to choose');
 
 /* ---------------- engine adapter ---------------- */
 {
@@ -41,7 +44,8 @@ ok(blankMethodData('dcf').sens !== blankMethodData('dcf').sens, 'each blank data
   ok(a.company.sharesOut === 10 && a.company.cash === 0, 'typed values (incl. 0) pass through');
   ok(Number.isNaN(a.company.grossDebt) && Number.isNaN(a.company.taxRate), 'untyped values become NaN, never 0');
   ok(a.drivers.mode === 'fade' && a.drivers.perYear === null, 'strings and null grids survive');
-  ok(Number.isNaN(a.wacc.riskFree) && a.wacc.betaMode === 'direct', 'a section the method does not own is a NaN blank');
+  ok(Number.isNaN(a.ts.interestRateDebt), 'a section the method does not own is a NaN blank');
+  ok(a.dcf.settings && a.dcf.company.page, 'dcf stand-in: a blank template DCF');
   ok(a.comps.target.page && a.comps.peers.length === 0 && a.comps.settings, 'comps stand-in: a blank target page, no peers');
   ok(a.precedent.company.page && a.precedent.deals.length === 0, 'precedent stand-in: a blank company page, no deals');
   ok(a.sens.lbo.hurdleStep === SENS_DEFAULTS.lbo.hurdleStep, 'sens passes through');
@@ -56,11 +60,15 @@ ok(blankMethodData('dcf').sens !== blankMethodData('dcf').sens, 'each blank data
   ok(a.comps.peers === d.comps.peers, 'peer pages pass through untouched');
 }
 {
-  const d = blankMethodData('dcf');
-  d.wacc.betaPeers = [{ id: 'b', name: 'x', leveredBeta: 1.1, de: 0.3, taxRate: 25 }];
+  const d = blankMethodData('ts');
   d.drivers.perYear = { revenueMode: 'growth', revenue: [1, 2, 3] };
   const a = toEngineInput(company, d);
-  ok(a.wacc.betaPeers.length === 1 && a.drivers.perYear.revenue[2] === 3, 'arrays and grids survive the adapter');
+  ok(a.drivers.perYear.revenue[2] === 3, 'grids survive the adapter');
+  const dd = blankMethodData('dcf');
+  dd.dcf.capm.peers = [{ id: 'b', name: 'x', beta: 1.1, de: 30, taxRate: 25 }];
+  dd.dcf.drivers.gRev = [12, null, 10];
+  const ad = toEngineInput(company, dd);
+  ok(ad.dcf.capm.peers.length === 1 && ad.dcf.drivers.gRev[1] === null && ad.dcf.drivers.gRev[2] === 10, 'dcf: peers and driver rows pass through, blanks stay blank');
 }
 
 /* ---------------- field validation ---------------- */

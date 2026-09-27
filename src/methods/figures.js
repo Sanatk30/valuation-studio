@@ -1,5 +1,5 @@
 import { toEngineInput } from '../store/methodModel.js';
-import { computeDcf, dcfSensitivity } from '../lib/engine/dcf.js';
+import { computeDcfT, CF_KINDS, exitMultipleName } from '../lib/engine/dcfTemplate.js';
 import { computeComps } from '../lib/engine/comps.js';
 import { runRegression } from '../lib/engine/regressionModel.js';
 import { computePrecedent } from '../lib/engine/precedent.js';
@@ -15,7 +15,6 @@ import { computeIpo } from '../lib/engine/ipo.js';
  */
 
 const fin = Number.isFinite;
-const point = (key, label, value, note = 'point estimate — no range') => ({ key, label, value, low: value, high: value, rangeNote: note });
 
 function gridRange(grid) {
   const flat = (grid || []).flat().filter(fin);
@@ -44,23 +43,17 @@ function impliedFigures(prefix, name, rows, headline, note) {
 }
 
 const FIGURES = {
-  dcf: (a, skipped) => {
-    const dcf = computeDcf(a);
-    const sens = dcfSensitivity(a);
-    const [gLo, gHi] = gridRange(sens.gordonGrid);
-    const [eLo, eHi] = gridRange(sens.exitGrid);
-    const out = [
-      { key: 'fcffGordon', label: 'DCF — FCFF, perpetuity growth', value: dcf.gordon.price, low: gLo, high: gHi, rangeNote: 'WACC × terminal-growth grid' },
-      { key: 'fcffExit', label: 'DCF — FCFF, exit multiple', value: dcf.exit.price, low: eLo, high: eHi, rangeNote: 'WACC × exit-multiple grid' },
-    ];
-    if (!skipped.fcfe) {
-      const [fLo, fHi] = gridRange(sens.fcfeGrid);
-      out.push(
-        { key: 'fcfeGordon', label: 'DCF — FCFE, perpetuity growth', value: dcf.fcfeGordon.price, low: fLo, high: fHi, rangeNote: 'CoE × terminal-growth grid' },
-        point('fcfeExit', 'DCF — FCFE, exit P/E', dcf.fcfeExit.price),
-      );
-    }
-    return out;
+  dcf: (a) => {
+    const r = computeDcfT(a);
+    const [lo, hi] = gridRange(r.sens.grid);
+    const cf = CF_KINDS.find((k) => k.value === r.cf).label;
+    const tv = r.tv === 'exit' ? `exit ${exitMultipleName(r.cf)}` : 'Gordon growth';
+    const rate = r.cf === 'fcff' ? 'WACC' : 'cost of equity';
+    return [{
+      key: 'dcf', label: `DCF — ${cf}, ${tv}, ${r.coeKind === 'capm' ? 'CAPM' : 'build-up'}`,
+      value: r.valuation.perShare, low: lo, high: hi,
+      rangeNote: `${rate} × ${r.tv === 'exit' ? 'exit multiple' : 'terminal growth'} grid`,
+    }];
   },
   comps: (a, skipped) => {
     const comps = computeComps(a);

@@ -1,4 +1,4 @@
-# Update — comps & precedent on the templates (2026-09-26)
+# Update — comps, precedent and DCF on the templates (2026-09-26 / 27)
 
 Comparable Companies and Precedent Transactions were rebuilt on the user's
 *Comparable_Company_Analysis_Template.xlsx* and
@@ -13,7 +13,19 @@ Excel paste `lib/templatePaste.js`. Old `compsCo.js`, `precedentDeal.js`,
 `compsSheets.js`, `precedentSheets.js` are deleted; saves on the old layout
 reset those two methods (`store.migrate`). Open question 9 below is settled
 (headline multiple picker on the output page). Tests: `template-excel`,
-`template`, `paste`. Next agreed job: the same rebuild for the 12 DCF templates.
+`template`, `paste`.
+
+The DCF was then rebuilt the same way on the user's twelve DCF templates:
+`lib/engine/dcfTemplate.js` (one engine; settings pick FCFF / FCFE / DDM ×
+Gordon / exit × CAPM / build-up; 1–10 historical and forecast years),
+`lib/excel/dcfWorkbook.js` (the chosen template, cell-for-cell at 3 + 5 years),
+`methods/steps/dcfSteps.jsx`, `components/DriversGrid.jsx`,
+`outputs/DcfOutput.jsx`. Kept extra at the user's request: beta peers / Hamada.
+Removed at the user's request: mid-year discounting, the NOL in the DCF, the
+tornado and the WACC surface (old `engine/dcf.js`, `engine/wacc.js`,
+`excel/dcfSheets.js` deleted; the shared projection sheet for LBO / IPO /
+3-Statement / Ratios now lives in `excel/projectionSheet.js`). Old DCF saves
+reset. Tests: `dcf-excel`, the DCF section of `engine`.
 
 ---
 

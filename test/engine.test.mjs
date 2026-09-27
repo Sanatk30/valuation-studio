@@ -1,7 +1,6 @@
 import { SAMPLE_MODEL as A, withModel } from './fixtures/model.mjs';
 import { projectOperations, buildPerYearGrid } from '../src/lib/engine/drivers.js';
-import { computeWacc, unleverBeta, betaPeerStats, waccSensitivity } from '../src/lib/engine/wacc.js';
-import { computeDcf, dcfSensitivity, dcfTornado, dcfReportedHistory } from '../src/lib/engine/dcf.js';
+import { computeDcfT, betaPeers, unlever } from '../src/lib/engine/dcfTemplate.js';
 import { computeThreeStatement } from '../src/lib/engine/threeStatement.js';
 import { computeLbo, lboSensitivity, lboHoldSensitivity } from '../src/lib/engine/lbo.js';
 import { computeComps } from '../src/lib/engine/comps.js';
@@ -10,7 +9,8 @@ import { computePrecedent } from '../src/lib/engine/precedent.js';
 import { computeIpo } from '../src/lib/engine/ipo.js';
 import { nolSchedule } from '../src/lib/engine/tax.js';
 import { computeForecastRatios, computeHistoryRatios } from '../src/lib/engine/ratios.js';
-import { blankManualHistory } from '../src/lib/historyModel.js';
+import { blankManualHistory, reportedHistory } from '../src/lib/historyModel.js';
+import { sampleDcfData } from './fixtures/dcfSample.mjs';
 
 let failures = 0;
 const ok = (cond, msg) => {
@@ -63,51 +63,52 @@ ok(close(ops.deltaNwc[0], ops.nwcBalance[0] - ops.nwc0), 'drivers: deltaNWC cons
   ok(close(opsAbs.ebitda0, A.drivers.ebitda0), 'grid: LTM EBITDA is the explicit input');
 }
 
-/* ---- WACC / Hamada ---- */
-const k = computeWacc(A);
-const t = A.company.taxRate / 100;
-const de = 0.25 / 0.75;
-ok(close(k.de, de), `wacc: D/E = ${k.de.toFixed(4)}`);
-ok(close(k.leveredBeta, A.wacc.unleveredBeta * (1 + (1 - t) * de)), `wacc: Hamada beta = ${k.leveredBeta.toFixed(3)}`);
-ok(close(unleverBeta(k.leveredBeta, de, A.company.taxRate), A.wacc.unleveredBeta), 'wacc: unlever(relever(bu)) = bu roundtrip');
-const direct = computeWacc({ ...A, wacc: { ...A.wacc, betaMode: 'direct', beta: k.leveredBeta } });
-ok(close(direct.wacc, k.wacc), 'wacc: direct mode with same levered beta gives same WACC');
-ok(close(direct.unleveredBeta, A.wacc.unleveredBeta), 'wacc: direct mode back-solves the asset beta');
-ok(k.wacc > 8 && k.wacc < 16, `wacc: WACC = ${k.wacc.toFixed(2)}%`);
+/* ---- DCF (the twelve DCF templates) ---- */
+{
+  const dcfA = (settings = {}, mut) => { const d = sampleDcfData({ settings }); if (mut) mut(d); return { dcf: d, settings: { period: { startYear: 2027 } } }; };
+  const r = computeDcfT(dcfA());
+  const v = r.valuation;
+  ok(r.n === 3 && r.m === 5 && r.template === 'DCF_FCFF_GordonGrowth_CAPM', 'dcf: 3 historical + 5 forecast years, FCFF / Gordon / CAPM');
+  ok(close(r.F.rev[3], 5300 * 1.12) && close(r.F.rev[7], 5300 * 1.12 * 1.11 * 1.10 * 1.09 * 1.08), 'dcf: revenue grows from the latest actual by the yearly growth driver');
+  ok(close(r.F.materials[3], r.F.rev[3] * 0.58) && close(r.F.inv[3], r.F.materials[3] * 90 / 365), 'dcf: costs % of revenue, inventory days on cost of materials');
+  ok(close(r.F.openDebt[3], 300 + 200) && close(r.F.finance[3], 500 * 0.085) && close(r.F.closeDebt[3], 400), 'dcf: interest = opening debt × rate; closing = opening + net borrowing');
+  ok(close(r.F.tax[3], Math.max(0, r.F.pbt[3]) * 0.252) && r.F.exceptional[3] === null, 'dcf: tax = max(0, PBT) × rate; exceptional items not forecast');
+  ok(r.flows.cash.every((c, j) => close(c, r.flows.nopat[j] + r.flows.da[j] - r.flows.capex[j] - r.flows.dNwc[j])), 'dcf: FCFF = NOPAT + D&A − capex − ΔNWC (every year)');
+  ok(r.flows.taxEbit.every((x, j) => close(x, Math.max(0, r.flows.ebit[j]) * 0.252)), 'dcf: taxes on EBIT at the effective rate, never negative');
+  ok(close(r.coe.ke, 0.065 + 1.05 * 0.07), 'dcf: CAPM Ke = rf + β × ERP');
+  ok(close(r.wacc.wacc, 0.85 * r.coe.ke + 0.15 * 0.085 * (1 - 0.252)), 'dcf: WACC = E/V × Ke + D/V × Kd × (1 − t)');
+  ok(close(r.bridge.netDebt, 300 + 200 + (105 + 30) - (310 + 80 + 260)) && close(r.bridge.nci, 86), 'dcf: net debt bridge on the latest balance sheet (leases per toggle)');
+  ok(close(v.tv, r.flows.cash[4] * 1.05 / (v.rate - 0.05)) && close(v.pvTv, v.tv / (1 + v.rate) ** 5), 'dcf: Gordon TV and its PV (end-of-year, 5 years)');
+  ok(close(v.equity, v.sumPv + v.pvTv - v.netDebt - v.nci) && close(v.perShare, v.equity / 20), 'dcf: equity = EV − net debt − NCI; value per share on diluted shares');
+  ok(close(r.sens.grid[2][2], v.perShare), 'dcf: sensitivity centre = base case');
+  ok(r.sens.grid[0][2] > r.sens.grid[4][2] && r.sens.grid[2][4] > r.sens.grid[2][0], 'dcf: lower rate / higher g → higher value');
+  ok(close(v.implied, v.tv / r.F.ebitda[7]), 'dcf: Gordon cross-check = implied exit EV/EBITDA');
 
-/* ---- DCF: FCFF ---- */
-const dcf = computeDcf(A);
-ok(dcf.gordon.price > 0, `dcf: FCFF gordon price = ${dcf.gordon.price.toFixed(1)}`);
-ok(dcf.exit.price > 0, `dcf: FCFF exit price = ${dcf.exit.price.toFixed(1)}`);
-ok(close(dcf.gordon.ev, dcf.pvSum + dcf.pvTvGordon + dcf.pvNolFcff), 'dcf: EV = PV(FCFF) + PV(TV) + PV(remaining NOL)');
-ok(dcf.pvNolFcff === 0, 'dcf: no losses → no NOL value');
-ok(close(dcf.gordon.equity, dcf.gordon.ev - (1200 - 400)), 'dcf: equity bridge uses net debt');
-const f1 = ops.ebit[0] * (1 - t) + ops.da[0] - ops.capex[0] - ops.deltaNwc[0];
-ok(close(dcf.fcff[0], f1), `dcf: Y1 FCFF hand-check = ${f1.toFixed(1)}`);
-const noMid = computeDcf({ ...A, dcf: { ...A.dcf, midYear: false } });
-ok(noMid.gordon.price < dcf.gordon.price, 'dcf: mid-year convention raises value');
-
-/* ---- DCF: FCFE ---- */
-for (let i = 0; i < 5; i++) {
-  // FCFE is built off the FCFF basis (operating NOPAT, no cash interest income),
-  // so the hand-check uses the FCFE-basis NI, not the exit-P/E (3-statement) NI.
-  const niFcfe = (dcf.ops.ebit[i] - dcf.interest[i]) * (1 - t);
-  const ident = niFcfe + dcf.ops.da[i] - dcf.ops.capex[i] - dcf.ops.deltaNwc[i] + dcf.netBorrow[i];
-  if (!close(dcf.fcfe[i], ident)) { failures++; console.error(`FAIL: FCFE identity year ${i + 1}`); }
+  const ex = computeDcfT(dcfA({ tv: 'exit' }));
+  ok(close(ex.valuation.tv, ex.F.ebitda[7] * 12), 'dcf exit: FCFF TV = final-year EBITDA × EV/EBITDA');
+  ok(close(ex.valuation.implied, (ex.valuation.tv * ex.valuation.rate - ex.flows.cash[4]) / (ex.valuation.tv + ex.flows.cash[4])), 'dcf exit: implied perpetual growth');
+  const fe = computeDcfT(dcfA({ cf: 'fcfe', tv: 'exit' }));
+  ok(fe.flows.cash.every((c, j) => close(c, fe.flows.pat[j] + fe.flows.da[j] - fe.flows.capex[j] - fe.flows.dNwc[j] + fe.flows.netBorrow[j])), 'dcf FCFE = PAT + D&A − capex − ΔNWC + net borrowing');
+  ok(close(fe.valuation.tv, fe.F.pat[7] * 12) && close(fe.valuation.rate, fe.coe.ke) && fe.wacc === null, 'dcf FCFE: exit P/E on final-year PAT, discounted at Ke, no WACC');
+  ok(close(fe.valuation.equity, fe.valuation.sumPv + fe.valuation.pvTv), 'dcf FCFE: equity value directly (no cash added, as the template)');
+  const dd = computeDcfT(dcfA({ cf: 'ddm', coe: 'buildup' }));
+  ok(dd.flows.cash.every((c, j) => close(c, Math.max(0, dd.F.pat[3 + j]) * dd.drivers.payout[j])), 'dcf DDM: dividends = max(0, PAT) × payout');
+  ok(close(dd.coe.ke, 0.065 + 0.07 + 0.02 + 0.01 + 0.015), 'dcf build-up: Ke = rf + ERP + premia');
+  const nm = computeDcfT(dcfA({ growth: 30 }));
+  ok(nm.valuation.tv === 'NM' && nm.valuation.perShare === 'NM' && nm.sens.grid[2][2] === 'NM', 'dcf: rate ≤ g → terminal value, value and grid centre NM');
+  const noSh = computeDcfT(dcfA({}, (d) => { d.company.shares = null; }));
+  ok(noSh.valuation.perShare === 'NM' && noSh.sens.grid.flat().every((x) => x === 'NM'), 'dcf: no diluted shares → NM per share');
+  const ham = computeDcfT(dcfA({}, (d) => { d.capm.betaMode = 'hamada'; }));
+  ok(close(ham.coe.beta, 0.85 * (1 + (1 - 0.252) * 0.15)) && close(ham.coe.ke, 0.065 + ham.coe.beta * 0.07), 'dcf: Hamada mode re-levers the peer unlevered beta into Ke');
+  const bp = betaPeers(sampleDcfData().capm);
+  ok(bp.n === 3 && close(bp.rows[0].bu, 1.1 / (1 + 0.748 * 0.2)) && close(unlever(1.3, 45, 30), 1.3 / (1 + 0.7 * 0.45)), 'dcf beta peers: each unlevered at its own D/E and tax');
+  const one = computeDcfT(dcfA({ histYears: 1, fcstYears: 1 }));
+  ok(one.n === 1 && one.m === 1 && close(one.F.rev[1], 5300 * 1.12) && one.ref.gRev[0] === 'n.a.', 'dcf: 1 historical + 1 forecast year');
+  const ten = computeDcfT(dcfA({ histYears: 10, fcstYears: 10, labels: null }));
+  ok(ten.labels.hist.length === 10 && ten.labels.fcst[9] === 'FY36E' && ten.F.rev[6] === 0 && close(ten.F.rev[9], 5300), 'dcf: 10 + 10 years — older years blank, labels continue');
+  ok(ten.flows.cash.length === 10 && close(ten.valuation.df[9], 1 / (1 + ten.valuation.rate) ** 10), 'dcf: 10 forecast years discounted 1…10');
+  ok(close(r.ref.intRate[1], 55 / (450 + 250)) && r.ref.intRate[0] === 'n.a.' && close(r.ref.payout[2], 60 / 523), 'dcf: historical reference ratios (interest on prior debt, payout)');
 }
-ok(true, 'dcf: FCFE = NI(FCFE basis) + D&A - capex - dNWC + net borrowing (all years)');
-const ts3 = computeThreeStatement(A);
-ok(dcf.niDcf.every((v, i) => close(v, ts3.netIncome[i])), 'dcf: exit-P/E net income ties to the 3-statement NI (incl. cash interest)');
-ok(close(dcf.interest[0], 1200 * 0.09), 'dcf: Y1 interest on opening debt');
-ok(close(dcf.openDebt[1], 1200 * 0.9), 'dcf: debt amortizes 10% (matches 3-statement)');
-ok(dcf.fcfeGordon.price > 0, `dcf: FCFE gordon price = ${dcf.fcfeGordon.price.toFixed(1)}`);
-ok(dcf.fcfeExit.price > 0, `dcf: FCFE exit-P/E price = ${dcf.fcfeExit.price.toFixed(1)}`);
-ok(dcf.costEquity > dcf.wacc, 'dcf: CoE > WACC (levered)');
-const sens = dcfSensitivity(A);
-ok(close(sens.gordonGrid[2][2], dcf.gordon.price, 1e-6), 'dcf: FCFF sensitivity center = base');
-ok(close(sens.fcfeGrid[2][2], dcf.fcfeGordon.price, 1e-6), 'dcf: FCFE sensitivity center = base');
-ok(sens.gordonGrid[0][2] > sens.gordonGrid[4][2], 'dcf: lower WACC => higher price');
-ok(sens.fcfeGrid[2][4] > sens.fcfeGrid[2][0], 'dcf: higher g => higher FCFE price');
 
 /* ---- three statement ---- */
 const ts = computeThreeStatement(A);
@@ -261,48 +262,23 @@ ok(ipo.freeFloat > 0 && ipo.freeFloat < 1, `ipo: free float ${(ipo.freeFloat * 1
   ok(s1.tax.every((x) => x >= 0), 'nol: tax never negative');
   ok(close(s1.close[0], 120) && close(s1.used[1], 30) && close(s1.close[1], 90) && close(s1.tax[1], 0), 'nol: losses build the balance, profits use it');
   ok(close(s1.used[3], 40) && close(s1.tax[3], (200 - 40) * 0.25), 'nol: partial use then fully taxed');
-  // a loss-making start: FCFF tax is zero while losses build, and the remaining NOL is valued once
   const loss = withModel({ drivers: { ...A.drivers, marginStart: 2, marginEnd: 24 }, company: { ...A.company, nol0: 500 } });
-  const dl = computeDcf(loss);
-  ok(dl.fcffTax.every((x) => x >= 0), 'nol: FCFF tax never negative (NOPAT on negative EBIT)');
-  ok(close(dl.nopat[0], dl.ops.ebit[0] - dl.fcffTax[0]), 'nol: NOPAT = EBIT − tax after losses');
-  ok(close(dl.pvNolFcff, dl.nolCloseU[4] * 0.252 * Math.pow(1 + dl.wacc / 100, -5)), 'nol: remaining NOL valued at year N (FCFF)');
-  ok(close(dl.gordon.ev, dl.pvSum + dl.pvTvGordon + dl.pvNolFcff), 'nol: EV includes the NOL line');
-  ok(close(dl.fcffNormN, dl.ops.ebit[4] * (1 - 0.252) + dl.ops.da[4] - dl.ops.capex[4] - dl.ops.deltaNwc[4]), 'nol: Gordon TV on a fully-taxed normalised flow');
   const tl = computeThreeStatement(loss);
   ok(tl.taxAmt.every((x) => x >= 0) && Math.max(...tl.check.map(Math.abs)) < 1e-6, 'nol: 3-statement tax ≥ 0 and still balances');
   const ll = computeLbo(loss);
   ok(ll.taxAmt.every((x) => x >= 0), 'nol: LBO tax never negative');
 }
 
-/* ---- DCF: FCFE opening cash, tornado, WACC surface, history, beta peers ---- */
+/* ---- reported history (projection pages) ---- */
 {
-  ok(close(dcf.fcfeGordon.equity, dcf.pvSumE + dcf.pvTvFcfeGordon + dcf.pvNolFcfe + A.company.cash), 'dcf: FCFE equity = PV(FCFE) + PV(TV) + NOL + opening cash');
-  ok(close(dcf.fcfeCash, 400), 'dcf: opening cash line');
-  const tor = dcfTornado(A);
-  ok(tor.rows.length === 6 && close(tor.base, dcf.gordon.price), 'dcf tornado: six levers around the Gordon price');
-  ok(tor.rows.every((r) => r.low <= tor.base + 1e-9 && tor.base <= r.high + 1e-9), 'dcf tornado: base sits inside every bar');
-  const w = tor.rows.find((r) => r.key === 'wacc');
-  ok(close(w.up, computeDcf(A, null, dcf.wacc + 1).gordon.price), 'dcf tornado: WACC +1 pp');
-  const tor2 = dcfTornado(withModel({ sens: { ...A.sens, tornado: { ...A.sens.tornado, waccBump: 2 } } }));
-  ok(close(tor2.rows.find((r) => r.key === 'wacc').up, computeDcf(A, null, dcf.wacc + 2).gordon.price), 'dcf tornado: editable bump size');
-  const ws = waccSensitivity(withModel({ wacc: { ...A.wacc, debtWeight: 85 } }));
-  ok(ws.wdSteps.every((v) => v >= 0 && v <= 90) && ws.wdSteps[4] === 90, 'wacc surface: rows clamped to 0–90 %');
-  ok(ws.grid.flat().every(Number.isFinite), 'wacc surface: every clamped row computes');
-  ok(dcfReportedHistory(A) === null, 'dcf history: none reported → null (no back-cast)');
+  ok(reportedHistory(A) === null, 'history: none reported → null (no back-cast)');
   const h = blankManualHistory(4, '2025-12-31');
   h.annual.lines.revenue = [4000, 4300, 4650, 5000];
   h.annual.lines.ebitda = [800, 880, null, 1100];
-  const rh = dcfReportedHistory(withModel({ history: h }));
-  ok(rh && rh.n === 3 && rh.labels.join() === '2022,2023,2024', 'dcf history: only fiscal years before the base year');
-  ok(Number.isNaN(rh.ebitda[2]) && Number.isNaN(rh.margin[2]), 'dcf history: unreported line stays NA');
-  ok(close(rh.growth[1], (4300 / 4000 - 1) * 100), 'dcf history: reported growth');
-  const bp = betaPeerStats(withModel({ wacc: { ...A.wacc, betaPeers: [
-    { id: 'a', name: 'A', leveredBeta: 1.2, de: 0.5, taxRate: 25 },
-    { id: 'b', name: 'B', leveredBeta: 0.9, de: 0.2, taxRate: 30 },
-    { id: 'c', name: 'C', leveredBeta: null, de: 0.3, taxRate: 25 },
-  ] } }));
-  ok(bp.n === 2 && close(bp.rows[0].unleveredBeta, 1.2 / (1 + 0.75 * 0.5)), 'beta peers: Hamada with each peer\'s own tax; blank row excluded');
+  const rh = reportedHistory(withModel({ history: h }));
+  ok(rh && rh.n === 3 && rh.labels.join() === '2022,2023,2024', 'history: only fiscal years before the base year');
+  ok(Number.isNaN(rh.ebitda[2]) && Number.isNaN(rh.margin[2]), 'history: unreported line stays NA');
+  ok(close(rh.growth[1], (4300 / 4000 - 1) * 100), 'history: reported growth');
 }
 
 /* ---- 3-statement: reported opening equity ---- */

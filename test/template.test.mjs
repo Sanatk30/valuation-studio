@@ -100,12 +100,14 @@ console.log('\n=== saved-state migration ===');
   const old = { companies: { x: { id: 'x', methods: {
     comps: { data: { comps: { target: { revenue: 100 }, peers: [{ name: 'Old' }] }, regression: {} }, step: 4, skipped: {} },
     precedent: { data: { precedent: { target: { ebitda: 5 }, deals: [{}] } }, step: 2, skipped: {} },
-    dcf: { data: { company: { sharesOut: 10 } }, step: 3, skipped: {} },
+    dcf: { data: { company: { sharesOut: 10 }, dcf: { terminalGrowth: 5 } }, step: 3, skipped: {} },
+    lbo: { data: { company: { sharesOut: 10 } }, step: 3, skipped: {} },
   } } } };
   const m = migrate(old).companies.x.methods;
   ok(m.comps.data.comps.settings && m.comps.data.comps.peers.length === 0 && m.comps.step === blankMethodState('comps').step, 'an old comps save starts blank on the new layout');
   ok(m.precedent.data.precedent.settings && m.precedent.data.precedent.deals.length === 0, 'an old precedent save starts blank');
-  ok(m.dcf.data.company.sharesOut === 10 && m.dcf.step === 3, 'other methods are untouched');
+  ok(m.dcf.data.dcf.settings && m.dcf.step === blankMethodState('dcf').step, 'an old DCF save (pre-template) starts blank');
+  ok(m.lbo.data.company.sharesOut === 10 && m.lbo.step === 3, 'other methods are untouched');
   const fresh = { companies: { y: { id: 'y', methods: { comps: { data: { comps: sampleCompsData(), regression: {} }, step: 5 } } } } };
   ok(migrate(fresh).companies.y.methods.comps.step === 5, 'a save already on the new layout is kept');
 }
