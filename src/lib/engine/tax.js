@@ -1,15 +1,12 @@
 /**
  * Tax-loss carryforward (NOL) and the small input readers every engine shares.
  *
- * NOL rule (one definition, used by the DCF, 3-statement, LBO and IPO):
+ * NOL rule (one definition, used by the 3-statement, ratios and IPO models):
  *   loss year   (pre-tax ≤ 0): tax = 0, NOL += loss
  *   profit year (pre-tax > 0): used = min(NOL, profit); tax = (profit − used) × t
  * So tax is never negative, and a loss is only ever worth something once it is
  * used against a later profit.
  */
-
-/** A present, finite number (null / '' / NaN / undefined are all "blank"). */
-export const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
 
 /** Input → number, blank → NaN. Never lets null read as 0 (Number(null) === 0). */
 export const num = (v) => {
@@ -66,26 +63,3 @@ export function nolStep(pretax, t, nolOpen) {
   const s = nolSchedule([pretax], t, nolOpen);
   return { used: s.used[0], close: s.close[0], tax: s.tax[0] };
 }
-
-/** Fully-taxed tax on a normalised (terminal) year: no NOL, never negative. */
-export const fullTax = (pretax, t) => Math.max(0, pretax) * t;
-
-/**
- * A boolean input that must have been chosen: true / false, anything else
- * (null, NaN from a blank step) is "not chosen" → null.
- */
-export const flag = (v) => (v === true ? true : v === false ? false : null);
-
-/**
- * Sensitivity step size from `a.sens` (display settings). Only a missing key
- * (an old fixture) falls back to the documented display default; a cleared
- * field is NaN so the grid shows NA rather than a silently restored step.
- */
-export function sensStep(a, group, key, fallback) {
-  const g = a?.sens?.[group];
-  if (!g || g[key] === undefined) return fallback;
-  return isNum(g[key]) ? g[key] : NaN;
-}
-
-/** Five grid points: base + k × step for k = −2 … +2. */
-export const fivePoints = (base, step) => [-2, -1, 0, 1, 2].map((k) => base + k * step);

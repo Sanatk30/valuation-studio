@@ -1,6 +1,8 @@
 /**
  * Structure of every method's Excel file: it writes and reads back, carries
- * exactly Cover + Inputs + its own calculation sheets, the Inputs sheet holds
+ * exactly Cover + Inputs + its own calculation sheets (comps, precedent, the
+ * DCF and the LBO: the user's template set — Instructions, Inputs and the template's
+ * sheets), the Inputs sheet holds
  * only that method's inputs, every formula's references resolve to a sheet in
  * the file (and, across sheets, to a non-empty cell), parentheses balance,
  * inputs are blue, and nothing writes NaN / Infinity into a cell.
@@ -15,8 +17,8 @@ const ok = (cond, msg) => { checks++; if (!cond) { failures++; console.error('FA
 
 const COMBINED = { rows: [{ method: 'DCF', figureLabel: 'FCFF', value: 900, low: 800, high: 1000, weight: 100 }], marketPrice: 850 };
 const EXPECT = {
-  dcf: ['Cover', 'Inputs', 'DCF', 'WACC'],
-  lbo: ['Cover', 'Inputs', 'Projection', 'LBO'],
+  dcf: ['Instructions', 'Inputs', 'FCFF - Gordon Growth', 'Historicals', 'Assumptions', 'Forecast', 'Cost of Equity (CAPM)', 'WACC'],
+  lbo: ['Instructions', 'Inputs', 'Sources & Uses', 'Returns', 'Sensitivity', 'LBO Model', 'Historicals', 'Assumptions', 'Sensitivity Engine'],
   ipo: ['Cover', 'Inputs', 'Projection', '3 Statement', 'IPO'],
   ts: ['Cover', 'Inputs', 'Projection', '3 Statement'],
   ratios: ['Cover', 'Inputs', 'Projection', '3 Statement'],
@@ -29,8 +31,8 @@ const FOREIGN = {
   ipo: ['WACC', 'Entry EV / LTM EBITDA', 'Opening net PP&E'],
   ts: ['WACC', 'Entry EV / LTM EBITDA', 'Primary raise (fresh capital)'],
   ratios: ['WACC', 'Sponsor IRR hurdle', 'Offer P/E'],
-  comps: ['Tax rate', 'WACC', 'Opening net working capital', 'Projection years', 'Opening tax-loss carryforward (NOL)'],
-  precedent: ['Tax rate', 'WACC', 'LTM EBIT', 'Projection years'],
+  comps: ['Tax rate', 'WACC', 'Opening net working capital', 'Projection years', 'Opening tax-loss carryforward (NOL)', 'Valuation date'],
+  precedent: ['Tax rate', 'WACC', 'LTM EBIT', 'Projection years', 'Share price date'],
 };
 
 function* extractRefs(formula) {
@@ -58,9 +60,10 @@ async function checkFile(a, method, opts = {}, expect = EXPECT[method]) {
   await rb.xlsx.load(buf);
   const names = rb.worksheets.map((w) => w.name);
   if (expect) ok(names.join('|') === expect.join('|'), `${method}: sheets [${names.join(', ')}]`);
-  ok(names[0] === 'Cover', `${method}: Cover first`);
+  const template = method === 'comps' || method === 'precedent' || method === 'dcf' || method === 'lbo';
+  ok(names[0] === (template ? 'Instructions' : 'Cover'), `${method}: ${template ? 'Instructions' : 'Cover'} first`);
   if (method !== 'combined') ok(names[1] === 'Inputs', `${method}: Inputs second`);
-  ok(!names.includes('Assumptions') && !names.includes('Summary'), `${method}: no legacy Assumptions / Summary sheet`);
+  if (method !== 'dcf' && method !== 'lbo') ok(!names.includes('Assumptions') && !names.includes('Summary'), `${method}: no legacy Assumptions / Summary sheet`);
 
   const sheets = Object.fromEntries(rb.worksheets.map((w) => [w.name, w]));
   // Inputs: only this method's inputs, all blue
@@ -70,8 +73,10 @@ async function checkFile(a, method, opts = {}, expect = EXPECT[method]) {
     for (const bad of FOREIGN[method] || []) ok(!labels.includes(bad.trim()), `${method}: Inputs has no foreign input "${bad}"`);
     let blue = 0;
     sheets.Inputs.eachRow((row) => {
-      const c = row.getCell(2);
-      if (c.value !== null && c.value !== undefined && !(c.value && c.value.formula) && c.font?.color?.argb === C_INPUT) blue++;
+      for (const c of [row.getCell(2), row.getCell(3)]) {
+        const isBlue = template ? c.font?.color?.argb === 'FF0000FF' && c.fill?.fgColor?.argb === 'FFFFF2CC' : c.font?.color?.argb === C_INPUT;
+        if (c.value !== null && c.value !== undefined && !(c.value && c.value.formula) && isBlue) blue++;
+      }
     });
     ok(blue >= 5, `${method}: Inputs carries blue input cells (${blue})`);
   }
@@ -108,17 +113,14 @@ for (const m of EXPORT_METHODS) {
 
 // optional steps change the sheet set
 {
-  const noFcfe = buildWorkbook(A, 'dcf', { skipped: { fcfe: true } });
-  const labels = [];
-  noFcfe.getWorksheet('Inputs').eachRow((row) => labels.push(String(row.getCell(1).value || '')));
-  ok(!labels.includes('Exit P/E multiple (FCFE)') && !labels.some((l) => l.startsWith('Cost of equity step')), 'dcf without FCFE: no FCFE inputs');
+  const fcfe = buildWorkbook(withModel({ dcf: { ...A.dcf, settings: { ...A.dcf.settings, cf: 'fcfe', coe: 'buildup' } } }), 'dcf');
+  ok(!fcfe.worksheets.some((w) => w.name === 'WACC') && fcfe.worksheets.some((w) => w.name === 'Cost of Equity (Build-Up)'), 'dcf FCFE + build-up: no WACC sheet, build-up cost of equity');
   const noReg = buildWorkbook(A, 'comps', { skipped: { regression: true } });
   ok(!noReg.worksheets.some((w) => w.name === 'Regression'), 'comps without regression: no Regression sheet');
   ok(buildWorkbook(A, 'comps', {}).worksheets.some((w) => w.name === 'Regression'), 'comps with regression: Regression sheet');
   const hist = withModel({ history: { source: 'manual', label: 'typed', annual: { dates: ['2023-12-31', '2024-12-31'], lines: { revenue: [4200, 4600] } }, quarterly: null, statements: null } });
   ok(buildWorkbook(hist, 'ratios', {}).worksheets.some((w) => w.name === 'Past Ratios'), 'ratios with history: Past Ratios sheet');
   ok(!buildWorkbook(hist, 'ratios', { skipped: { history: true } }).worksheets.some((w) => w.name === 'Past Ratios'), 'ratios with history skipped: no Past Ratios');
-  await checkFile(hist, 'dcf');
   await checkFile(hist, 'ratios', {}, [...EXPECT.ratios, 'Past Ratios']);
   let threw = false;
   try { buildWorkbook(A, 'full'); } catch { threw = true; }

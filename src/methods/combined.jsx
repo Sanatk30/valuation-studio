@@ -5,7 +5,7 @@ import { METHOD_META } from './labels.js';
 import { fmtPrice, fmtPct } from '../lib/format.js';
 
 /** Methods that can feed the Combined valuation. */
-export const COMBINABLE = ['dcf', 'comps', 'precedent', 'lbo', 'ipo'];
+export const COMBINABLE = ['dcf', 'comps', 'precedent', 'ipo'];
 const fin = Number.isFinite;
 
 /**
@@ -41,7 +41,11 @@ function CombinedPicker({ data, setData, company, ctx }) {
 
   // market-price suggestions from the included methods' own Company steps
   const prices = COMBINABLE.filter((id) => entries[id]?.include)
-    .map((id) => ({ id, px: ctx.record.methods[id]?.data?.company?.currentPrice }))
+    .map((id) => {
+      const d = ctx.record.methods[id]?.data;
+      const px = id === 'comps' ? d?.comps?.target?.price : id === 'precedent' ? d?.precedent?.company?.price : d?.company?.currentPrice;
+      return { id, px };
+    })
     .filter((x) => fin(x.px) && x.px > 0);
 
   return (

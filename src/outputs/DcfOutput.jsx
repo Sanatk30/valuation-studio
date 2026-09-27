@@ -1,706 +1,267 @@
 import React, { useMemo } from 'react';
-import StatementTable from '../components/StatementTable.jsx';
 import Heatmap from '../components/Heatmap.jsx';
 import Waterfall from '../components/Waterfall.jsx';
-import * as DCF from '../lib/engine/dcf.js';
-import * as WACC from '../lib/engine/wacc.js';
-import { periodLabels } from '../lib/period.js';
+import { computeDcfT, CF_KINDS, DRIVERS, exitMultipleName } from '../lib/engine/dcfTemplate.js';
+import { fmtTpl, fmtDate } from '../lib/format.js';
 import Headline from './parts/Headline.jsx';
 import Collapsible, { Sections } from './parts/Collapsible.jsx';
-import SensStepInputs from './parts/SensStepInputs.jsx';
 import ChartBox, { EngineError } from './parts/ChartBox.jsx';
-import {
-  makeFmt, fin, upsidePct, upsideText, cagrPct, cumsum, allFinite, rnd, tone, attempt,
-} from './parts/format.js';
-import {
-  themed, xCat, yVal, tipBy, vgrad, COL, barSeries, lineSeries, moneyAxis,
-  projectionOption, growthOption, ringOption,
-} from './parts/charts.js';
-
-const DASH = '—';
-
-/** First → last finite positive value of a reported series, as a CAGR (%). */
-function reportedCagr(arr) {
-  const pts = (arr || []).map((v, i) => [v, i]).filter(([v]) => fin(v) && v > 0);
-  if (pts.length < 2) return NaN;
-  const [v0, i0] = pts[0];
-  const [v1, i1] = pts[pts.length - 1];
-  return cagrPct(v0, v1, i1 - i0);
-}
+import { makeFmt, fin, upsidePct, rnd, tone, attempt } from './parts/format.js';
+import { themed, xCat, tipBy, COL, barSeries, lineSeries, moneyAxis, projectionOption } from './parts/charts.js';
 
 /**
- * DCF output page.
- * Props: { a, set, company, skipped } — `a` from toEngineInput, `set` only for
- * the sensitivity step sizes (sens.dcf.*, sens.wacc.*), `skipped.fcfe` hides
- * every levered (FCFE) figure.
+ * DCF output — the chosen template's valuation sheet (cash flows, discounting,
+ * terminal value, equity bridge, value per share and the cross-check), its
+ * 5 × 5 sensitivity table, and the Forecast, Assumptions and cost-of-capital
+ * sheets behind it. Every figure is the engine's (dcfTemplate.js), which
+ * reproduces the template's formulas.
  */
-export default function DcfOutput({ a, set, skipped = {} }) {
-  const showFcfe = !skipped.fcfe;
+export default function DcfOutput({ a }) {
   const f = useMemo(() => makeFmt(a.settings), [a.settings]);
-  const s = a.settings;
-
-  const model = useMemo(() => attempt(() => {
-    const dcf = DCF.computeDcf(a);
-    const sens = DCF.dcfSensitivity(a);
-    // reported history only — never back-cast (null when there is none)
-    const hist = DCF.dcfReportedHistory(a);
-    const peers = (a.wacc.betaPeers || []).length ? WACC.betaPeerStats(a) : null;
-    const waccGrid = WACC.waccSensitivity(a);
-    const tornado = DCF.dcfTornado(a);
-    return { dcf, sens, hist, peers, waccGrid, tornado };
-  }), [a]);
-
+  const model = useMemo(() => attempt(() => computeDcfT(a)), [a]);
   if (model.error) return <div className="qo"><EngineError what="The DCF" error={model.error} /></div>;
-  const { dcf, sens, hist, peers, waccGrid, tornado } = model.value;
-  return <DcfPage a={a} set={set} f={f} s={s} dcf={dcf} sens={sens} hist={hist} peers={peers} waccGrid={waccGrid} tornado={tornado} showFcfe={showFcfe} />;
+  return <DcfPage a={a} f={f} r={model.value} />;
 }
 
-function DcfPage({ a, set, f, s, dcf, sens, hist, peers, waccGrid, tornado, showFcfe }) {
-  const ops = dcf.ops;
-  const n = ops.n;
-  const labels = useMemo(() => periodLabels(s, 'Y', n), [s, n]);
-  const px = a.company.currentPrice;
+const num = (v) => (fin(v) ? v : NaN);
+
+function DcfPage({ a, f, r }) {
+  const v = r.valuation;
+  const L = f.locale;
+  const t = (x, fmt = 'n1') => fmtTpl(x, fmt, L);
+  const px = r.price;
   const hasPx = fin(px) && px > 0;
-  const primary = a.dcf.primaryTV === 'exit' ? 'exit' : 'gordon';
-  const g = a.dcf.terminalGrowth;
-  const hasHist = !!(hist && hist.n > 0);
+  const cfK = CF_KINDS.find((k) => k.value === r.cf);
+  const rateName = r.cf === 'fcff' ? 'WACC' : 'Cost of equity (Ke)';
+  const multName = exitMultipleName(r.cf);
+  const n = r.n, m = r.m;
+  const F = r.F;
+  const allLabels = [...r.labels.hist, ...r.labels.fcst];
+  const fc = r.labels.fcst;
+  const cashLabel = r.cf === 'fcff' ? 'Free Cash Flow to Firm' : r.cf === 'fcfe' ? 'Free Cash Flow to Equity' : 'Dividends';
+  const tvName = r.tv === 'exit' ? `exit ${multName}` : 'Gordon growth';
 
-  // engine point evaluation: the whole DCF at an override WACC / CoE / TV input
-  const at = (over, waccPct = null, coePct = null) =>
-    DCF.computeDcf(over ? { ...a, dcf: { ...a.dcf, ...over } } : a, ops, waccPct, coePct);
-
-  const pvNolFcff = dcf.pvNolFcff;          // PV of the tax-loss balance left at year N (FCFF)
-  const pvNolFcfe = dcf.pvNolFcfe;          // … discounted at the cost of equity (FCFE)
-  const hasNolU = Array.isArray(dcf.nolOpenU);
-  const hasNolL = Array.isArray(dcf.nolOpenL);
-  const fcffTax = Array.isArray(dcf.fcffTax) ? dcf.fcffTax : ops.ebit.map((e, i) => e - dcf.nopat[i]);
-
-  const pvTvPrimary = primary === 'gordon' ? dcf.pvTvGordon : dcf.pvTvExit;
-  const tvPct = primary === 'gordon' ? dcf.tvPctOfEv?.gordon : dcf.tvPctOfEv?.exit;
-  const fcfeExitPct = fin(dcf.fcfeExit?.equity) && dcf.fcfeExit.equity > 0 ? (dcf.pvTvFcfePE / dcf.fcfeExit.equity) * 100 : NaN;
-  const waccTooLow = fin(dcf.wacc) && fin(g) && dcf.wacc <= g;
-  const coeTooLow = showFcfe && fin(dcf.costEquity) && fin(g) && dcf.costEquity <= g;
-
-  /* ------------------------------------------------ key charts */
-  const bridgeItems = [
-    { label: 'PV of FCFF', value: dcf.pvSum },
-    { label: primary === 'gordon' ? 'PV of Gordon TV' : 'PV of exit TV', value: pvTvPrimary },
-    ...(fin(pvNolFcff) ? [{ label: 'PV of remaining NOL', value: pvNolFcff }] : []),
-    { label: 'Enterprise value', value: dcf.primary.ev, total: true },
-    { label: 'Less: gross debt', value: -a.company.grossDebt },
-    { label: 'Add: cash', value: a.company.cash },
-    { label: 'Equity value', value: dcf.primary.equity, total: true },
-  ];
-  const bridgeOk = allFinite(bridgeItems.map((it) => it.value));
-
-  const fcfOpt = useMemo(() => themed({
+  /* ---------------- charts ---------------- */
+  const projOpt = projectionOption(f, allLabels, {
+    revenue: F.rev, ebitda: F.ebitda, margin: F.margin.map((x) => (fin(x) ? x * 100 : NaN)),
+  });
+  const cashOpt = themed({
     tooltip: tipBy({}, f.num),
-    xAxis: xCat(labels),
-    yAxis: moneyAxis(f),
+    xAxis: xCat(fc), yAxis: moneyAxis(f),
     series: [
-      barSeries('FCFF', COL.teal, dcf.fcff.map((v) => rnd(v)), { barMaxWidth: 24 }),
-      ...(showFcfe ? [barSeries('FCFE', COL.violet, dcf.fcfe.map((v) => rnd(v)), { barMaxWidth: 24 })] : []),
-      lineSeries('PV of FCFF', COL.green, dcf.pv.map((v) => rnd(v)), { dashed: true, width: 2 }),
-      lineSeries('Cumulative PV of FCFF', COL.cyan, cumsum(dcf.pv).map((v) => rnd(v)), { symbol: false, width: 1.6 }),
+      barSeries(cashLabel, COL.teal, r.flows.cash.map((x) => rnd(x))),
+      lineSeries('Present value', COL.gold, v.pv.map((x) => rnd(x))),
     ],
-  }, { zoom: n > 9 }), [dcf, labels, f, n, showFcfe]);
-
-  /* ------------------------------------------------ sensitivity grids */
-  const grids = useMemo(() => {
-    // implied perpetuity growth and implied EV / LTM EBITDA on the same
-    // WACC × exit-multiple axes as the engine's price grid
-    const cells = sens.waccSteps.map((w) => sens.mSteps.map((m) => at({ exitMultiple: m }, w)));
-    const ltmEbitda = ops.ebitda0;
-    return {
-      perp: cells.map((row) => row.map((d) => d.impliedPerpGrowth)),
-      mult: cells.map((row) => row.map((d) => (fin(ltmEbitda) && ltmEbitda > 0 ? d.exit.ev / ltmEbitda : NaN))),
-    };
-  }, [sens, a, ops]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  /* ------------------------------------------------ extra charts */
-  const charts = useMemo(() => buildDcfCharts({ a, f, dcf, ops, labels, primary, pvTvPrimary, at, n }),
-    [a, f, dcf, labels, primary, pvTvPrimary, n]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  /* ------------------------------------------------ FCFF build table */
-  const lead = (arr) => (hasHist ? arr : undefined);
-  const revCagr = hasHist ? reportedCagr(hist.revenue) : NaN;
-  const trailLabels = [...(hasHist ? ['Reported CAGR'] : []), `CAGR ${labels[0]}–${labels[n - 1]}`];
-  const trail = (histArr, proj) => [
-    ...(hasHist ? [histArr ? reportedCagr(histArr) : null] : []),
-    n > 1 ? cagrPct(proj[0], proj[n - 1], n - 1) : NaN,
+  });
+  const bridge = [
+    { label: 'PV of forecast flows', value: v.sumPv },
+    { label: 'PV of terminal value', value: num(v.pvTv) },
+    ...(r.cf === 'fcff'
+      ? [{ label: 'Enterprise value', value: num(v.ev), total: true }, { label: '− Net debt', value: -v.netDebt }, { label: '− NCI', value: -v.nci }]
+      : []),
+    { label: 'Equity value', value: num(v.equity), total: true },
   ];
-  const ltmMargin = fin(ops.ebitda0) && a.drivers.revenue0 ? (ops.ebitda0 / a.drivers.revenue0) * 100 : NaN;
-  const nolAdded = (open, used, close) => close.map((c, i) => c - open[i] + used[i]);
+  const bridgeOk = bridge.every((b) => fin(b.value));
 
-  const fcffRows = [
-    { label: 'Sales', values: ops.revenue, year0: a.drivers.revenue0, fmt: f.num, bold: true, lead: lead(hist?.revenue), trail: trail(hist?.revenue, ops.revenue), trailFmt: f.pct },
-    { label: '% growth', values: ops.growth, fmt: f.pct, sub: true, lead: lead(hist?.growth) },
-    { label: 'Less: operating costs', values: ops.revenue.map((r, i) => r - ops.ebitda[i]), year0: a.drivers.revenue0 - ops.ebitda0, fmt: f.num, sub: true, lead: lead(hist?.revenue.map((r, i) => r - hist.ebitda[i])) },
-    { label: 'EBITDA', values: ops.ebitda, year0: ops.ebitda0, fmt: f.num, bold: true, lead: lead(hist?.ebitda), trail: trail(hist?.ebitda, ops.ebitda), trailFmt: f.pct },
-    { label: '% margin', values: ops.margin, year0: ltmMargin, fmt: f.pct, sub: true, lead: lead(hist?.margin) },
-    { label: 'Less: D&A', values: ops.da, fmt: f.num, sub: true, lead: lead(hist?.da) },
-    { label: 'EBIT', values: ops.ebit, fmt: f.num, bold: true, lead: lead(hist?.ebit), trail: trail(hist?.ebit, ops.ebit), trailFmt: f.pct },
-    { label: 'Less: taxes on EBIT (after tax losses used)', values: fcffTax, fmt: f.num, sub: true },
-    { label: 'NOPAT (EBIAT)', values: dcf.nopat, fmt: f.num, bold: true },
-    ...(hasNolU ? [
-      { label: 'Memo: tax-loss (NOL) balance — opening', values: dcf.nolOpenU, fmt: f.num, sub: true },
-      { label: 'Memo: add losses', values: nolAdded(dcf.nolOpenU, dcf.nolUsedU, dcf.nolCloseU), fmt: f.num, sub: true },
-      { label: 'Memo: less NOL used', values: dcf.nolUsedU, fmt: f.num, sub: true },
-      { label: 'Memo: NOL balance — closing', values: dcf.nolCloseU, fmt: f.num, sub: true },
-    ] : []),
-    { label: 'Plus: D&A', values: ops.da, fmt: f.num, sub: true, lead: lead(hist?.da) },
-    { label: 'Less: capex', values: ops.capex, fmt: f.num, sub: true, lead: lead(hist?.capex) },
-    { label: 'Memo: NWC balance', values: ops.nwcBalance, year0: ops.nwc0, fmt: f.num, sub: true },
-    { label: 'Less: increase / (decrease) in NWC', values: ops.deltaNwc, fmt: f.num, sub: true },
-    { label: 'Unlevered free cash flow (FCFF)', values: dcf.fcff, fmt: f.num, bold: true, trail: trail(null, dcf.fcff), trailFmt: f.pct },
-    { label: `Discount period${a.dcf.midYear ? ' (mid-year)' : ''}`, values: dcf.period, fmt: (v) => f.dec(v, 2), sub: true },
-    { label: 'Discount factor @ WACC', values: dcf.df, fmt: (v) => f.dec(v, 3), sub: true },
-    { label: 'PV of FCFF', values: dcf.pv, fmt: f.num, bold: true },
-    { label: 'Cumulative PV of FCFF', values: cumsum(dcf.pv), fmt: f.num, sub: true },
+  /* ---------------- valuation sheet ---------------- */
+  const flowRows = r.cf === 'fcff'
+    ? [['EBIT', r.flows.ebit], ['(−) Taxes on EBIT', r.flows.taxEbit], ['NOPAT', r.flows.nopat, true], ['(+) Depreciation & Amortisation', r.flows.da], ['(−) Capex', r.flows.capex], ['(−) Increase in NWC', r.flows.dNwc]]
+    : r.cf === 'fcfe'
+      ? [['PAT', r.flows.pat], ['(+) Depreciation & Amortisation', r.flows.da], ['(−) Capex', r.flows.capex], ['(−) Increase in NWC', r.flows.dNwc], ['(+) Net Borrowing / (Repayment)', r.flows.netBorrow]]
+      : [['PAT', r.flows.pat], ['Dividend payout (% of PAT)', r.flows.payout, false, 'pct']];
+  const valRows = [
+    ['Sum of PV of forecast cash flows', t(v.sumPv)],
+    ...(r.tv === 'gordon'
+      ? [['Final-year cash flow', t(v.lastCash)], ['Terminal growth rate (g)', t(v.g, 'pct')], ['Cash flow in year after forecast', t(v.nextCash)]]
+      : [[`Final-year ${r.cf === 'fcff' ? 'EBITDA' : 'PAT'}`, t(v.metric)], [`Exit ${multName} multiple`, t(v.multiple, 'x')]]),
+    ['Terminal value', t(v.tv), true],
+    ['PV of terminal value', t(v.pvTv)],
+    ...(r.cf === 'fcff'
+      ? [['Enterprise Value', t(v.ev), true], ['(−) Net debt / (net cash)', t(v.netDebt)], ['(−) Non-controlling interest', t(v.nci)]]
+      : []),
+    ['Equity Value', t(v.equity), true],
+    [`Diluted shares outstanding (${f.unit})`, t(v.shares, 'n2')],
+    [`Value per Share (${f.sym})`, t(v.perShare, 'n2'), true],
+    [`Current share price (${f.sym})`, t(v.price, 'n2')],
+    ['Upside / (Downside)', t(v.upside, 'pct')],
+    ['Terminal value as % of total value', t(v.tvShare, 'pct')],
+    r.tv === 'gordon' ? [`Implied exit ${multName}`, t(v.implied, 'x')] : ['Implied perpetual growth rate', t(v.implied, 'pct')],
   ];
 
-  /* ------------------------------------------------ FCFE build table */
-  const fcfeRows = showFcfe ? [
-    { label: 'FCFF', values: dcf.fcff, fmt: f.num },
-    // the engine's own FCFF → FCFE bridge, so the line always ties
-    { label: 'Less: interest after tax', values: dcf.fcfe.map((v, i) => v - dcf.fcff[i] - dcf.netBorrow[i]), fmt: f.num, sub: true },
-    { label: 'Add: net borrowing / (repayment)', values: dcf.netBorrow, fmt: f.num, sub: true },
-    { label: 'Levered free cash flow (FCFE)', values: dcf.fcfe, fmt: f.num, bold: true },
-    { label: 'Memo: opening debt', values: dcf.openDebt, fmt: f.num, sub: true },
-    { label: 'Memo: interest expense', values: dcf.interest, fmt: f.num, sub: true },
-    { label: 'Memo: opening cash', values: dcf.openCash, fmt: f.num, sub: true },
-    { label: 'Memo: interest income on cash', values: dcf.interestInc, fmt: f.num, sub: true },
-    { label: 'Memo: net income (3-statement basis, for exit P/E)', values: dcf.niDcf, fmt: f.num, sub: true },
-    ...(hasNolL ? [
-      { label: 'Memo: tax-loss (NOL) balance — opening', values: dcf.nolOpenL, fmt: f.num, sub: true },
-      { label: 'Memo: add losses', values: nolAdded(dcf.nolOpenL, dcf.nolUsedL, dcf.nolCloseL), fmt: f.num, sub: true },
-      { label: 'Memo: less NOL used', values: dcf.nolUsedL, fmt: f.num, sub: true },
-      { label: 'Memo: NOL balance — closing', values: dcf.nolCloseL, fmt: f.num, sub: true },
-    ] : []),
-    { label: 'Discount factor @ cost of equity', values: dcf.dfE, fmt: (v) => f.dec(v, 3), sub: true },
-    { label: 'PV of FCFE', values: dcf.pvE, fmt: f.num, bold: true },
-    { label: 'Cumulative PV of FCFE', values: cumsum(dcf.pvE), fmt: f.num, sub: true },
-  ] : [];
+  /* ---------------- forecast sheet ---------------- */
+  const FROWS = [
+    ['INCOME STATEMENT'],
+    ['Revenue from Operations', F.rev, 'n1', true], ['  Growth %', F.growth, 'pct'],
+    ['Cost of Materials', F.materials], ['Employee Benefits Expense', F.employee], ['Other Expenses', F.otherExp],
+    ['Total Operating Expenses', F.opex, 'n1', true], ['EBITDA', F.ebitda, 'n1', true], ['  EBITDA margin', F.margin, 'pct'],
+    ['Depreciation & Amortisation', F.da], ['EBIT', F.ebit, 'n1', true], ['Other Income', F.otherInc], ['Finance Costs', F.finance],
+    ['Exceptional Items', F.exceptional], ['Profit Before Tax', F.pbt, 'n1', true], ['Tax Expense', F.tax],
+    ['PAT (attributable to owners)', F.pat, 'n1', true], [`Diluted EPS (${f.sym})`, F.eps, 'n2'], ['Dividends', F.dividends],
+    [`Dividend per Share (${f.sym})`, F.dps, 'n2'],
+    ['WORKING CAPITAL'],
+    ['Inventories', F.inv], ['Trade Receivables', F.rec], ['Other Current Assets', F.oca], ['Trade Payables', F.pay],
+    ['Other Current Liabilities & Provisions', F.ocl], ['Net Working Capital', F.nwc, 'n1', true], ['Increase / (Decrease) in NWC', F.dNwc],
+    ['CAPEX & DEBT SCHEDULE'],
+    ['Capex', F.capex], ['Opening Debt', F.openDebt], ['Net Borrowing / (Repayment)', F.netBorrow], ['Closing Debt (Borrowings)', F.closeDebt, 'n1', true],
+    ['  Interest rate on opening debt', F.intRate, 'pct'],
+  ];
 
-  const betaText = a.wacc.betaMode === 'hamada'
-    ? `Hamada βL ${f.dec(dcf.leveredBeta, 2)} from βU ${f.dec(dcf.unleveredBeta, 2)} at D/E ${f.dec(dcf.de, 2)}`
-    : `βL ${f.dec(dcf.leveredBeta, 2)} entered directly (implied βU ${f.dec(dcf.unleveredBeta, 2)})`;
-  const upText = hasPx ? upsideText(dcf.primary.price, px) : null;
-
-  const vsMkt = (price) => (hasPx ? f.pct(upsidePct(price, px), 1) : DASH);
-  const cell = (v, fmt) => (v === DASH ? <td className="na">{DASH}</td> : <td className={fin(v) && v < 0 ? 'neg' : ''}>{fmt(v)}</td>);
+  const w = r.wacc;
+  const coe = r.coe;
 
   return (
     <div className="qo">
       <Headline
-        eyebrow={`Discounted cash flow — implied share price (FCFF, ${primary === 'gordon' ? 'Gordon growth' : 'exit multiple'} terminal value)`}
-        value={dcf.primary.price}
-        fmt={(v) => f.price(v)}
-        sub={`FCFF over ${labels[0]}–${labels[n - 1]} discounted at a ${f.pct2(dcf.wacc)} WACC${a.dcf.midYear ? ' (mid-year convention)' : ''}; ${betaText}.${showFcfe ? ` FCFE discounted at a ${f.pct2(dcf.costEquity)} cost of equity.` : ''}${upText ? ` ${upText} to the market price of ${f.price(px)}.` : ''}`}
+        eyebrow={`DCF — ${cfK.label} · ${r.tv === 'exit' ? `Exit ${multName}` : 'Gordon Growth'} · ${r.coeKind === 'capm' ? 'CAPM' : 'Build-Up'} (template ${r.template})`}
+        sub={`${cfK.long} over ${m} forecast year${m === 1 ? '' : 's'} (${fc[0]}–${fc[m - 1]}), discounted at ${r.cf === 'fcff' ? 'the WACC' : 'the cost of equity'} ${t(v.rate, 'pct')} with end-of-year discounting${r.settings.valDate ? ` from ${fmtDate(r.settings.valDate)}` : ''}; terminal value by ${tvName}.`}
         warnings={[
-          waccTooLow && `Terminal growth (${f.pct(g)}) is at or above the WACC (${f.pct2(dcf.wacc)}) — the FCFF Gordon terminal value is undefined.`,
-          coeTooLow && `Terminal growth (${f.pct(g)}) is at or above the cost of equity (${f.pct2(dcf.costEquity)}) — the FCFE Gordon terminal value is undefined.`,
+          r.tv === 'gordon' && !(v.rate > v.g) ? `The discount rate (${t(v.rate, 'pct')}) is not above the terminal growth (${t(v.g, 'pct')}) — the terminal value is NM, as in the template.` : null,
+          fin(num(v.tvShare)) && v.tvShare > 0.75 ? `The terminal value is ${t(v.tvShare, 'pct')} of the total — above ~75% the value depends heavily on the terminal assumptions.` : null,
         ]}
         kpis={[
-          hasPx && { label: 'vs market price', value: upsidePct(dcf.primary.price, px), fmt: (v) => `${v >= 0 ? '+' : ''}${f.pct(v)}`, tone: tone(upsidePct(dcf.primary.price, px)), sub: `market ${f.price(px)}` },
-          { label: 'Enterprise value', value: dcf.primary.ev, fmt: (v) => f.money(v), hero: true, sub: `terminal value ${f.pct0(tvPct)} of EV` },
-          { label: 'Equity value', value: dcf.primary.equity, fmt: (v) => f.money(v), sub: `net debt ${f.money(dcf.netDebt)}` },
-          { label: 'WACC · cost of equity', text: `${f.pct2(dcf.wacc)} · ${f.pct2(dcf.costEquity)}`, sub: `after-tax Kd ${f.pct2(dcf.afterTaxKd)}` },
-          { label: 'FCFF — Gordon / exit', text: `${f.price(dcf.gordon.price)} / ${f.price(dcf.exit.price)}`, sub: `TV ${f.pct0(dcf.tvPctOfEv?.gordon)} / ${f.pct0(dcf.tvPctOfEv?.exit)} of EV` },
-          showFcfe && { label: 'FCFE — Gordon / exit P/E', text: `${f.price(dcf.fcfeGordon.price)} / ${f.price(dcf.fcfeExit.price)}`, sub: `discounted at CoE ${f.pct2(dcf.costEquity)}` },
-        ]}
+          { label: `Value per share (${f.sym})`, value: num(v.perShare), fmt: (x) => f.price(x), hero: true, tone: hasPx ? tone(upsidePct(num(v.perShare), px)) : undefined, sub: hasPx ? `${t(v.upside, 'pct')} vs ${f.price(px)}` : 'no current price' },
+          { label: 'Equity value', value: num(v.equity), fmt: (x) => f.money(x) },
+          r.cf === 'fcff' && { label: 'Enterprise value', value: num(v.ev), fmt: (x) => f.money(x) },
+          { label: rateName, text: t(v.rate, 'pct'), sub: w ? `Ke ${t(coe.ke, 'pct')} · Kd after tax ${t(w.kdAfter, 'pct')} · D/(D+E) ${t(w.targetWd, 'pct')}` : (r.coeKind === 'capm' ? `rf ${t(coe.rf, 'pct')} + β ${fmtTpl(coe.beta, 'n2', L)} × ERP ${t(coe.erp, 'pct')}` : 'build-up') },
+          { label: 'Terminal value share', text: t(v.tvShare, 'pct'), sub: r.tv === 'gordon' ? `implied exit ${multName} ${t(v.implied, 'x')}` : `implied perpetual growth ${t(v.implied, 'pct')}` },
+        ].filter(Boolean)}
       >
         <div className="grid2">
+          <ChartBox title={`${cashLabel} and present value (${f.unitLabel})`} option={cashOpt} />
           <div className="chartbox">
-            <div className="ct">Enterprise value → equity value ({primary === 'gordon' ? 'Gordon' : 'exit multiple'}, {f.unitLabel})</div>
-            {bridgeOk ? <Waterfall items={bridgeItems} fmt={f.num} /> : <div className="sec-note">A bridge line is NA, so the bridge can't be drawn — see Enterprise value → share price below.</div>}
+            <div className="ct">Value bridge ({f.unitLabel})</div>
+            {bridgeOk ? <Waterfall items={bridge} fmt={f.num} /> : <div className="empty">NM — the terminal value is not meaningful.</div>}
           </div>
-          <ChartBox title={`Free cash flow${showFcfe ? ' — FCFF vs FCFE' : ''}, PV and cumulative PV (${f.unitLabel})`} option={fcfOpt} />
         </div>
       </Headline>
 
       <Sections>
-        <Collapsible title="Valuation summary — every DCF method" tag="SUM">
+        <Collapsible title={`${cfK.label} — ${r.tv === 'exit' ? 'Terminal value: exit multiple' : 'Terminal value: Gordon growth'}`} tag="VALUATION" defaultOpen>
           <div className="tablewrap">
-            <table className="fin">
-              <thead><tr><th>Method</th><th>Discount rate</th><th>Enterprise value</th><th>Equity value</th><th>Share price</th><th>TV % of value</th><th>vs market</th></tr></thead>
+            <table className="fin compact tpl-val">
+              <thead><tr><th>{f.unitLabel}</th>{fc.map((l) => <th key={l}>{l}</th>)}</tr></thead>
               <tbody>
-                <tr className={primary === 'gordon' ? 'bold' : ''}>
-                  <td>FCFF — Gordon growth{primary === 'gordon' ? ' (primary)' : ''}</td>
-                  <td>WACC {f.pct2(dcf.wacc)}</td><td>{f.num(dcf.gordon.ev)}</td><td>{f.num(dcf.gordon.equity)}</td>
-                  <td>{f.price(dcf.gordon.price)}</td><td>{f.pct(dcf.tvPctOfEv?.gordon)}</td><td>{vsMkt(dcf.gordon.price)}</td>
-                </tr>
-                <tr className={primary === 'exit' ? 'bold' : ''}>
-                  <td>FCFF — exit {f.x1(a.dcf.exitMultiple)} EV/EBITDA{primary === 'exit' ? ' (primary)' : ''}</td>
-                  <td>WACC {f.pct2(dcf.wacc)}</td><td>{f.num(dcf.exit.ev)}</td><td>{f.num(dcf.exit.equity)}</td>
-                  <td>{f.price(dcf.exit.price)}</td><td>{f.pct(dcf.tvPctOfEv?.exit)}</td><td>{vsMkt(dcf.exit.price)}</td>
-                </tr>
-                {showFcfe && (
-                  <>
-                    <tr>
-                      <td>FCFE — Gordon growth</td><td>CoE {f.pct2(dcf.costEquity)}</td><td className="na">{DASH}</td>
-                      <td>{f.num(dcf.fcfeGordon.equity)}</td><td>{f.price(dcf.fcfeGordon.price)}</td>
-                      <td>{f.pct(dcf.tvPctOfEv?.fcfeGordon)}</td><td>{vsMkt(dcf.fcfeGordon.price)}</td>
-                    </tr>
-                    <tr>
-                      <td>FCFE — exit {f.x1(a.dcf.exitPE)} P/E</td><td>CoE {f.pct2(dcf.costEquity)}</td><td className="na">{DASH}</td>
-                      <td>{f.num(dcf.fcfeExit.equity)}</td><td>{f.price(dcf.fcfeExit.price)}</td>
-                      <td>{f.pct(fcfeExitPct)}</td><td>{vsMkt(dcf.fcfeExit.price)}</td>
-                    </tr>
-                  </>
-                )}
+                <tr className="sub"><td>Discount period (years)</td>{fc.map((_, j) => <td key={j}>{j + 1}</td>)}</tr>
+                {flowRows.map(([lab, vals, bold, fmt]) => (
+                  <tr key={lab} className={bold ? 'bold' : ''}><td>{lab}</td>{vals.map((x, j) => <td key={j}>{t(x, fmt || 'n1')}</td>)}</tr>
+                ))}
+                {r.cf === 'ddm' && <tr><td>Dividends</td>{r.flows.cash.map((x, j) => <td key={j}>{t(x)}</td>)}</tr>}
+                {r.cf === 'ddm' && <tr><td>Dividend per share ({f.sym})</td>{r.flows.dps.map((x, j) => <td key={j}>{t(x, 'n2')}</td>)}</tr>}
+                {r.cf !== 'ddm' && <tr className="bold tp-sub"><td>{cashLabel}</td>{r.flows.cash.map((x, j) => <td key={j}>{t(x)}</td>)}</tr>}
+                <tr><td>Discount factor</td>{v.df.map((x, j) => <td key={j}>{fin(x) ? x.toFixed(4) : ''}</td>)}</tr>
+                <tr className="bold"><td>Present value</td>{v.pv.map((x, j) => <td key={j}>{t(x)}</td>)}</tr>
               </tbody>
             </table>
           </div>
-          <div className="qo-note">Enterprise and equity values in {f.unitLabel}. FCFE values equity directly, so it has no enterprise value.</div>
+          <div className="tablewrap" style={{ maxWidth: 560, marginTop: 12 }}>
+            <table className="fin compact">
+              <thead><tr><th>Valuation</th><th>{f.unitLabel}</th></tr></thead>
+              <tbody>
+                {valRows.map(([lab, val, bold]) => <tr key={lab} className={bold ? 'bold tp-sub' : ''}><td>{lab}</td><td>{val}</td></tr>)}
+              </tbody>
+            </table>
+          </div>
+          <div className="qo-note">End-of-year convention: forecast year t is discounted t years, so the value is as at the end of the last historical year.{r.cf !== 'fcff' ? ' Equity cash flows are discounted at the cost of equity straight to equity value.' : ''}</div>
         </Collapsible>
 
-        <Collapsible title={`Unlevered free cash flow (FCFF) build — ${f.unitLabel}`} tag="FCFF" note={hasHist ? `with reported history · ${hist.labels[0]}–${hist.labels[hist.labels.length - 1]}` : 'projection only'}>
-          <StatementTable
-            labels={labels}
-            years={ops.years}
-            showYear0
-            leadLabels={hasHist ? hist.labels : []}
-            leadGroup={hasHist ? 'Reported history' : undefined}
-            trailLabels={trailLabels}
-            trailGroup="CAGR"
-            rows={fcffRows}
+        <Collapsible title={`Sensitivity — value per share (${f.sym}): ${rateName} (rows) × ${r.tv === 'exit' ? `exit ${multName}` : 'terminal growth'} (columns)`} tag="SENS" defaultOpen>
+          <Heatmap
+            corner={`${r.cf === 'fcff' ? 'WACC' : 'Ke'} ↓ / ${r.tv === 'exit' ? 'Multiple' : 'g'} →`}
+            rowLabels={r.sens.rows} colLabels={r.sens.cols}
+            grid={r.sens.grid.map((row) => row.map((x) => (fin(x) ? x : NaN)))}
+            fmt={f.gridPrice} fmtRow={(x) => t(x, 'pct')} fmtCol={(x) => (r.tv === 'exit' ? t(x, 'x') : t(x, 'pct'))}
           />
-          <div className="qo-note">
-            {hasHist
-              ? <>Reported columns come straight from the history you loaded ({a.history?.label || 'reported'}); a line the source doesn't carry reads —. </>
-              : <>No reported history was entered, so there are no historical columns (nothing is back-cast). </>}
-            The Y0 / LTM column holds your LTM revenue, LTM EBITDA and opening NWC. Taxes are charged on positive EBIT
-            only after any tax-loss balance is used up; a loss year pays no tax and adds to the balance.
-            {!fin(revCagr) && hasHist ? ' Reported CAGR needs at least two reported years.' : ''}
+          <div className="qo-note">Centre cell = the base case. Steps: {t(r.sens.rateStep, 'pct')} on the rate, {r.tv === 'exit' ? `${fmtTpl(r.sens.tvStep, 'x', L)} on the multiple` : `${t(r.sens.tvStep, 'pct')} on g`} (set on the Terminal value step). n/m = NM (rate ≤ g, or no shares).</div>
+        </Collapsible>
+
+        <Collapsible title="Forecast model" tag="FORECAST">
+          <ChartBox title={`Revenue & EBITDA (${f.unitLabel}), EBITDA margin — actual and forecast`} option={projOpt} />
+          <div className="tablewrap tp-grid">
+            <table className="fin compact">
+              <thead>
+                <tr><th>{f.unitLabel}</th>{allLabels.map((l, i) => <th key={i} className={i < n ? 'dg-hist' : ''}>{l}</th>)}</tr>
+              </thead>
+              <tbody>
+                {FROWS.map(([lab, vals, fmt, bold]) => (vals
+                  ? <tr key={lab} className={bold ? 'tp-sub' : ''}><td>{lab}</td>{vals.map((x, i) => <td key={i} className={`${i < n ? 'dg-hist' : ''}${x === 'n.a.' ? ' tp-mute' : ''}`}>{t(x, fmt || 'n1')}</td>)}</tr>
+                  : <tr key={lab} className="tp-sec dg-sec"><td colSpan={n + m + 1}>{lab}</td></tr>))}
+              </tbody>
+            </table>
           </div>
         </Collapsible>
 
-        {showFcfe && (
-          <Collapsible title={`Levered free cash flow (FCFE) — build and valuation (${f.unitLabel})`} tag="FCFE">
-            <StatementTable labels={labels} years={ops.years} rows={fcfeRows} />
-            <div className="tablewrap">
-              <table className="fin">
-                <thead><tr><th>Equity value from FCFE</th><th>Gordon growth @ CoE</th><th>Exit P/E</th></tr></thead>
-                <tbody>
-                  <tr><td>Cumulative PV of FCFE</td><td>{f.num(dcf.pvSumE)}</td><td>{f.num(dcf.pvSumE)}</td></tr>
-                  <tr className="sub"><td>Terminal-year FCFE (normalised, fully taxed)</td>{cell(dcf.fcfeNormN, f.num)}<td className="na">{DASH}</td></tr>
-                  <tr className="sub"><td>Perpetuity growth</td><td>{f.pct(g)}</td><td className="na">{DASH}</td></tr>
-                  <tr className="sub"><td>Terminal-year net income</td><td className="na">{DASH}</td>{cell(dcf.niDcf[n - 1], f.num)}</tr>
-                  <tr className="sub"><td>Exit P/E</td><td className="na">{DASH}</td><td>{f.x(a.dcf.exitPE)}</td></tr>
-                  <tr><td>Terminal value</td><td>{f.num(dcf.tvFcfeGordon)}</td><td>{f.num(dcf.tvFcfePE)}</td></tr>
-                  <tr><td>PV of terminal value</td><td>{f.num(dcf.pvTvFcfeGordon)}</td><td>{f.num(dcf.pvTvFcfePE)}</td></tr>
-                  <tr><td>PV of remaining tax losses (NOL × t @ CoE)</td>{cell(pvNolFcfe, f.num)}{cell(pvNolFcfe, f.num)}</tr>
-                  <tr><td>Add: opening cash</td>{cell(dcf.fcfeCash, f.num)}{cell(dcf.fcfeCash, f.num)}</tr>
-                  <tr className="bold"><td>Equity value</td><td>{f.num(dcf.fcfeGordon.equity)}</td><td>{f.num(dcf.fcfeExit.equity)}</td></tr>
-                  <tr className="sub"><td>÷ Shares outstanding</td><td>{f.shares(a.company.sharesOut)}</td><td>{f.shares(a.company.sharesOut)}</td></tr>
-                  <tr className="bold"><td>Implied share price</td><td>{f.price(dcf.fcfeGordon.price)}</td><td>{f.price(dcf.fcfeExit.price)}</td></tr>
-                  <tr className="sub"><td>TV % of equity value</td><td>{f.pct(dcf.tvPctOfEv?.fcfeGordon)}</td><td>{f.pct(fcfeExitPct)}</td></tr>
-                  {hasPx && <tr className="sub"><td>Premium / (discount) to market</td><td>{vsMkt(dcf.fcfeGordon.price)}</td><td>{vsMkt(dcf.fcfeExit.price)}</td></tr>}
-                </tbody>
-              </table>
-            </div>
-            <div className="qo-note">
-              The debt and cash schedules use the FCFE financing inputs: interest on opening balances, mandatory
-              repayment of {f.pct0(a.ts.debtRepayPct)} of opening debt a year. The Gordon terminal value capitalises a
-              normalised, fully-taxed year-{n} flow; any tax-loss balance still unused at year {n} is valued on its own line.
-              The FCFE flow earns no interest on the opening cash balance, so that balance is added to the equity value.
-            </div>
-          </Collapsible>
-        )}
+        <Collapsible title="Assumptions (drivers)" tag="DRIVERS">
+          <div className="tablewrap tp-grid">
+            <table className="fin compact">
+              <thead><tr><th>Driver</th>{allLabels.map((l, i) => <th key={i} className={i < n ? 'dg-hist' : ''}>{l}</th>)}</tr></thead>
+              <tbody>
+                {DRIVERS.map((d) => (d.section
+                  ? <tr key={d.section} className="tp-sec dg-sec"><td colSpan={n + m + 1}>{d.section}</td></tr>
+                  : (
+                    <tr key={d.key}>
+                      <td>{d.label}</td>
+                      {r.ref[d.key].map((x, i) => <td key={`h${i}`} className={`dg-hist${x === 'n.a.' ? ' tp-mute' : ''}`}>{t(x, d.fmt === 'pct' ? 'pct' : d.fmt === 'days' ? 'n0' : 'n1')}</td>)}
+                      {r.drivers[d.key].map((x, j) => <td key={`f${j}`}>{t(x, d.fmt === 'pct' ? 'pct' : d.fmt === 'days' ? 'n0' : 'n1')}</td>)}
+                    </tr>
+                  )))}
+              </tbody>
+            </table>
+          </div>
+          <div className="qo-note">Historical columns are ratios from the historicals (reference); forecast columns are your drivers. A blank driver counts as 0.</div>
+        </Collapsible>
 
-        <Collapsible title="Enterprise value → implied share price" tag="EV">
+        <Collapsible title={r.cf === 'fcff' ? 'Cost of equity and WACC' : 'Cost of equity'} tag="RATE">
           <div className="grid2">
             <div className="tablewrap">
-              <table className="fin">
-                <thead><tr><th>Enterprise value ({f.unitLabel})</th><th>Perpetuity growth</th><th>Exit multiple</th></tr></thead>
+              <table className="fin compact">
+                <thead><tr><th>Cost of equity — {r.coeKind === 'capm' ? 'CAPM' : 'Build-Up'}</th><th>Value</th></tr></thead>
                 <tbody>
-                  <tr><td>Cumulative PV of FCFF</td><td>{f.num(dcf.pvSum)}</td><td>{f.num(dcf.pvSum)}</td></tr>
-                  <tr className="sub"><td>Terminal-year FCFF (normalised, fully taxed)</td>{cell(dcf.fcffNormN, f.num)}<td className="na">{DASH}</td></tr>
-                  <tr className="sub"><td>Perpetuity growth rate</td><td>{f.pct(g)}</td><td className="na">{DASH}</td></tr>
-                  <tr className="sub"><td>Terminal-year EBITDA</td><td className="na">{DASH}</td><td>{f.num(ops.ebitda[n - 1])}</td></tr>
-                  <tr className="sub"><td>Exit EV / EBITDA</td><td className="na">{DASH}</td><td>{f.x(a.dcf.exitMultiple)}</td></tr>
-                  <tr><td>Terminal value</td><td>{f.num(dcf.tvGordon)}</td><td>{f.num(dcf.tvExit)}</td></tr>
-                  <tr><td>PV of terminal value</td><td>{f.num(dcf.pvTvGordon)}</td><td>{f.num(dcf.pvTvExit)}</td></tr>
-                  <tr><td>PV of remaining tax losses (NOL × t @ WACC)</td>{cell(pvNolFcff, f.num)}{cell(pvNolFcff, f.num)}</tr>
-                  <tr className="bold"><td>Enterprise value</td><td>{f.num(dcf.gordon.ev)}</td><td>{f.num(dcf.exit.ev)}</td></tr>
-                  <tr className="sub"><td>Terminal value % of EV</td><td>{f.pct(dcf.tvPctOfEv?.gordon)}</td><td>{f.pct(dcf.tvPctOfEv?.exit)}</td></tr>
+                  {r.coeKind === 'capm' ? (
+                    <>
+                      <tr><td>Risk-free rate</td><td>{t(coe.rf, 'pct')}</td></tr>
+                      <tr><td>Levered beta{a.dcf?.capm?.betaMode === 'hamada' ? ' (re-levered)' : ''}</td><td>{fmtTpl(coe.beta, 'n2', L)}</td></tr>
+                      <tr><td>Equity risk premium</td><td>{t(coe.erp, 'pct')}</td></tr>
+                      <tr className="bold tp-sub"><td>Cost of Equity (Ke)</td><td>{t(coe.ke, 'pct')}</td></tr>
+                      <tr><td>Re-levered beta (helper)</td><td>{fmtTpl(coe.relevered, 'n2', L)}</td></tr>
+                      {coe.peers.n > 0 && <tr><td>Peer unlevered beta — mean / median ({coe.peers.n})</td><td>{fmtTpl(coe.peers.mean, 'n2', L)} / {fmtTpl(coe.peers.median, 'n2', L)}</td></tr>}
+                    </>
+                  ) : (
+                    <>
+                      {[['Risk-free rate', coe.rf], ['Equity risk premium', coe.erp], ['Size premium', coe.size], ['Industry risk premium', coe.industry], ['Company-specific risk premium', coe.specific], ['Country risk premium', coe.country]]
+                        .map(([lab, x]) => <tr key={lab}><td>{lab}</td><td>{t(x, 'pct')}</td></tr>)}
+                      <tr className="bold tp-sub"><td>Cost of Equity (Ke)</td><td>{t(coe.ke, 'pct')}</td></tr>
+                    </>
+                  )}
                 </tbody>
               </table>
             </div>
-            <div className="tablewrap">
-              <table className="fin">
-                <thead><tr><th>Equity value and share price</th><th>Perpetuity growth</th><th>Exit multiple</th></tr></thead>
-                <tbody>
-                  <tr><td>Enterprise value</td><td>{f.num(dcf.gordon.ev)}</td><td>{f.num(dcf.exit.ev)}</td></tr>
-                  <tr className="sub"><td>Less: gross debt</td><td className="neg">{f.num(-a.company.grossDebt)}</td><td className="neg">{f.num(-a.company.grossDebt)}</td></tr>
-                  <tr className="sub"><td>Plus: cash &amp; equivalents</td><td>{f.num(a.company.cash)}</td><td>{f.num(a.company.cash)}</td></tr>
-                  <tr className="bold"><td>Implied equity value</td><td>{f.num(dcf.gordon.equity)}</td><td>{f.num(dcf.exit.equity)}</td></tr>
-                  <tr className="sub"><td>÷ Shares outstanding</td><td>{f.shares(a.company.sharesOut)}</td><td>{f.shares(a.company.sharesOut)}</td></tr>
-                  <tr className="bold"><td>Implied share price</td><td>{f.price(dcf.gordon.price)}</td><td>{f.price(dcf.exit.price)}</td></tr>
-                  {hasPx && <tr className="sub"><td>Premium / (discount) to {f.price(px)}</td><td>{vsMkt(dcf.gordon.price)}</td><td>{vsMkt(dcf.exit.price)}</td></tr>}
-                </tbody>
-              </table>
-            </div>
-          </div>
-          <div className="qo-note">
-            {a.dcf.midYear ? 'Mid-year convention: flows and the Gordon terminal value are discounted half a year earlier; the exit-multiple terminal value assumes a year-end sale. ' : 'Year-end discounting throughout. '}
-            The tax-loss balance left at year {n} is worth the tax it will save: NOL × tax rate, discounted to today, added to enterprise value under both terminal methods.
-          </div>
-        </Collapsible>
-
-        <Collapsible title="Terminal value cross-checks" tag="TV">
-          <div className="grid2">
-            <div className="tablewrap">
-              <table className="fin qo-kv">
-                <thead><tr><th>Gordon TV — implied exit multiple</th><th /></tr></thead>
-                <tbody>
-                  <tr><td>Terminal-year FCFF (normalised)</td><td>{f.num(dcf.fcffNormN)}</td></tr>
-                  <tr><td>Terminal growth</td><td>{f.pct(g)}</td></tr>
-                  <tr><td>Gordon terminal value</td><td>{f.num(dcf.tvGordon)}</td></tr>
-                  <tr><td>Terminal-year EBITDA ({labels[n - 1]})</td><td>{f.num(ops.ebitda[n - 1])}</td></tr>
-                  <tr className="bold"><td>Implied exit EV / EBITDA</td><td>{f.x(dcf.impliedExitMultiple)}</td></tr>
-                  <tr className="sub"><td>Your exit multiple</td><td>{f.x(a.dcf.exitMultiple)}</td></tr>
-                </tbody>
-              </table>
-            </div>
-            <div className="tablewrap">
-              <table className="fin qo-kv">
-                <thead><tr><th>Exit-multiple TV — implied perpetuity growth</th><th /></tr></thead>
-                <tbody>
-                  <tr><td>Exit terminal value ({f.x1(a.dcf.exitMultiple)} × {labels[n - 1]} EBITDA)</td><td>{f.num(dcf.tvExit)}</td></tr>
-                  <tr><td>WACC</td><td>{f.pct2(dcf.wacc)}</td></tr>
-                  <tr className="bold"><td>Implied perpetuity growth</td><td>{f.pct2(dcf.impliedPerpGrowth)}</td></tr>
-                  <tr className="sub"><td>Your terminal growth</td><td>{f.pct(g)}</td></tr>
-                  {a.dcf.midYear && <tr className="sub"><td colSpan={2}>Mid-year is on, so the terminal flow is grossed up by (1 + WACC)^0.5 before it is capitalised.</td></tr>}
-                </tbody>
-              </table>
-            </div>
-          </div>
-          <div className="qo-note">If the two terminal methods imply very different multiples or growth rates, one of the two terminal inputs is doing most of the work.</div>
-        </Collapsible>
-
-        <Collapsible title="Cost of capital — the WACC build" tag="WACC" note={`WACC ${f.pct2(dcf.wacc)}`}>
-          <div className="grid2">
-            <div className="tablewrap">
-              <table className="fin qo-kv">
-                <thead><tr><th>WACC calculation</th><th /></tr></thead>
-                <tbody>
-                  <tr className="sechead"><td colSpan={2}>Target capital structure</td></tr>
-                  <tr><td>Debt / (debt + equity)</td><td>{f.pct(a.wacc.debtWeight)}</td></tr>
-                  <tr><td>Equity / (debt + equity)</td><td>{f.pct(100 - a.wacc.debtWeight)}</td></tr>
-                  <tr className="sub"><td>Debt / equity</td><td>{f.x(dcf.de)}</td></tr>
-                  <tr className="sechead"><td colSpan={2}>Cost of debt</td></tr>
-                  <tr><td>Pre-tax cost of debt</td><td>{f.pct2(a.wacc.costDebt)}</td></tr>
-                  <tr><td>Tax rate</td><td>{f.pct(a.company.taxRate)}</td></tr>
-                  <tr className="bold"><td>After-tax cost of debt</td><td>{f.pct2(dcf.afterTaxKd)}</td></tr>
-                  <tr className="sechead"><td colSpan={2}>Cost of equity (CAPM)</td></tr>
-                  <tr><td>Risk-free rate</td><td>{f.pct2(a.wacc.riskFree)}</td></tr>
-                  <tr><td>Equity risk premium</td><td>{f.pct2(a.wacc.erp)}</td></tr>
-                  {a.wacc.betaMode === 'hamada'
-                    ? <><tr><td>Unlevered beta (input)</td><td>{f.dec(a.wacc.unleveredBeta, 3)}</td></tr><tr><td>Levered beta (Hamada)</td><td>{f.dec(dcf.leveredBeta, 3)}</td></tr></>
-                    : <><tr><td>Levered beta (input)</td><td>{f.dec(dcf.leveredBeta, 3)}</td></tr><tr className="sub"><td>Implied unlevered beta</td><td>{f.dec(dcf.unleveredBeta, 3)}</td></tr></>}
-                  <tr><td>Size / alpha premium</td><td>{f.pct2(a.wacc.sizePremium)}</td></tr>
-                  <tr className="bold"><td>Cost of equity</td><td>{f.pct2(dcf.costEquity)}</td></tr>
-                  <tr className="bold"><td>WACC</td><td>{f.pct2(dcf.wacc)}</td></tr>
-                </tbody>
-              </table>
-            </div>
-            <BetaPeers a={a} f={f} dcf={dcf} peers={peers} />
-          </div>
-          <div>
-            <div className="qo-sub">WACC sensitivity — capital structure (rows) × pre-tax cost of debt (columns)</div>
-            <SensStepInputs a={a} set={set} items={[
-              { path: 'sens.wacc.wdStep', label: 'D/(D+E) step', suffix: '% pts' },
-              { path: 'sens.wacc.kdStep', label: 'Cost-of-debt step', suffix: '% pts' },
-            ]} />
-            <Heatmap corner="D/(D+E) \ Kd" rowLabels={waccGrid.wdSteps} colLabels={waccGrid.kdSteps} grid={waccGrid.grid}
-              fmt={(v) => f.pct2(v)} fmtRow={(v) => f.pct(v)} fmtCol={(v) => f.pct2(v)} />
-            <div className="qo-note" style={{ marginTop: 6 }}>Beta is relevered at every capital structure before the cost of equity is rebuilt, so each cell is a full WACC. Debt-weight rows are kept inside 0–90 %; a step that would leave that band repeats its edge.</div>
-          </div>
-        </Collapsible>
-
-        <Collapsible title="Sensitivity analysis" tag="SENS" note={`${showFcfe ? 5 : 4} grids · steps editable`}>
-          <div className="qo-note">Each axis runs two steps either side of your base case (the outlined centre cell). Edit a step above a grid — every grid that shares it redraws.</div>
-          <div className="qo-sens">
-            <div className="qo-sens-cell">
-              <div className="qo-sub">FCFF share price — WACC × terminal growth</div>
-              <SensStepInputs a={a} set={set} items={[
-                { path: 'sens.dcf.waccStep', label: 'WACC step', suffix: '% pts' },
-                { path: 'sens.dcf.gStep', label: 'Growth step', suffix: '% pts' },
-              ]} />
-              <Heatmap corner="WACC \ g" rowLabels={sens.waccSteps} colLabels={sens.gSteps} grid={sens.gordonGrid}
-                fmt={f.gridPrice} fmtRow={(v) => f.pct2(v)} fmtCol={(v) => f.pct2(v)} />
-            </div>
-            <div className="qo-sens-cell">
-              <div className="qo-sub">FCFF share price — WACC × exit EV/EBITDA</div>
-              <SensStepInputs a={a} set={set} items={[
-                { path: 'sens.dcf.waccStep', label: 'WACC step', suffix: '% pts' },
-                { path: 'sens.dcf.multStep', label: 'Multiple step', suffix: 'x' },
-              ]} />
-              <Heatmap corner="WACC \ x" rowLabels={sens.waccSteps} colLabels={sens.mSteps} grid={sens.exitGrid}
-                fmt={f.gridPrice} fmtRow={(v) => f.pct2(v)} fmtCol={(v) => f.x1(v)} />
-            </div>
-            <div className="qo-sens-cell">
-              <div className="qo-sub">Implied perpetuity growth — WACC × exit EV/EBITDA</div>
-              <SensStepInputs a={a} set={set} items={[
-                { path: 'sens.dcf.waccStep', label: 'WACC step', suffix: '% pts' },
-                { path: 'sens.dcf.multStep', label: 'Multiple step', suffix: 'x' },
-              ]} />
-              <Heatmap corner="WACC \ x" rowLabels={sens.waccSteps} colLabels={sens.mSteps} grid={grids.perp}
-                fmt={(v) => f.pct2(v)} fmtRow={(v) => f.pct2(v)} fmtCol={(v) => f.x1(v)} />
-            </div>
-            <div className="qo-sens-cell">
-              <div className="qo-sub">Implied EV / LTM EBITDA — WACC × exit EV/EBITDA</div>
-              <SensStepInputs a={a} set={set} items={[
-                { path: 'sens.dcf.waccStep', label: 'WACC step', suffix: '% pts' },
-                { path: 'sens.dcf.multStep', label: 'Multiple step', suffix: 'x' },
-              ]} />
-              <Heatmap corner="WACC \ x" rowLabels={sens.waccSteps} colLabels={sens.mSteps} grid={grids.mult}
-                fmt={(v) => f.x(v)} fmtRow={(v) => f.pct2(v)} fmtCol={(v) => f.x1(v)} />
-            </div>
-            {showFcfe && (
-              <div className="qo-sens-cell">
-                <div className="qo-sub">FCFE share price — cost of equity × terminal growth</div>
-                <SensStepInputs a={a} set={set} items={[
-                  { path: 'sens.dcf.coeStep', label: 'CoE step', suffix: '% pts' },
-                  { path: 'sens.dcf.gStep', label: 'Growth step', suffix: '% pts' },
-                ]} />
-                <Heatmap corner="CoE \ g" rowLabels={sens.coeSteps} colLabels={sens.gSteps} grid={sens.fcfeGrid}
-                  fmt={f.gridPrice} fmtRow={(v) => f.pct2(v)} fmtCol={(v) => f.pct2(v)} />
+            {w && (
+              <div className="tablewrap">
+                <table className="fin compact">
+                  <thead><tr><th>WACC</th><th>Value</th></tr></thead>
+                  <tbody>
+                    <tr><td>Cost of equity (Ke)</td><td>{t(w.ke, 'pct')}</td></tr>
+                    <tr><td>Pre-tax cost of debt</td><td>{t(w.kd, 'pct')}</td></tr>
+                    <tr><td>Marginal tax rate</td><td>{t(w.taxRate, 'pct')}</td></tr>
+                    <tr><td>After-tax cost of debt</td><td>{t(w.kdAfter, 'pct')}</td></tr>
+                    <tr><td>Market value of equity (reference)</td><td>{t(w.mve)}</td></tr>
+                    <tr><td>Debt incl. leases per toggle (reference)</td><td>{t(w.debtRef)}</td></tr>
+                    <tr><td>Current D / (D + E) (reference)</td><td>{t(w.currentWd, 'pct')}</td></tr>
+                    <tr><td>Target D / (D + E)</td><td>{t(w.targetWd, 'pct')}</td></tr>
+                    <tr className="bold tp-sub"><td>WACC</td><td>{t(w.wacc, 'pct')}</td></tr>
+                    <tr className="tpl-stat-h"><td colSpan={2}>Net debt bridge (latest balance sheet)</td></tr>
+                    <tr><td>Total borrowings</td><td>{t(r.bridge.borrowings)}</td></tr>
+                    <tr><td>(+) Lease liabilities (per toggle)</td><td>{t(r.bridge.leases)}</td></tr>
+                    <tr><td>(−) Cash, bank balances & current investments</td><td>{t(r.bridge.cash)}</td></tr>
+                    <tr className="bold tp-sub"><td>Net Debt / (Net Cash)</td><td>{t(r.bridge.netDebt)}</td></tr>
+                    <tr><td>Non-controlling interest</td><td>{t(r.bridge.nci)}</td></tr>
+                  </tbody>
+                </table>
               </div>
             )}
-          </div>
-          <div className="qo-note">Share prices in {f.sym || 'the valuation currency'}. n/m = not meaningful (e.g. growth at or above the discount rate).</div>
-        </Collapsible>
-
-        <Collapsible title="More charts" tag="CHARTS">
-          <div className="grid2">
-            <ChartBox title={`Projection — revenue & EBITDA (${f.unitLabel}), EBITDA margin`} option={charts.projection} />
-            <ChartBox title="Revenue growth by year" option={charts.growth} />
-            <ChartBox title={`FCFF build by year — NOPAT + D&A − capex − ΔNWC (${f.unitLabel})`} option={charts.fcfBuild} />
-            <ChartBox title={`Cash conversion — EBITDA → FCFF (${f.unitLabel}) and FCFF / EBITDA`} option={charts.conversion} />
-            <ChartBox title={`PV of FCFF by year and PV of terminal value (${f.unitLabel})`} option={charts.pvByYear} />
-            <ChartBox title="PV contribution to enterprise value (% of EV)" option={charts.pvShare} />
-            <ChartBox title={`Enterprise value split — explicit period vs terminal value (${primary === 'gordon' ? 'Gordon' : 'exit'})`} option={charts.evSplit} empty="Needs positive PV of flows and terminal value." />
-            <ChartBox title={`Cumulative FCFF vs cumulative PV (${f.unitLabel})`} option={charts.cumulative} />
-            <ChartBox title={`Implied share price vs WACC (${f.sym}) — ±2 WACC steps`} option={charts.priceVsWacc} />
-            <ChartBox title={`Implied share price vs terminal growth (${f.sym}) — WACC ± 1 step`} option={charts.priceVsGrowth} />
-          </div>
-        </Collapsible>
-
-        <Collapsible title="Tornado — which input moves the price most" tag="TORNADO" note="bumps editable">
-          <SensStepInputs a={a} set={set} items={[
-            { path: 'sens.tornado.waccBump', label: 'WACC ±', suffix: '% pts' },
-            { path: 'sens.tornado.gBump', label: 'Terminal growth ±', suffix: '% pts' },
-            { path: 'sens.tornado.marginBump', label: 'EBITDA margin ±', suffix: '% pts' },
-            { path: 'sens.tornado.growthBump', label: 'Revenue growth ±', suffix: '% pts' },
-            { path: 'sens.tornado.capexBump', label: 'Capex % of revenue ±', suffix: '% pts' },
-            { path: 'sens.tornado.taxBump', label: 'Tax rate ±', suffix: '% pts' },
-          ]} />
-          <ChartBox title={`FCFF Gordon share price (${f.sym}) — each input moved down and up by its bump`} option={tornadoOption(tornado, f)} height={300} />
-          <div className="tablewrap">
-            <table className="fin">
-              <thead><tr><th>Input</th><th>Bump</th><th>Price, input down</th><th>Price, input up</th><th>Swing</th></tr></thead>
-              <tbody>
-                {tornado.rows.map((r) => (
-                  <tr key={r.key}>
-                    <td>{r.label}</td><td>± {f.dec(r.bump, 2)} pts</td>
-                    <td>{f.price(r.down)}</td><td>{f.price(r.up)}</td><td>{f.price(r.swing)}</td>
-                  </tr>
-                ))}
-                <tr className="bold"><td>Base case</td><td /><td colSpan={3}>{f.price(tornado.base)}</td></tr>
-              </tbody>
-            </table>
-          </div>
-          <div className="qo-note">
-            Margin, growth and capex move every forecast year by the bump (growth rescales the other lines with revenue);
-            WACC, terminal growth and the tax rate move the single input. Widest swing on top.
           </div>
         </Collapsible>
       </Sections>
     </div>
   );
-}
-
-/** The DCF-owned beta-peer reference table (betaPeerStats). Never drives the discount rate. */
-function BetaPeers({ a, f, dcf, peers }) {
-  const list = a.wacc.betaPeers || [];
-  const t = a.company.taxRate / 100;
-  if (!list.length) {
-    return (
-      <div className="tablewrap">
-        <table className="fin"><thead><tr><th>Peer unlevered beta</th></tr></thead>
-          <tbody><tr><td className="txt">No beta peers were entered in the Cost of capital step.</td></tr></tbody>
-        </table>
-      </div>
-    );
-  }
-  const relever = (bu) => (fin(bu) && fin(dcf.de) ? bu * (1 + (1 - t) * dcf.de) : NaN);
-  return (
-    <div>
-      <div className="tablewrap">
-        <table className="fin">
-          <thead><tr><th>Peer (reference only)</th><th>Levered β</th><th>D / E</th><th>Tax rate</th><th>Unlevered β</th></tr></thead>
-          <tbody>
-            {peers.rows.map((p, i) => (
-              <tr key={p.id ?? i}>
-                <td className="txt">{p.name || DASH}</td>
-                <td>{f.dec(p.leveredBeta, 2)}</td>
-                <td>{f.x(p.de)}</td>
-                <td>{f.pct(p.taxRate)}</td>
-                <td>{f.dec(p.unleveredBeta, 2)}</td>
-              </tr>
-            ))}
-            <tr className="bold"><td>Mean</td><td /><td /><td /><td>{f.dec(peers.mean, 2)}</td></tr>
-            <tr className="bold"><td>Median</td><td /><td /><td /><td>{f.dec(peers.median, 2)}</td></tr>
-            <tr className="sechead"><td colSpan={5}>Relevered at your target D/E ({f.x(dcf.de)})</td></tr>
-            <tr><td>Peer mean βU relevered</td><td colSpan={3} /><td>{f.dec(relever(peers.mean), 2)}</td></tr>
-            <tr><td>Peer median βU relevered</td><td colSpan={3} /><td>{f.dec(relever(peers.median), 2)}</td></tr>
-            <tr className="bold"><td>Your levered β — drives the WACC</td><td colSpan={3} /><td>{f.dec(dcf.leveredBeta, 2)}</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <div className="sec-note" style={{ marginTop: 8 }}>
-        Hamada unlevering with each peer's own tax rate. Reference only — the discount rate uses the beta you entered.
-      </div>
-    </div>
-  );
-}
-
-/** The DCF charts from the old gallery (no scenario ghosts, no click-to-dock). */
-function buildDcfCharts({ a, f, dcf, ops, labels, primary, pvTvPrimary, at, n }) {
-  const zoom = { zoom: n > 9 };
-  const pctF = (v) => f.pct(v);
-
-  const fcfBuild = themed({
-    tooltip: { ...tipBy({}, f.num), axisPointer: { type: 'shadow' } },
-    xAxis: xCat(labels), yAxis: moneyAxis(f),
-    series: [
-      { name: 'NOPAT', type: 'bar', stack: 'f', itemStyle: { color: vgrad(COL.tealDeep) }, data: dcf.nopat.map((v) => rnd(v)) },
-      { name: 'D&A', type: 'bar', stack: 'f', itemStyle: { color: vgrad(COL.teal) }, data: ops.da.map((v) => rnd(v)) },
-      { name: 'Capex', type: 'bar', stack: 'f', itemStyle: { color: vgrad(COL.outflow) }, data: ops.capex.map((v) => rnd(-v)) },
-      { name: 'Δ NWC', type: 'bar', stack: 'f', itemStyle: { color: vgrad(COL.outflow2) }, data: ops.deltaNwc.map((v) => rnd(-v)) },
-      lineSeries('FCFF', COL.green, dcf.fcff.map((v) => rnd(v))),
-    ],
-  }, zoom);
-
-  const conversion = themed({
-    tooltip: tipBy({ 'FCFF / EBITDA': pctF }, f.num),
-    xAxis: xCat(labels),
-    yAxis: [moneyAxis(f), yVal({ position: 'right', splitLine: { show: false }, axisLabel: { color: COL.gold, formatter: '{value}%' } })],
-    series: [
-      barSeries('EBITDA', COL.tealDeep, ops.ebitda.map((v) => rnd(v)), { barMaxWidth: 30 }),
-      barSeries('FCFF', COL.teal, dcf.fcff.map((v) => rnd(v)), { barMaxWidth: 30 }),
-      lineSeries('FCFF / EBITDA', COL.gold, dcf.fcff.map((v, i) => (ops.ebitda[i] > 0 ? rnd((v / ops.ebitda[i]) * 100, 1) : null)), { yAxisIndex: 1 }),
-    ],
-  }, zoom);
-
-  const pvByYear = themed({
-    tooltip: { ...tipBy({}, f.num), axisPointer: { type: 'shadow' } },
-    xAxis: xCat([...labels, 'TV']), yAxis: moneyAxis(f),
-    series: [
-      barSeries('PV of FCFF', COL.teal, [...dcf.pv.map((v) => rnd(v)), '-'], { barMaxWidth: 46 }),
-      barSeries('PV of terminal value', COL.gold, [...dcf.pv.map(() => '-'), rnd(pvTvPrimary)], { barMaxWidth: 46 }),
-    ],
-  });
-
-  const ev = dcf.pvSum + pvTvPrimary;
-  const shareData = fin(ev) && ev > 0
-    ? [...dcf.pv.map((v) => rnd((v / ev) * 100, 1)), rnd((pvTvPrimary / ev) * 100, 1)]
-    : null;
-  const pvShare = shareData && themed({
-    tooltip: { ...tipBy({}, pctF), axisPointer: { type: 'shadow' } }, legend: { show: false },
-    xAxis: xCat([...labels, 'TV']), yAxis: yVal({ axisLabel: { color: COL.axis, formatter: '{value}%' } }),
-    series: [{
-      name: 'Share of EV', type: 'bar', barMaxWidth: 46,
-      label: { show: labels.length <= 12, position: 'top', color: COL.axisStrong, fontSize: 10, formatter: (p) => `${p.value}%` },
-      itemStyle: { color: (p) => vgrad(p.dataIndex === shareData.length - 1 ? COL.gold : COL.teal), borderRadius: [5, 5, 0, 0] },
-      data: shareData,
-    }],
-  });
-
-  const evSplit = ringOption([
-    { name: 'PV of explicit FCFF', value: dcf.pvSum, color: COL.teal },
-    { name: 'PV of terminal value', value: pvTvPrimary, color: COL.gold },
-  ], f.num);
-
-  const cumF = cumsum(dcf.fcff), cumP = cumsum(dcf.pv);
-  const cumulative = themed({
-    tooltip: tipBy({}, f.num),
-    xAxis: xCat(labels, { boundaryGap: false }), yAxis: moneyAxis(f),
-    series: [
-      lineSeries('Cumulative FCFF', COL.teal, cumF.map((v) => rnd(v)), { area: true }),
-      lineSeries('Cumulative PV of FCFF', COL.green, cumP.map((v) => rnd(v)), { area: true }),
-    ],
-  });
-
-  // price curves: sampled across the same ±2-step range the grids use
-  const px = a.company.currentPrice;
-  const mktLine = fin(px) && px > 0 ? [{ yAxis: px, lineStyle: { color: COL.amber }, label: { formatter: `mkt ${f.gridPrice(px)}`, color: COL.amber } }] : [];
-  const wStep = a.sens.dcf.waccStep, gStep = a.sens.dcf.gStep;
-  const w0 = dcf.wacc, g0 = a.dcf.terminalGrowth;
-  const sample = (lo, hi, k = 24) => Array.from({ length: k + 1 }, (_, i) => lo + ((hi - lo) * i) / k);
-  let priceVsWacc = null, priceVsGrowth = null;
-  if (fin(w0) && fin(wStep) && wStep > 0) {
-    const xs = sample(w0 - 2 * wStep, w0 + 2 * wStep);
-    const gordon = xs.map((w) => [+w.toFixed(3), rnd(at(null, w).gordon.price, 2)]);
-    const exit = xs.map((w) => [+w.toFixed(3), rnd(at(null, w).exit.price, 2)]);
-    priceVsWacc = themed({
-      tooltip: { ...tipBy({}, f.gridPrice), axisPointer: { type: 'cross' } },
-      xAxis: yVal({ name: 'WACC', nameLocation: 'middle', nameGap: 26, nameTextStyle: { color: COL.axis }, scale: true, axisLabel: { color: COL.axis, formatter: '{value}%' } }),
-      yAxis: yVal({ scale: true, axisLabel: { color: COL.axis, formatter: f.short } }),
-      series: [
-        { ...lineSeries('Gordon growth', COL.teal, gordon, { symbol: false }), markLine: { silent: true, symbol: 'none', lineStyle: { color: COL.ref, type: 'dashed' }, label: { color: COL.ref, fontSize: 11 }, data: [{ xAxis: +w0.toFixed(3), label: { formatter: 'base WACC' } }, ...mktLine] } },
-        lineSeries('Exit multiple', COL.gold, exit, { symbol: false }),
-      ],
-    });
-  }
-  if (fin(w0) && fin(g0) && fin(gStep) && gStep > 0 && fin(wStep) && wStep > 0) {
-    const xs = sample(g0 - 2 * gStep, g0 + 2 * gStep);
-    const curve = (w) => xs.map((gv) => [+gv.toFixed(3), rnd(at({ terminalGrowth: gv }, w).gordon.price, 2)]);
-    priceVsGrowth = themed({
-      tooltip: { ...tipBy({}, f.gridPrice), axisPointer: { type: 'cross' } },
-      xAxis: yVal({ name: 'terminal growth', nameLocation: 'middle', nameGap: 26, nameTextStyle: { color: COL.axis }, scale: true, axisLabel: { color: COL.axis, formatter: '{value}%' } }),
-      yAxis: yVal({ scale: true, axisLabel: { color: COL.axis, formatter: f.short } }),
-      series: [
-        lineSeries(`WACC ${f.pct2(w0 + wStep)}`, COL.gold, curve(w0 + wStep), { symbol: false }),
-        { ...lineSeries(`WACC ${f.pct2(w0)}`, COL.teal, curve(w0), { symbol: false }), markLine: { silent: true, symbol: 'none', lineStyle: { color: COL.ref, type: 'dashed' }, label: { color: COL.ref, fontSize: 11, formatter: 'base g' }, data: [{ xAxis: +g0.toFixed(3) }, ...mktLine] } },
-        lineSeries(`WACC ${f.pct2(w0 - wStep)}`, COL.green, curve(w0 - wStep), { symbol: false }),
-      ],
-    });
-  }
-
-  return {
-    projection: projectionOption(f, labels, ops),
-    growth: growthOption(f, labels, ops.growth),
-    fcfBuild, conversion, pvByYear, pvShare, evSplit, cumulative, priceVsWacc, priceVsGrowth,
-  };
-}
-
-/** Horizontal tornado: each bar spans the price at the input's down and up bump, around the base. */
-function tornadoOption(tornado, f) {
-  const rows = tornado.rows.filter((r) => fin(r.low) && fin(r.high)).slice().reverse();   // widest on top
-  if (!rows.length || !fin(tornado.base)) return null;
-  const base = tornado.base;
-  return themed({
-    tooltip: {
-      trigger: 'axis', axisPointer: { type: 'shadow' },
-      formatter: (ps) => {
-        const r = rows.find((x) => x.label === ps[0].name);
-        return r ? `<b>${r.label}</b> ± ${f.dec(r.bump, 2)} pts<br>${f.price(r.low)} → ${f.price(r.high)}<br>swing ${f.price(r.swing)}` : '';
-      },
-    },
-    legend: { show: false }, grid: { left: 8, right: 24, top: 24, bottom: 14, containLabel: true },
-    xAxis: yVal({ scale: true, axisLabel: { color: COL.axis, formatter: f.short } }),
-    yAxis: xCat(rows.map((r) => r.label), { axisLabel: { color: COL.axisStrong, fontSize: 11.5 } }),
-    series: [
-      { name: 'pad', type: 'bar', stack: 't', itemStyle: { color: 'transparent' }, data: rows.map((r) => rnd(r.low, 2)), silent: true },
-      { name: 'down', type: 'bar', stack: 't', itemStyle: { color: vgrad(COL.outflow2) }, data: rows.map((r) => rnd(Math.min(r.high, base) - r.low, 2)) },
-      {
-        name: 'up', type: 'bar', stack: 't', itemStyle: { color: vgrad(COL.green) }, data: rows.map((r) => rnd(r.high - Math.min(r.high, base), 2)),
-        markLine: { silent: true, symbol: 'none', lineStyle: { color: COL.gold, type: 'dashed', width: 1.4 }, label: { formatter: `base ${f.gridPrice(base)}`, color: COL.gold, fontSize: 11, position: 'insideEndTop' }, data: [{ xAxis: rnd(base, 2) }] },
-      },
-    ],
-  });
 }

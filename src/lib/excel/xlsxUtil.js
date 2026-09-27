@@ -8,11 +8,8 @@ export const C_HDR_TEXT = 'FFFFFFFF';
 export const C_SECTION_FILL = 'FFEAF1FA';
 export const C_GRID_FILL = 'FFF7FAFF';
 export const C_MUTED = 'FF999999';
-/** Hairline used for the rules that separate blocks on a page. */
-export const C_RULE = 'FFB4C4D8';
-/** Tab colours: analysis pages read dark, input pages read pale. */
+/** Tab colour of the analysis pages. */
 export const C_TAB_ANALYSIS = 'FF173A5E';
-export const C_TAB_INPUT = 'FF9DB8D6';
 /** Pale fill behind a blue input cell. */
 export const C_INPUT_FILL = 'FFF5F9FF';
 
@@ -27,13 +24,6 @@ export function colL(n) {
     n = Math.floor((n - 1) / 26);
   }
   return s;
-}
-
-/** Inverse of colL: 'A' -> 1, 'Z' -> 26, 'AA' -> 27. Multi-letter safe. */
-export function colN(letters) {
-  let n = 0;
-  for (const ch of String(letters).toUpperCase()) n = n * 26 + (ch.charCodeAt(0) - 64);
-  return n;
 }
 
 export function put(ws, addr, value, o = {}) {
@@ -90,13 +80,6 @@ export function styleSheet(ws, o = {}) {
   };
   if (tab) ws.properties.tabColor = { argb: tab };
   return ws;
-}
-
-/** Solid fill across a run of columns, leaving the cells' values alone. */
-export function fillRow(ws, row, cols, argb) {
-  for (const c of cols) {
-    ws.getCell(`${c}${row}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb } };
-  }
 }
 
 /** One border edge across a run of columns, merged into whatever is there. */
@@ -157,15 +140,3 @@ export function makeFormats(sym) {
 
 /** Wrap a formula so errors read "NA", as the 3E template does. */
 export const na = (f) => `IFERROR(${f},"NA")`;
-
-/** Excel-safe, unique worksheet name (31 chars, no []:*?/\\). */
-export function sheetName(raw, taken) {
-  let base = String(raw || 'Sheet').replace(/[[\]:*?/\\]/g, ' ').trim().slice(0, 31) || 'Sheet';
-  let name = base, i = 2;
-  while (taken.has(name)) {
-    const suffix = ` (${i++})`;
-    name = base.slice(0, 31 - suffix.length) + suffix;
-  }
-  taken.add(name);
-  return name;
-}

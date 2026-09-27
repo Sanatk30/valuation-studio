@@ -23,7 +23,7 @@ export default function Heatmap({ corner, rowLabels, colLabels, grid, fmt, fmtRo
   const base = isFinite(center) ? center : flat.reduce((s, v) => s + v, 0) / (flat.length || 1);
   const span = Math.max(...flat.map((v) => Math.abs(v - base)), 1e-9);
   return (
-    <div className="tablewrap" style={{ display: 'inline-block', padding: 8 }}>
+    <div className="tablewrap" style={{ display: 'inline-block', maxWidth: '100%', overflowX: 'auto', padding: 8 }}>
       <table className="heatmap">
         <thead>
           <tr>

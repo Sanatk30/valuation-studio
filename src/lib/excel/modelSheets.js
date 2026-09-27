@@ -1,6 +1,6 @@
 /**
- * Three-statement (with the forecast ratio block), past-ratio, LBO and IPO
- * pages. Every page links to the operating projection (dcfSheets.js) and the
+ * Three-statement (with the forecast ratio block), past-ratio and IPO pages.
+ * Every page links to the operating projection (projectionSheet.js) and the
  * Inputs sheet, and mirrors its engine exactly:
  *
  *   3 Statement — engine/threeStatement.js: interest on OPENING balances (no
@@ -9,15 +9,12 @@
  *                 ties the opening balance sheet to the reported equity.
  *   Ratios      — engine/ratios.js computeRatios (annual forecast) and
  *                 computeHistoryRatios (reported history only).
- *   LBO         — engine/lbo.js: cash left at close, PIK, fee amortisation,
- *                 NOL, the sweep waterfall with a cash floor, the floor price
- *                 at the hurdle IRR ± one step, and step-driven IRR grids.
  *   IPO         — engine/ipo.js: greenshoe size × % exercised, primary or
  *                 secondary greenshoe, NOL-aware pro-forma Year-1 earnings.
  */
 import {
   put, colL, colRun, na, styleSheet, edge, nv,
-  C_INPUT, C_LINK, C_HDR_FILL, C_HDR_TEXT, C_SECTION_FILL, C_GRID_FILL, C_MUTED,
+  C_INPUT, C_LINK, C_HDR_FILL, C_HDR_TEXT, C_SECTION_FILL, C_MUTED,
   C_TAB_ANALYSIS, C_INPUT_FILL,
 } from './xlsxUtil.js';
 import { historyLine, fyLabel } from '../historyModel.js';
@@ -452,221 +449,6 @@ export function writePastRatiosSheet(ws, a, F, o = {}) {
   put(ws, `A${r++}`, 'Reported figures only — nothing is back-cast. Balance-based ratios average the opening (prior reported period) and closing balances.', { italic: true, color: C_MUTED, size: 9 });
   if (first > 0) put(ws, `A${r++}`, `Earlier reported periods are shown as inputs because the averages and growth rates read them.`, { italic: true, color: C_MUTED, size: 9 });
   return { first, all, N, col, lastRow: r };
-}
-
-/* ==================================================================== */
-/*                                LBO sheet                             */
-/* ==================================================================== */
-
-export function writeLboSheet(ws, a, F, R, P) {
-  const n = a.drivers.years;
-  const yc = (i) => colL(3 + i);
-  const lastC = yc(n - 1);
-  const exitYearStatic = Math.min(Math.max(1, Math.round(a.lbo.exitYear)), n);
-  ws.getColumn(1).width = 44;
-  ws.getColumn(2).width = 14;
-  for (let i = 0; i < n; i++) ws.getColumn(3 + i).width = 13;
-  styleSheet(ws, { freezeRow: 1, freezeCol: 2, tab: C_TAB_ANALYSIS, printTitles: '1:1' });
-  let lr = 1;
-  put(ws, `A${lr}`, 'LEVERAGED BUYOUT', { bold: true, size: 14 });
-  put(ws, `C${lr}`, 'Interest on opening balances; tax after tax losses (NOL).', MUTED);
-  lr += 2;
-
-  const L = {};
-  const lVal = (key, label, formula, fmt, opts = {}) => {
-    L[key] = lr;
-    put(ws, `A${lr}`, label, opts);
-    put(ws, `B${lr}`, { formula }, { fmt, ...opts });
-    lr++;
-  };
-  const link = { color: C_LINK };
-
-  sectionHeader(ws, lr++, 'SOURCES & USES', 3);
-  lVal('ebitda0', 'LTM EBITDA', R.ebitda0, F.money, link);
-  lVal('entryEV', 'Entry enterprise value', `${R.entryX}*B${L.ebitda0}`, F.money, { bold: true });
-  lVal('feesTxn', 'Transaction fees', `B${L.entryEV}*${R.feesPct}`, F.money);
-  lVal('senior0', 'Senior debt', `${R.seniorX}*B${L.ebitda0}`, F.money);
-  lVal('mezz0', 'Mezzanine debt', `${R.mezzX}*B${L.ebitda0}`, F.money);
-  lVal('debt0', 'Total new debt', `B${L.senior0}+B${L.mezz0}`, F.money, { bold: true });
-  lVal('feesFin', 'Financing fees', `B${L.debt0}*${R.finFeesPct}`, F.money);
-  lVal('cashClose', 'Cash left on the balance sheet at close', R.cashAtClose, F.money, link);
-  lVal('uses', 'Total uses', `B${L.entryEV}+B${L.feesTxn}+B${L.feesFin}+B${L.cashClose}`, F.money, { bold: true, top: true });
-  lVal('equity0', 'Sponsor equity (plug)', `B${L.uses}-B${L.debt0}`, F.money, { bold: true, top: true });
-  lVal('sources', 'Total sources (debt + equity)', `B${L.debt0}+B${L.equity0}`, F.money, { italic: true });
-  lVal('levX', 'Leverage (Debt / LTM EBITDA)', na(`B${L.debt0}/B${L.ebitda0}`), F.x2, { italic: true });
-  lVal('feeAmort', 'Financing-fee amortisation p.a. (over the hold)', `B${L.feesFin}/${R.exitYear}`, F.money, { italic: true });
-  lr++;
-
-  sectionHeader(ws, lr++, 'DEBT SCHEDULE & FREE CASH FLOW', 2 + n);
-  const lHdr = lr;
-  yearHeader(ws, lr, n, F);
-  lr++;
-  const line = (key, label, opts = {}) => { L[key] = lr; put(ws, `A${lr}`, label, opts); lr++; };
-  line('ebitda', 'EBITDA', { bold: true });
-  line('da', 'Less: D&A');
-  line('cashInt', 'Less: Cash interest');
-  line('pik', 'Less: PIK accrual (non-cash)');
-  line('amort', 'Less: Financing-fee amortisation (non-cash)');
-  line('ebt', 'Pre-tax income');
-  line('nolOpen', '   Tax losses brought forward (NOL)', MUTED);
-  line('nolUsed', '   NOL used', MUTED);
-  line('nolClose', '   Tax losses carried forward', MUTED);
-  line('tax', 'Less: Tax (after tax losses)');
-  line('ni', 'Net income');
-  line('capex', 'Less: Capex');
-  line('dnwc', 'Less: Increase in NWC');
-  line('fcf', 'Free cash flow', { bold: true });
-  line('mand', 'Mandatory senior amortisation');
-  line('sweepCap', 'Sweep capacity (after the cash floor)', { italic: true });
-  line('sweepS', 'Cash sweep — to senior');
-  line('sweepM', 'Cash sweep — to mezzanine');
-  line('closeS', 'Closing senior debt');
-  line('closeM', 'Closing mezzanine debt');
-  line('cashB', 'Cash balance');
-  line('netDebt', 'Net debt', { bold: true });
-  line('levG', 'Gross leverage (Debt / EBITDA)', { italic: true });
-  line('cov', 'Cash interest coverage', { italic: true });
-
-  put(ws, `B${L.closeS}`, { formula: `B${L.senior0}` }, { fmt: F.money });
-  put(ws, `B${L.closeM}`, { formula: `B${L.mezz0}` }, { fmt: F.money });
-  put(ws, `B${L.cashB}`, { formula: `B${L.cashClose}` }, { fmt: F.money });
-  put(ws, `B${L.netDebt}`, { formula: `B${L.closeS}+B${L.closeM}-B${L.cashB}` }, { fmt: F.money, bold: true });
-  for (let i = 0; i < n; i++) {
-    const c = yc(i);
-    const p = i === 0 ? 'B' : yc(i - 1);
-    const pS = `${p}${L.closeS}`, pM = `${p}${L.closeM}`, pC = `${p}${L.cashB}`;
-    const mezzInt = `IF(${pM}=0,0,${pM}*${R.mezzRate})`;
-    put(ws, `${c}${L.ebitda}`, { formula: P.ref('ebitda', i) }, { fmt: F.money, ...link, bold: true });
-    put(ws, `${c}${L.da}`, { formula: `-${P.ref('da', i)}` }, { fmt: F.money, ...link });
-    put(ws, `${c}${L.cashInt}`, { formula: `-(${pS}*${R.seniorRate}+IF(${R.mezzPIK},0,${mezzInt}))` }, { fmt: F.money });
-    put(ws, `${c}${L.pik}`, { formula: `-IF(${R.mezzPIK},${mezzInt},0)` }, { fmt: F.money });
-    put(ws, `${c}${L.amort}`, { formula: `-IF(${c}$${lHdr}<=${R.exitYear},$B$${L.feeAmort},0)` }, { fmt: F.money });
-    put(ws, `${c}${L.ebt}`, { formula: `${c}${L.ebitda}+${c}${L.da}+${c}${L.cashInt}+${c}${L.pik}+${c}${L.amort}` }, { fmt: F.money });
-    put(ws, `${c}${L.nolOpen}`, { formula: i === 0 ? R.nol0 : `${p}${L.nolClose}` }, { fmt: F.money, ...MUTED });
-    put(ws, `${c}${L.nolUsed}`, { formula: `IF(${c}${L.ebt}>0,MIN(${c}${L.nolOpen},${c}${L.ebt}),0)` }, { fmt: F.money, ...MUTED });
-    put(ws, `${c}${L.nolClose}`, { formula: `${c}${L.nolOpen}-${c}${L.nolUsed}+IF(${c}${L.ebt}<=0,-${c}${L.ebt},0)` }, { fmt: F.money, ...MUTED });
-    put(ws, `${c}${L.tax}`, { formula: `-MAX(0,${c}${L.ebt}-${c}${L.nolUsed})*${R.tax}` }, { fmt: F.money });
-    put(ws, `${c}${L.ni}`, { formula: `${c}${L.ebt}+${c}${L.tax}` }, { fmt: F.money });
-    put(ws, `${c}${L.capex}`, { formula: P.ref('capex', i) }, { fmt: F.money, ...link });
-    put(ws, `${c}${L.dnwc}`, { formula: P.ref('dnwc', i) }, { fmt: F.money, ...link });
-    // add back the non-cash charges (the D&A / PIK / amortisation rows hold negatives)
-    put(ws, `${c}${L.fcf}`, { formula: `${c}${L.ni}-${c}${L.da}-${c}${L.pik}-${c}${L.amort}+${c}${L.capex}+${c}${L.dnwc}` }, { fmt: F.money, bold: true, top: true });
-    put(ws, `${c}${L.mand}`, { formula: `MIN(${pS},$B$${L.senior0}*${R.seniorAmort})` }, { fmt: F.money });
-    put(ws, `${c}${L.sweepCap}`, { formula: `MIN(MAX(0,${c}${L.fcf}-${c}${L.mand})*${R.sweepPct},MAX(0,${pC}+${c}${L.fcf}-${c}${L.mand}-${R.minCash}))` }, { fmt: F.money, italic: true });
-    put(ws, `${c}${L.sweepS}`, { formula: `MIN(${pS}-${c}${L.mand},${c}${L.sweepCap})` }, { fmt: F.money });
-    put(ws, `${c}${L.sweepM}`, { formula: `IF(${R.mezzPIK},0,MIN(${pM},${c}${L.sweepCap}-${c}${L.sweepS}))` }, { fmt: F.money });
-    put(ws, `${c}${L.closeS}`, { formula: `${pS}-${c}${L.mand}-${c}${L.sweepS}` }, { fmt: F.money });
-    put(ws, `${c}${L.closeM}`, { formula: `${pM}-${c}${L.pik}-${c}${L.sweepM}` }, { fmt: F.money });
-    put(ws, `${c}${L.cashB}`, { formula: `${pC}+${c}${L.fcf}-${c}${L.mand}-${c}${L.sweepS}-${c}${L.sweepM}` }, { fmt: F.money });
-    put(ws, `${c}${L.netDebt}`, { formula: `${c}${L.closeS}+${c}${L.closeM}-${c}${L.cashB}` }, { fmt: F.money, bold: true, top: true });
-    put(ws, `${c}${L.levG}`, { formula: na(`(${c}${L.closeS}+${c}${L.closeM})/${c}${L.ebitda}`) }, { fmt: F.x2, italic: true });
-    put(ws, `${c}${L.cov}`, { formula: `IF(${c}${L.cashInt}=0,"n/m",${na(`${c}${L.ebitda}/-${c}${L.cashInt}`)})` }, { fmt: F.x2, italic: true });
-  }
-  lr++;
-
-  sectionHeader(ws, lr++, 'EXIT & RETURNS', 3);
-  const ebRange = `${yc(0)}${L.ebitda}:${lastC}${L.ebitda}`;
-  const ndRange = `${yc(0)}${L.netDebt}:${lastC}${L.netDebt}`;
-  lVal('exitEbitda', 'Exit-year EBITDA', `INDEX(${ebRange},1,${R.exitYear})`, F.money);
-  lVal('exitEV', 'Exit enterprise value', `${R.lboExitX}*B${L.exitEbitda}`, F.money, { bold: true });
-  lVal('exitND', 'Net debt at exit', `INDEX(${ndRange},1,${R.exitYear})`, F.money);
-  lVal('exitEq', 'Exit equity value', `B${L.exitEV}-B${L.exitND}`, F.money, { bold: true, top: true });
-  lVal('moic', 'MOIC', `IF(B${L.equity0}>0,B${L.exitEq}/B${L.equity0},"NA")`, F.x2, { bold: true });
-  lVal('irrAlg', 'IRR (no interim distributions)', na(`IF(B${L.moic}>0,B${L.moic}^(1/${R.exitYear})-1,"NA")`), F.pct2, { bold: true });
-  L.eqCf = lr;
-  put(ws, `A${lr}`, 'Sponsor equity cash flow', { italic: true });
-  put(ws, `B${lr}`, { formula: `-B${L.equity0}` }, { fmt: F.money, italic: true });
-  for (let i = 0; i < n; i++) put(ws, `${yc(i)}${lr}`, { formula: `IF(${yc(i)}$${lHdr}=${R.exitYear},$B$${L.exitEq},0)` }, { fmt: F.money, italic: true });
-  lr++;
-  lVal('irrXl', 'IRR (Excel IRR on the equity cash flow)', na(`IRR(B${L.eqCf}:${lastC}${L.eqCf})`), F.pct2, { italic: true });
-  lr++;
-
-  sectionHeader(ws, lr++, 'VALUE CREATION BRIDGE', 3);
-  lVal('vcEntry', 'Entry equity', `B${L.equity0}`, F.money, { bold: true });
-  lVal('vcFees', 'Less: fees (transaction + financing)', `-(B${L.feesTxn}+B${L.feesFin})`, F.money);
-  lVal('vcGrowth', 'EBITDA growth × entry multiple', `(B${L.exitEbitda}-B${L.ebitda0})*${R.entryX}`, F.money);
-  lVal('vcMult', 'Multiple change × exit EBITDA', `(${R.lboExitX}-${R.entryX})*B${L.exitEbitda}`, F.money);
-  lVal('vcDelev', 'Deleveraging (entry net debt − exit net debt)', `(B${L.debt0}-B${L.cashClose})-B${L.exitND}`, F.money);
-  lVal('vcExit', 'Exit equity (check)', `B${L.vcEntry}+B${L.vcFees}+B${L.vcGrowth}+B${L.vcMult}+B${L.vcDelev}`, F.money, { bold: true, top: true });
-  lr++;
-
-  sectionHeader(ws, lr++, 'LBO FLOOR — MAX PRICE AT THE HURDLE IRR', 3);
-  const evAt = (h) => `((B${L.exitEq}/(1+${h})^${R.exitYear}+B${L.debt0}-B${L.feesFin}-B${L.cashClose})/(1+${R.feesPct}))`;
-  const pxAt = (h) => na(`(${evAt(h)}-${R.netDebt})/${R.shares}`);
-  lVal('eq0Req', 'Required entry equity (= exit equity / (1+h)^n)', `B${L.exitEq}/(1+${R.hurdle})^${R.exitYear}`, F.money);
-  lVal('evMax', 'Max entry enterprise value', evAt(R.hurdle), F.money, { bold: true });
-  lVal('floorX', 'Implied max entry multiple', na(`B${L.evMax}/B${L.ebitda0}`), F.x2, { italic: true });
-  lVal('floorPx', 'Floor price per share (at the hurdle)', pxAt(R.hurdle), F.price, { bold: true });
-  lVal('floorLow', 'Floor price — hurdle + step (low)', pxAt(`(${R.hurdle}+${R.sHurdle}/100)`), F.price);
-  lVal('floorHigh', 'Floor price — hurdle − step (high)', pxAt(`(${R.hurdle}-${R.sHurdle}/100)`), F.price);
-  lr++;
-
-  sectionHeader(ws, lr++, 'RETURNS ANALYSIS — IF EXITED EACH YEAR', 2 + n);
-  const retHdr = lr;
-  yearHeader(ws, lr, n, F, { withZero: false });
-  lr++;
-  line('retEV', 'Exit EV (exit multiple × EBITDA)');
-  line('retEq', 'Exit equity (EV − net debt)', { bold: true });
-  line('retMoic', 'MOIC', { bold: true });
-  line('retIrr', 'IRR (no interim distributions)', { bold: true });
-  for (let i = 0; i < n; i++) {
-    const c = yc(i);
-    put(ws, `${c}${L.retEV}`, { formula: `${R.lboExitX}*${c}${L.ebitda}` }, { fmt: F.money });
-    put(ws, `${c}${L.retEq}`, { formula: `${c}${L.retEV}-${c}${L.netDebt}` }, { fmt: F.money, bold: true });
-    put(ws, `${c}${L.retMoic}`, { formula: `IF($B$${L.equity0}>0,${c}${L.retEq}/$B$${L.equity0},"NA")` }, { fmt: F.x2, bold: true });
-    put(ws, `${c}${L.retIrr}`, { formula: na(`IF(${c}${L.retMoic}>0,${c}${L.retMoic}^(1/${c}$${retHdr})-1,"NA")`) }, { fmt: F.pct, bold: true });
-  }
-  lr++;
-
-  const K = [-2, -1, 0, 1, 2];
-  const gridStart = (title) => {
-    for (let i = 1; i <= 6; i++) put(ws, `${colL(i)}${lr}`, i === 1 ? title : '', { fill: C_HDR_FILL, color: C_HDR_TEXT, bold: true });
-    ws.mergeCells(`A${lr}:F${lr}`);
-    return ++lr;
-  };
-  const exitAt = (k) => (k ? `${R.lboExitX}+(${k})*${R.sExit}` : R.lboExitX);
-
-  // Sensitivity 1: entry × exit multiple (the debt schedule is invariant to both)
-  let top = gridStart('SENSITIVITY — IRR: ENTRY (rows) × EXIT MULTIPLE (cols)');
-  put(ws, `A${top}`, 'Entry \\ Exit', { italic: true, align: 'center', fill: C_SECTION_FILL });
-  K.forEach((k, j) => put(ws, `${colL(2 + j)}${top}`, { formula: exitAt(k) }, { fmt: F.x, bold: true, align: 'center', fill: C_SECTION_FILL }));
-  K.forEach((k, i) => {
-    const rr = top + 1 + i;
-    put(ws, `A${rr}`, { formula: k ? `${R.entryX}+(${k})*${R.sEntry}` : R.entryX }, { fmt: F.x, bold: true, fill: C_SECTION_FILL });
-    K.forEach((_, j) => {
-      const en = `$A${rr}`, ex = `${colL(2 + j)}$${top}`;
-      const eq0 = `(${en}*$B$${L.ebitda0}*(1+${R.feesPct})+$B$${L.feesFin}+$B$${L.cashClose}-$B$${L.debt0})`;
-      const eqN = `(${ex}*$B$${L.exitEbitda}-$B$${L.exitND})`;
-      put(ws, `${colL(2 + j)}${rr}`, { formula: na(`IF(AND(${eq0}>0,${eqN}>0),(${eqN}/${eq0})^(1/${R.exitYear})-1,"NA")`) }, { fmt: F.pct, fill: C_GRID_FILL });
-    });
-  });
-  const gridEntry = `'${ws.name}'!$B$${top + 1}:$F$${top + 5}`;
-  lr = top + 7;
-
-  // Sensitivity 2: holding period × exit multiple (exits the base schedule at year y)
-  top = gridStart('SENSITIVITY — IRR: HOLDING PERIOD (rows) × EXIT MULTIPLE (cols)');
-  put(ws, `A${top}`, 'Hold \\ Exit', { italic: true, align: 'center', fill: C_SECTION_FILL });
-  K.forEach((k, j) => put(ws, `${colL(2 + j)}${top}`, { formula: exitAt(k) }, { fmt: F.x, bold: true, align: 'center', fill: C_SECTION_FILL }));
-  const holdYears = [];
-  for (let y = Math.max(1, exitYearStatic - 2); y <= Math.min(n, exitYearStatic + 2) && holdYears.length < 5; y++) holdYears.push(y);
-  holdYears.forEach((y, i) => {
-    const rr = top + 1 + i;
-    put(ws, `A${rr}`, y, { fmt: '0"y"', bold: true, fill: C_SECTION_FILL });
-    K.forEach((_, j) => {
-      const ex = `${colL(2 + j)}$${top}`;
-      const eqN = `(${ex}*INDEX($${yc(0)}$${L.ebitda}:$${lastC}$${L.ebitda},1,$A${rr})-INDEX($${yc(0)}$${L.netDebt}:$${lastC}$${L.netDebt},1,$A${rr}))`;
-      put(ws, `${colL(2 + j)}${rr}`, { formula: na(`IF(AND($B$${L.equity0}>0,${eqN}>0),(${eqN}/$B$${L.equity0})^(1/$A${rr})-1,"NA")`) }, { fmt: F.pct, fill: C_GRID_FILL });
-    });
-  });
-  lr = top + 2 + holdYears.length;
-  put(ws, `A${lr}`, 'Step sizes are blue inputs on the Inputs sheet. The holding-period rows are fixed at export (the exit year ± 2).', { italic: true, color: C_MUTED, size: 9 });
-
-  const q = `'${ws.name}'`;
-  const at = (k) => `${q}!$B$${L[k]}`;
-  return {
-    L, gridEntry,
-    refs: { irr: at('irrAlg'), moic: at('moic'), equity0: at('equity0'), floorPx: at('floorPx'), floorLow: at('floorLow'), floorHigh: at('floorHigh'), exitEq: at('exitEq'), uses: at('uses') },
-  };
 }
 
 /* ==================================================================== */

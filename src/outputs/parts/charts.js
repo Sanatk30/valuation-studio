@@ -51,37 +51,6 @@ export function projectionOption(f, labels, ops) {
   }, { zoom: n > 9 });
 }
 
-/** Revenue growth % bars. */
-export function growthOption(f, labels, growth) {
-  return themed({
-    tooltip: tipBy({}, (v) => fmtPct(v, 1)),
-    xAxis: xCat(labels), yAxis: pctAxis(),
-    legend: { show: false },
-    series: [barSeries('Revenue growth', COL.green, growth.map((v) => rnd(v, 2)), { barMaxWidth: 44, label: valueLabels((v) => fmtPct(v, 1), labels.length) })],
-  });
-}
-
-/**
- * Bars per company / deal with the median line and the Q1–Q3 band.
- * items: [{ name, value }] — only finite values are plotted.
- */
-export function bandBarsOption(items, { color = COL.teal, name = 'Multiple', fmt = (v) => fmtX(v, 2), rotate = 12 } = {}) {
-  const pts = items.filter((it) => fin(it.value));
-  if (!pts.length) return null;
-  const vals = pts.map((p) => +p.value.toFixed(2));
-  const q1 = pctl(vals, 0.25), q3 = pctl(vals, 0.75), med = pctl(vals, 0.5);
-  return themed({
-    tooltip: { ...tipBy({}, fmt), axisPointer: { type: 'shadow' } }, legend: { show: false },
-    xAxis: xCat(pts.map((p) => p.name), { axisLabel: { color: COL.axis, fontSize: 10.5, interval: 0, rotate } }),
-    yAxis: yVal({ scale: true, axisLabel: { color: COL.axis, formatter: '{value}x' } }),
-    series: [{
-      name, type: 'bar', barMaxWidth: 40, itemStyle: barStyle(color), data: vals,
-      markArea: { silent: true, itemStyle: { color: 'rgba(108,140,255,0.09)' }, label: { show: true, position: 'insideTopLeft', color: COL.teal, fontSize: 10, formatter: 'Q1–Q3' }, data: [[{ yAxis: q1 }, { yAxis: q3 }]] },
-      markLine: { silent: true, symbol: 'none', lineStyle: { color: COL.gold, type: 'dashed' }, label: { formatter: `median ${fmtX(med, 1)}`, color: COL.gold, fontSize: 11 }, data: [{ yAxis: med }] },
-    }],
-  });
-}
-
 /**
  * Box & whisker over several multiples.
  * groups: [{ label, values: number[] }] — groups with no finite value are dropped.
@@ -118,21 +87,6 @@ export function ownershipOption(existingPostPct, newPostPct) {
       { name: 'Existing holders', type: 'bar', stack: 'o', barMaxWidth: 90, itemStyle: { color: vgrad(COL.teal) }, label: lbl(), data: [100, rnd(existingPostPct, 1)] },
       { name: 'New investors', type: 'bar', stack: 'o', barMaxWidth: 90, itemStyle: { color: vgrad(COL.rose), borderRadius: [3, 3, 0, 0] }, label: lbl(), data: [0, rnd(newPostPct, 1)] },
     ],
-  });
-}
-
-/** A pie / ring of named parts. */
-export function ringOption(parts, fmt) {
-  const data = parts.filter((p) => fin(p.value) && p.value > 0);
-  if (!data.length) return null;
-  return themed({
-    tooltip: tipItem(fmt), legend: { show: false },
-    series: [{
-      type: 'pie', radius: ['52%', '74%'], center: ['50%', '54%'], padAngle: 3,
-      itemStyle: { borderRadius: 6, borderColor: '#161B25', borderWidth: 2 },
-      label: { color: COL.axisStrong, formatter: '{b}\n{d}%', fontSize: 11 }, labelLine: { lineStyle: { color: COL.axis } },
-      data: data.map((p) => ({ name: p.name, value: Math.round(p.value), itemStyle: { color: vgrad(p.color) } })),
-    }],
   });
 }
 

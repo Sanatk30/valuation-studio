@@ -39,6 +39,22 @@ export function Field({ spec, data, onSet, company, reveal = false }) {
     );
   }
 
+  if (spec.kind === 'date') {
+    return (
+      <div className="fld">
+        <div className="fld-l">
+          <label>{spec.label}</label>
+          {optional && <span className="fld-opt">optional</span>}
+        </div>
+        <input
+          type="date" className="fld-in txt" value={value ?? ''}
+          onChange={(e) => onSet(spec.path, e.target.value)}
+        />
+        {spec.hint && <div className="fld-h">{spec.hint}</div>}
+      </div>
+    );
+  }
+
   if (spec.kind === 'text') {
     return (
       <div className="fld">

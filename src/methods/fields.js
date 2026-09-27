@@ -30,6 +30,7 @@ export const f = {
     ...o,
   }),
   text: (path, label, o = {}) => ({ path, label, kind: 'text', required: false, ...o }),
+  date: (path, label, o = {}) => ({ path, label, kind: 'date', required: false, ...o }),
 };
 
 const isBlank = (v) => v === null || v === undefined || v === '' || (typeof v === 'number' && Number.isNaN(v));
@@ -37,7 +38,7 @@ const isBlank = (v) => v === null || v === undefined || v === '' || (typeof v ==
 /** Error message for one field, or null when it is valid. */
 export function fieldError(spec, value) {
   const required = spec.required !== false;
-  if (spec.kind === 'text') return required && !String(value ?? '').trim() ? 'Required' : null;
+  if (spec.kind === 'text' || spec.kind === 'date') return required && !String(value ?? '').trim() ? 'Required' : null;
   if (spec.kind === 'choice' || spec.kind === 'bool') {
     if (isBlank(value)) return required ? 'Choose one' : null;
     return spec.options.some((o) => o.value === value) ? null : 'Choose one';
@@ -65,7 +66,7 @@ export function fieldErrors(specs, data) {
 
 /** True when any listed field holds a value (used for "not started" detection). */
 export function anyFilled(specs, data) {
-  return specs.some((s) => s.kind !== 'text' && !isBlank(getPath(data, s.path)));
+  return specs.some((s) => s.kind !== 'text' && s.kind !== 'date' && !isBlank(getPath(data, s.path)));
 }
 
 /** Suffix shown inside an input for a field kind. */

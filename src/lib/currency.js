@@ -63,49 +63,55 @@ function convertDrivers(d, cv) {
   return out;
 }
 
-/** A comps / deal-target input page (engine/compsCo.js shape). */
-function convertPage(co, cv) {
-  if (!co) return co;
-  const groups = (g, f) => (g ? Object.fromEntries(Object.entries(g).map(([k, arr]) => [k, mapArr(arr, f)])) : g);
-  const is = co.is ? { ...groups(co.is, cv.money), dilutedShares: mapArr(co.is.dilutedShares, cv.shares) } : co.is;
-  const reported = co.reported ? groups(co.reported, cv.money) : co.reported;
+/** A template company page (engine/companyPage.js): every line is money except the share count. */
+function convertPage(page, cv) {
+  if (!page?.lines) return page;
+  const line = (l, f) => (l ? { ...l, fy: mapArr(l.fy, f), p: mapNum(l.p, f), c: mapNum(l.c, f) } : l);
   return {
-    ...keys(keys(co, ['price', 'high52', 'low52', 'dpsMRQ'], cv.price), ['basicShares'], cv.shares),
-    is,
-    adj: groups(co.adj, cv.money),
-    cf: groups(co.cf, cv.money),
-    bs: groups(co.bs, cv.money),
-    ...(reported ? { reported } : {}),
-    options: (co.options || []).map((o) => ({ ...o, shares: mapNum(o.shares, cv.shares), strike: mapNum(o.strike, cv.price) })),
-    converts: (co.converts || []).map((c) => ({ ...c, amount: mapNum(c.amount, cv.money), price: mapNum(c.price, cv.price) })),
+    ...page,
+    lines: Object.fromEntries(Object.entries(page.lines).map(([k, l]) => [k, line(l, k === 'shares' ? cv.shares : cv.money)])),
+  };
+}
+/** A company slot (comps target / peer, precedent company): price, diluted shares and its page. */
+const convertSlot = (x, cv) => (x ? { ...keys(keys(x, ['price'], cv.price), ['shares'], cv.shares), page: convertPage(x.page, cv) } : x);
+
+/** The DCF template inputs (engine/dcfTemplate.js): the company slot and the one money driver (net borrowing). */
+function convertDcfT(x, cv) {
+  if (!x) return x;
+  return { ...x, company: convertSlot(x.company, cv), drivers: x.drivers ? { ...x.drivers, netBorrow: mapArr(x.drivers.netBorrow, cv.money) } : x.drivers };
+}
+
+/** The LBO template inputs (engine/lboTemplate.js): the company page, existing cash used and the minimum cash balance. */
+function convertLboT(x, cv) {
+  if (!x) return x;
+  return {
+    ...x,
+    company: x.company ? { ...x.company, page: convertPage(x.company.page, cv) } : x.company,
+    deal: keys(x.deal, ['cashUsed'], cv.money),
+    cash: keys(x.cash, ['minCash'], cv.money),
   };
 }
 
 function convertComps(comps, cv) {
   if (!comps) return comps;
-  return {
-    ...comps,
-    target: keys(keys(comps.target, ['revenue', 'ebitda', 'ebit', 'netIncome', 'priorRevenue', 'priorEbitda', 'grossProfit', 'interest', 'equity'], cv.money), ['high52', 'low52'], cv.price),
-    peers: (comps.peers || []).map((p) => convertPage(p, cv)),
-  };
+  return { ...comps, target: convertSlot(comps.target, cv), peers: (comps.peers || []).map((p) => convertSlot(p, cv)) };
 }
 
 function convertRegression(reg, cv) {
   if (!reg?.targetOverrides) return reg;
   // the two size variables are money; every other built-in is a %, a multiple or a ratio
-  return { ...reg, targetOverrides: keys(reg.targetOverrides, ['revSize', 'mktCapSize'], cv.money) };
+  return { ...reg, targetOverrides: keys(reg.targetOverrides, ['revSize', 'mcapSize'], cv.money) };
 }
 
 function convertPrecedent(p, cv) {
   if (!p) return p;
   return {
     ...p,
-    target: keys(p.target, ['revenue', 'ebitda'], cv.money),
-    deals: (p.deals || []).map((d) => ({
-      ...keys(d, ['cashOffer', 'acquirerPrice'], cv.price),
-      unaffected: d.unaffected ? Object.fromEntries(Object.entries(d.unaffected).map(([k, v]) => [k, mapNum(v, cv.price)])) : d.unaffected,
-      target: convertPage(d.target, cv),
-    })),
+    company: convertSlot(p.company, cv),
+    deals: (p.deals || []).map((d) => (d ? {
+      ...keys(keys(d, ['consideration'], cv.money), ['offerPrice', 'unaffectedPrice'], cv.price),
+      page: convertPage(d.page, cv),
+    } : d)),
   };
 }
 
@@ -130,7 +136,8 @@ function convertMethodData(data, cv, meta) {
   if (data.company) out.company = convertCompanySection(data.company, cv);
   if (data.drivers) out.drivers = convertDrivers(data.drivers, cv);
   if (data.ts) out.ts = keys(data.ts, ['startingPPE', 'equity0'], cv.money);
-  if (data.lbo) out.lbo = keys(data.lbo, ['cashAtClose', 'minCash'], cv.money);
+  if (data.dcf) out.dcf = convertDcfT(data.dcf, cv);
+  if (data.lbo) out.lbo = convertLboT(data.lbo, cv);
   if (data.ipo) out.ipo = keys(data.ipo, ['primaryRaise'], cv.money);
   if (data.comps) out.comps = convertComps(data.comps, cv);
   if (data.regression) out.regression = convertRegression(data.regression, cv);

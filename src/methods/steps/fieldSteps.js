@@ -1,52 +1,6 @@
 import { f } from '../fields.js';
 import { hasHistory } from '../../lib/historyModel.js';
 
-/* ================================ LBO ================================ */
-
-export const lboEntryStep = () => ({
-  id: 'lboEntry',
-  title: 'Entry & exit',
-  blurb: 'Purchase and exit multiples on EBITDA, the holding period, fees and the cash left in the business at close.',
-  fields: (data) => [
-    f.x('lbo.entryMultiple', 'Entry EV / LTM EBITDA'),
-    f.x('lbo.exitMultiple', 'Exit EV / EBITDA'),
-    f.int('lbo.exitYear', 'Exit year', { min: 1, max: Number.isInteger(data.drivers?.years) ? data.drivers.years : undefined, hint: Number.isInteger(data.drivers?.years) ? `1 to ${data.drivers.years} (the forecast horizon)` : 'Within the forecast horizon' }),
-    f.pct('lbo.feesPctEV', 'Transaction fees (% of entry EV)', { min: 0 }),
-    f.pct('lbo.finFeesPct', 'Financing fees (% of new debt)', { min: 0, hint: 'Capitalised and amortised over the hold (tax-deductible, non-cash)' }),
-    f.money('lbo.cashAtClose', 'Cash left on the balance sheet at close', { hint: 'Funded at close as part of the uses; 0 for a cash-free deal' }),
-  ],
-});
-
-export const lboDebtStep = () => ({
-  id: 'lboDebt',
-  title: 'Debt structure',
-  blurb: 'New acquisition debt, sized as multiples of LTM EBITDA.',
-  fields: (data) => {
-    const hasMezz = Number.isFinite(data.lbo?.mezzX) && data.lbo.mezzX > 0;
-    return [
-      f.x('lbo.seniorX', 'Senior debt (x LTM EBITDA)', { gt: undefined, min: 0 }),
-      f.pct('lbo.seniorRate', 'Senior interest rate', { min: 0 }),
-      f.pct('lbo.seniorAmort', 'Senior amortisation p.a. (% of original)', { min: 0, max: 100 }),
-      f.x('lbo.mezzX', 'Mezzanine debt (x LTM EBITDA)', { gt: undefined, min: 0, hint: '0 if none' }),
-      ...(hasMezz ? [
-        f.pct('lbo.mezzRate', 'Mezzanine interest rate', { min: 0 }),
-        f.bool('lbo.mezzPIK', 'Is mezzanine interest PIK?', { yes: 'PIK — accrues to the balance', no: 'Cash-pay' }),
-      ] : []),
-    ];
-  },
-});
-
-export const lboSweepStep = () => ({
-  id: 'lboSweep',
-  title: 'Cash sweep & hurdle',
-  blurb: 'How free cash flow repays debt, the operating cash floor, and the return a sponsor requires.',
-  fields: () => [
-    f.pct('lbo.sweepPct', 'Cash sweep (% of FCF after amortisation)', { min: 0, max: 100 }),
-    f.money('lbo.minCash', 'Minimum operating cash', { hint: 'The sweep never takes cash below this' }),
-    f.pct('lbo.hurdleRate', 'Sponsor IRR hurdle', { gt: 0, hint: 'Sets the LBO floor price — the most a sponsor could pay and still earn it' }),
-  ],
-});
-
 /* ================================ IPO ================================ */
 
 export const financingSpecs = ({ ppe = false } = {}) => [
@@ -133,42 +87,3 @@ export const ratioSettingsStep = () => ({
     ];
   },
 });
-
-/* ============================ Comps target ============================ */
-
-export const compsTargetStep = () => ({
-  id: 'compsTarget',
-  title: 'Target LTM financials',
-  blurb: 'The company’s trailing-twelve-month figures the peer multiples are applied to.',
-  fields: () => [
-    f.money('comps.target.revenue', 'LTM revenue', { gt: 0, min: undefined }),
-    f.signedMoney('comps.target.ebitda', 'LTM EBITDA'),
-    f.signedMoney('comps.target.ebit', 'LTM EBIT'),
-    f.signedMoney('comps.target.netIncome', 'LTM net income'),
-    f.money('comps.target.priorRevenue', 'Prior fiscal-year revenue', { required: false, hint: 'For historical growth (benchmarking and the regression)' }),
-    f.signedMoney('comps.target.priorEbitda', 'Prior fiscal-year EBITDA', { required: false }),
-    f.signedMoney('comps.target.grossProfit', 'LTM gross profit', { required: false }),
-    f.money('comps.target.interest', 'LTM interest expense', { required: false }),
-    f.signedMoney('comps.target.equity', "Shareholders' equity", { required: false, hint: 'For ROE' }),
-    f.num('comps.target.beta', 'Levered beta', { required: false, gt: 0 }),
-    f.price('comps.target.high52', '52-week high', { required: false }),
-    f.price('comps.target.low52', '52-week low', { required: false }),
-    f.text('comps.target.ticker', 'Ticker'),
-    f.text('comps.target.moodys', "Moody's rating"),
-    f.text('comps.target.sp', 'S&P rating'),
-    f.text('comps.target.description', 'Business description'),
-  ],
-});
-
-/* ========================== Precedent target ========================== */
-
-export const precTargetStep = () => ({
-  id: 'precTarget',
-  title: 'Target LTM financials',
-  blurb: 'Deal multiples are applied to trailing figures.',
-  fields: () => [
-    f.money('precedent.target.revenue', 'LTM revenue', { gt: 0, min: undefined }),
-    f.signedMoney('precedent.target.ebitda', 'LTM EBITDA'),
-  ],
-});
-

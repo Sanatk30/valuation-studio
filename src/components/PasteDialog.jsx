@@ -1,113 +1,92 @@
 import React, { useMemo, useState } from 'react';
-import { parseGrid, applyGrid, parseWide, BLOCKS, WIDE_TEMPLATE_HEADER } from '../lib/compsPaste.js';
+import { parsePageGrid, applyPageGrid, parseCompanyList, LIST_HEADER } from '../lib/templatePaste.js';
 
 /**
- * Paste financials straight out of a spreadsheet.
+ * Paste out of a spreadsheet.
  *
- * Two modes:
- *   grid — line items down, periods across, into one company's page.
- *   wide — one row per company, adding a whole peer set at once.
+ *   mode 'page' — line items down, periods across, into one company page
+ *                 (`columns` = the page's input columns in order).
+ *   mode 'list' — the company list (one row per company with a header row).
  *
- * Nothing is applied until you confirm: the dialog shows every row it matched,
- * where each column will land, and every row it could not place.
+ * Nothing is applied until you confirm: the preview shows every row matched,
+ * where each pasted column lands, the calculated rows skipped and the rows
+ * not recognised.
  */
-export default function PasteDialog({ mode = 'grid', co, tiers = [], onApply, onClose }) {
+export default function PasteDialog({ mode = 'page', title, page, n, columns = [], onApply, onClose }) {
   const [text, setText] = useState('');
-  const [block, setBlock] = useState('');     // '' = auto-detect
-  const [offset, setOffset] = useState(0);
+  const [offset, setOffset] = useState('auto');   // 'auto' = line up by the pasted header row
 
   const parsed = useMemo(() => {
     if (!text.trim()) return null;
-    return mode === 'grid'
-      ? parseGrid(text, { block: block || null, offset })
-      : parseWide(text, { tiers });
-  }, [text, block, offset, mode, tiers]);
+    return mode === 'page' ? parsePageGrid(text, { columns, offset }) : parseCompanyList(text);
+  }, [text, offset, mode, columns]);
 
-  const periods = parsed?.ok && mode === 'grid' ? parsed.periods : [];
-  const maxOffset = parsed?.ok && mode === 'grid' ? Math.max(0, periods.length - 1) : 0;
-
+  const fmt = (v) => (v === undefined ? '—' : v.toLocaleString('en-US', { maximumFractionDigits: 2 }));
   const apply = () => {
     if (!parsed?.ok) return;
-    if (mode === 'grid') onApply(applyGrid(co, parsed));
-    else onApply(parsed.companies.map((c) => c.co));
+    onApply(mode === 'page' ? applyPageGrid(page, parsed, n) : parsed.companies);
     onClose();
   };
 
   return (
     <div className="bulk-ov" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="bulk-modal" style={{ width: 'min(920px, 96vw)' }}>
+      <div className="bulk-modal" style={{ width: 'min(960px, 96vw)' }}>
         <div className="bulk-head">
-          <h2>{mode === 'grid' ? `Paste financials — ${co?.name || 'company'}` : 'Paste a peer set'}</h2>
+          <h2>{title || (mode === 'page' ? 'Paste financials' : 'Paste the company list')}</h2>
           <div className="sub">
-            {mode === 'grid'
-              ? 'Copy a block out of Excel: line items down the first column, one column per period. Rows are matched by label, so extra rows and subtotals in between are fine.'
-              : 'One row per company, with a header row naming the columns. Add a period suffix (Sales FY0, Total debt Current, Estimated EBITDA NFY) or leave it off for the default period.'}
+            {mode === 'page'
+              ? 'Copy a block out of Excel: line items down the first column, one column per period (e.g. the columns of a filled template sheet, or an annual-report table). Rows are matched by label; totals are recalculated here, so they are skipped.'
+              : 'One row per company with a header row: Company Name, Ticker, Sector, Include, Share Price, Diluted Shares, Tier (any order; unknown columns are skipped).'}
           </div>
           <div style={{ flex: 1 }} />
           <button className="btn ghost" onClick={onClose} style={{ fontSize: 16, padding: '4px 10px' }}>✕</button>
         </div>
 
         <textarea
-          className="paste-box"
-          autoFocus
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder={mode === 'grid'
-            ? 'Sales\t4,200.5\t4,704.6\t5,269.1\nCOGS\t(2,730.3)\t(3,057.0)\t(3,424.9)\nSG&A\t420.1\t470.5\t526.9'
-            : `${WIDE_TEMPLATE_HEADER.split('\t').slice(0, 6).join('\t')}\t…`}
+          className="paste-box" autoFocus value={text} onChange={(e) => setText(e.target.value)}
+          placeholder={mode === 'page'
+            ? 'Revenue from Operations\t4,200\t4,750\t5,300\nOther Income\t45\t52\t60\nTrade Receivables\t580\t650\t720'
+            : `${LIST_HEADER}\nABC Industries Ltd\tABC.NS\tSpecialty Chemicals\t1\t850\t12.5\t`}
         />
 
-        {mode === 'wide' && (
+        {mode === 'list' && !text && (
           <div className="sec-note" style={{ marginTop: 6 }}>
-            <button className="btn sm" onClick={() => setText(`${WIDE_TEMPLATE_HEADER}\n`)}>Insert template header</button>
-            <span style={{ marginLeft: 10 }}>Recognised column names include Company, Ticker, Tier, Price, Basic shares outstanding, and any line item from the input page.</span>
+            <button className="btn sm" onClick={() => setText(`${LIST_HEADER}\n`)}>Insert header row</button>
           </div>
         )}
 
-        {mode === 'grid' && parsed?.ok && (
+        {mode === 'page' && parsed?.ok && (
           <div className="paste-ctrls">
             <label>
-              Paste into
-              <select value={block || parsed.target} onChange={(e) => { setBlock(e.target.value); setOffset(0); }}>
-                {Object.entries(BLOCKS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+              First pasted column is
+              <select value={parsed.offset} onChange={(e) => setOffset(parseInt(e.target.value, 10))}>
+                {columns.map((c, i) => <option key={String(c.id)} value={i}>{c.label}</option>)}
               </select>
             </label>
-            <label>
-              First column is
-              <select value={offset} onChange={(e) => setOffset(parseInt(e.target.value, 10))}>
-                {periods.map((p, i) => <option key={p} value={i} disabled={i > maxOffset}>{p}</option>)}
-              </select>
-            </label>
-            {!block && <span className="sec-note">auto-detected from the row labels</span>}
           </div>
         )}
 
         {parsed && !parsed.ok && <div className="warn" style={{ marginTop: 12 }}>{parsed.reason}</div>}
 
-        {/* ---------------- grid preview ---------------- */}
-        {mode === 'grid' && parsed?.ok && (
+        {mode === 'page' && parsed?.ok && (
           <>
             <div className="bulk-sec">
-              <h4>{parsed.matched.length} line item{parsed.matched.length === 1 ? '' : 's'} will be updated</h4>
+              <h4>{parsed.matched.length} line item{parsed.matched.length === 1 ? '' : 's'} will be written</h4>
               <div className="tablewrap" style={{ maxHeight: 300, overflowY: 'auto' }}>
                 <table className="fin">
                   <thead>
                     <tr>
-                      <th>Pasted label</th><th>Field</th>
-                      {parsed.slots.map((slot, i) => (
-                        <th key={i} className={slot == null ? 'muted' : ''}>{slot == null ? 'dropped' : periods[slot]}</th>
-                      ))}
+                      <th>Page line</th><th>Pasted row(s)</th>
+                      {parsed.slots.map((slot, i) => <th key={i} className={slot ? '' : 'muted'}>{slot ? slot.label : 'dropped'}</th>)}
                     </tr>
                   </thead>
                   <tbody>
-                    {parsed.matched.map((m, i) => (
-                      <tr key={i}>
-                        <td>{m.label}</td>
-                        <td className="txt">{m.field.label}</td>
+                    {parsed.matched.map((m) => (
+                      <tr key={m.key}>
+                        <td>{m.line}</td>
+                        <td className="txt">{m.sources.join(' + ')}</td>
                         {parsed.slots.map((slot, j) => (
-                          <td key={j} className={slot == null ? 'muted' : ''}>
-                            {m.values[j]?.ok ? m.values[j].value.toLocaleString('en-US', { maximumFractionDigits: 2 }) : '—'}
-                          </td>
+                          <td key={j} className={slot ? '' : 'muted'}>{m.group === 'bs' && slot?.id === 'p' ? 'n/a' : fmt(m.values[j])}</td>
                         ))}
                       </tr>
                     ))}
@@ -116,69 +95,54 @@ export default function PasteDialog({ mode = 'grid', co, tiers = [], onApply, on
               </div>
               {parsed.dropped > 0 && (
                 <div className="warn" style={{ marginTop: 8 }}>
-                  {parsed.dropped} column{parsed.dropped === 1 ? '' : 's'} past “{periods[periods.length - 1]}” will be ignored — change the starting period above if that's not what you want.
+                  {parsed.dropped} pasted column{parsed.dropped === 1 ? '' : 's'} run past the page’s last input column and will be ignored — change “First pasted column is” if that is not intended.
                 </div>
               )}
-              <div className="sec-note" style={{ marginTop: 6 }}>A blank cell leaves the existing value alone; “—” means nothing will be written.</div>
+              <div className="sec-note" style={{ marginTop: 6 }}>
+                Rows naming the same line are added together. A blank pasted cell leaves the page’s cell unchanged. The balance sheet has no prior-YTD column.
+              </div>
             </div>
-
-            {parsed.otherBlocks?.length > 0 && (
+            {parsed.skipped.length > 0 && (
               <div className="bulk-sec">
-                <h4>Held back — these belong to another block</h4>
-                <div className="sec-note">
-                  {parsed.otherBlocks.map((m) => m.label).join(' · ')} — switch “Paste into” to {BLOCKS[parsed.otherBlocks[0].field.group].label} to bring them in.
-                </div>
+                <h4>Calculated on the page — skipped</h4>
+                <div className="sec-note">{parsed.skipped.map((u) => u.label).join(' · ')}</div>
               </div>
             )}
             {parsed.unmatched.length > 0 && (
               <div className="bulk-sec">
-                <h4>Not recognised — these rows will be skipped</h4>
+                <h4>Not recognised — skipped</h4>
                 <div className="sec-note">{parsed.unmatched.map((u) => u.label).join(' · ')}</div>
               </div>
             )}
           </>
         )}
 
-        {/* ---------------- wide preview ---------------- */}
-        {mode === 'wide' && parsed?.ok && (
-          <>
-            <div className="bulk-sec">
-              <h4>{parsed.companies.length} compan{parsed.companies.length === 1 ? 'y' : 'ies'} will be added</h4>
-              <div className="tablewrap" style={{ maxHeight: 300, overflowY: 'auto' }}>
-                <table className="fin">
-                  <thead><tr><th>Company</th><th>Ticker</th><th>Tier</th><th>Price</th><th>FY0 sales</th><th>Fields filled</th></tr></thead>
-                  <tbody>
-                    {parsed.companies.map((c, i) => (
-                      <tr key={i}>
-                        <td>{c.co.name}</td>
-                        <td className="txt">{c.co.ticker || '—'}</td>
-                        <td className="txt">{c.co._tierName || (c.co.tierId ? '—' : 'unassigned')}</td>
-                        <td>{c.co.price ? c.co.price.toLocaleString('en-US', { maximumFractionDigits: 2 }) : '—'}</td>
-                        <td>{c.co.is.sales[2] ? c.co.is.sales[2].toLocaleString('en-US', { maximumFractionDigits: 1 }) : '—'}</td>
-                        <td>{c.fields.length}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+        {mode === 'list' && parsed?.ok && (
+          <div className="bulk-sec">
+            <h4>{parsed.companies.length} compan{parsed.companies.length === 1 ? 'y' : 'ies'}</h4>
+            <div className="tablewrap" style={{ maxHeight: 300, overflowY: 'auto' }}>
+              <table className="fin">
+                <thead><tr><th>Company</th><th>Ticker</th><th>Sector</th><th>Include</th><th>Share price</th><th>Diluted shares</th><th>Tier</th></tr></thead>
+                <tbody>
+                  {parsed.companies.map((c, i) => (
+                    <tr key={i}>
+                      <td>{c.name}</td><td className="txt">{c.ticker || '—'}</td><td className="txt">{c.sector || '—'}</td>
+                      <td>{c.include ?? '—'}</td><td>{c.price !== undefined ? fmt(c.price) : '—'}</td>
+                      <td>{c.shares !== undefined ? fmt(c.shares) : '—'}</td><td className="txt">{c.tier || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-            {parsed.unmatched.length > 0 && (
-              <div className="bulk-sec">
-                <h4>Unrecognised columns — skipped</h4>
-                <div className="sec-note">{parsed.unmatched.join(' · ')}</div>
-              </div>
-            )}
-            <div className="sec-note">
-              Anything the paste doesn't cover stays blank on each company's input page, and its issue badge lists what's still needed.
-            </div>
-          </>
+            {parsed.unmatched?.length > 0 && <div className="sec-note" style={{ marginTop: 6 }}>Unrecognised columns skipped: {parsed.unmatched.join(' · ')}</div>}
+          </div>
         )}
 
         <div className="bulk-foot">
           <div style={{ flex: 1 }} />
           <button className="btn ghost" onClick={onClose}>Cancel</button>
           <button className="btn primary" onClick={apply} disabled={!parsed?.ok}>
-            {mode === 'grid' ? 'Apply to this page' : `Add ${parsed?.companies?.length || 0} compan${parsed?.companies?.length === 1 ? 'y' : 'ies'}`}
+            {mode === 'page' ? 'Apply to this page' : `Use ${parsed?.companies?.length || 0} compan${parsed?.companies?.length === 1 ? 'y' : 'ies'}`}
           </button>
         </div>
       </div>

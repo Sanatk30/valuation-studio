@@ -1,51 +1,52 @@
 import React, { useMemo, useState } from 'react';
 import {
-  searchSymbols, fetchListing, fetchListingByQuery, fetchListingsBatch,
-  peerPageFromListing, requiredCurrencies,
+  searchSymbols, fetchListing, fetchListingByQuery, fetchListingsBatch, templateFromListing, requiredCurrencies,
 } from '../lib/yahoo.js';
-import PeerFinder from './PeerFinder.jsx';
-import { blankCompany } from '../lib/engine/compsCo.js';
+import { fyValues } from '../lib/engine/companyPage.js';
 import { useLiveRates, rateNumbers, FxRateFields } from './FxRates.jsx';
+import PeerFinder from './PeerFinder.jsx';
 
 /**
- * Yahoo peers for the comps Peer step.
+ * Yahoo fills for the template pages (comps target and peers, precedent
+ * company and deal targets).
  *
  * A fetch is `m = { raw, rates }`: the parsed listing plus the FX rate(s) the
- * user confirmed (live, editable; a failed live fetch must be typed). The peer
- * page holds REPORTED lines only, converted into the valuation currency and
- * unit (lib/yahoo.js peerPageFromListing) — nothing estimated, no fallbacks.
+ * user confirmed (live, editable; a failed live fetch must be typed). The page
+ * gets REPORTED figures only, converted into the valuation currency and unit
+ * (lib/yahoo.js templateFromListing).
  */
 
 /**
- * Fold a Yahoo fetch into a peer page. The fetched reported lines win; the
- * user's own inputs are kept where the feed has nothing: the page id, tier,
- * ratings, description, beta, dividend, the non-recurring adjustments,
- * options / converts, and any cell the fetch leaves blank (e.g. balance-sheet
- * lines Yahoo has no one-to-one line for).
+ * Fold a Yahoo fetch into a slot { name, ticker, sector, price, shares, page }.
+ * Fetched figures win; the user's own entries are kept wherever the fetch has
+ * nothing (a blank reported line, the YTD columns, include flag, tier, …).
+ *   opts.n       fiscal years on the page
+ *   opts.before  deal pages: only fiscal years ending before this ISO date
+ *   opts.labels  true → the page takes the fetched period labels (precedent pages)
+ *   opts.market  false → leave price / shares alone (deal targets are priced by the deal)
  */
-export function mergePeerRow(row, m, company) {
-  const base = row && row.is ? row : blankCompany({ ...(row || {}) });
-  const f = peerPageFromListing(m.raw, company, m.rates || {});
-  const cell = (fetched, own) => (fetched === null || fetched === undefined ? own ?? null : fetched);
-  const group = (fg, own) => Object.fromEntries(Object.entries(fg).map(([k, arr]) => [k, arr.map((v, i) => cell(v, own?.[k]?.[i]))]));
+export function mergeFetch(slot, m, company, { n, before = null, labels = false, market = true } = {}) {
+  const f = templateFromListing(m.raw, company, m.rates || {}, { n, before });
+  const own = slot.page || { lines: {} };
+  const lines = { ...own.lines };
+  for (const [key, fl] of Object.entries(f.page.lines)) {
+    const mine = own.lines?.[key] || { fy: [], p: null, c: null };
+    const cur = fyValues(mine, n);
+    const fy = fyValues(fl, n).map((v, i) => (v === null || v === undefined ? cur[i] : v));
+    const older = (mine.fy || []).slice(0, Math.max(0, (mine.fy || []).length - n));
+    lines[key] = { ...mine, fy: [...older, ...fy] };
+  }
+  const page = { ...own, lines };
+  if (labels) page.labels = { ...(own.labels || {}), fy: f.page.labels.fy };
+  const keep = (v, mine) => (v === null || v === undefined || v === '' ? mine ?? null : v);
   return {
-    ...base,
-    name: f.name || base.name,
-    symbol: f.symbol,
-    ticker: f.ticker,
-    exchange: f.exchange || base.exchange,
-    price: cell(f.price, base.price),
-    high52: cell(f.high52, base.high52),
-    low52: cell(f.low52, base.low52),
-    taxRate: cell(f.taxRate, base.taxRate),
-    fyEnd: f.fyEnd || base.fyEnd,
-    stubEnd: f.stubEnd || base.stubEnd,
-    basicShares: cell(f.basicShares, base.basicShares),
-    grossKnown: f.grossKnown,
-    is: group(f.is, base.is),
-    cf: group(f.cf, base.cf),
-    bs: group(f.bs, base.bs),
-    _fetched: f._fetched,
+    ...slot,
+    name: f.name || slot.name,
+    ticker: f.ticker || slot.ticker,
+    sector: keep(f.sector, slot.sector) || '',
+    ...(market ? { price: keep(f.price, slot.price), shares: keep(f.shares, slot.shares) } : {}),
+    page,
+    _fetched: { ...f.fetched, warnings: f.warnings, fyDates: f.fyDates },
   };
 }
 
@@ -66,7 +67,7 @@ function RateConfirm({ raws, company, onConfirm, onCancel, action }) {
   return (
     <div className="rate-confirm">
       <div className="fld-h">
-        {raws.length === 1 ? `${raws[0].name} reports` : 'These peers report'} in {need.join(', ')} — confirm the rate{need.length > 1 ? 's' : ''} into {company.currency}:
+        {raws.length === 1 ? `${raws[0].name} reports` : 'These companies report'} in {need.join(', ')} — confirm the rate{need.length > 1 ? 's' : ''} into {company.currency}:
       </div>
       <FxRateFields currencies={need} to={company.currency} {...fx} />
       <div className="row-btns">
@@ -78,18 +79,19 @@ function RateConfirm({ raws, company, onConfirm, onCancel, action }) {
 }
 
 /**
- * Per-row refresh: re-fetches the row's ticker and folds the reported lines
- * back in (after a rate confirmation when the peer reports in another currency).
+ * Refresh button: re-fetches `query` (a ticker) and hands the fetch to
+ * `onFilled` (after a rate confirmation when the company reports in another
+ * currency).
  */
-export function PeerRowFetch({ name, company, onFilled }) {
+export function RowFetch({ query, company, onFilled, title = 'Fill this page from Yahoo Finance' }) {
   const [state, setState] = useState('idle'); // idle | busy | err
   const [raw, setRaw] = useState(null);
   const [msg, setMsg] = useState('');
   const go = async () => {
-    if (!name || state === 'busy') return;
+    if (!query || state === 'busy') return;
     setState('busy'); setMsg('');
     try {
-      const r = await fetchListingByQuery(name);
+      const r = await fetchListingByQuery(query);
       if (requiredCurrencies(r, company.currency).length) { setRaw(r); setState('idle'); return; }
       onFilled({ raw: r, rates: {} });
       setState('idle');
@@ -102,14 +104,14 @@ export function PeerRowFetch({ name, company, onFilled }) {
     <span className="peer-fetch-wrap">
       <button
         className={`peer-fetch${state === 'err' ? ' err' : ''}`}
-        title={state === 'err' ? `Fetch failed — ${msg}` : 'Refresh this peer’s reported figures from Yahoo Finance'}
-        onClick={go} disabled={state === 'busy'}
+        title={state === 'err' ? `Fetch failed — ${msg}` : title}
+        onClick={go} disabled={state === 'busy' || !query}
       >
         {state === 'busy' ? '…' : state === 'err' ? '!' : '⟳'}
       </button>
       {raw && (
         <div className="peer-pop">
-          <RateConfirm raws={[raw]} company={company} action="Refresh"
+          <RateConfirm raws={[raw]} company={company} action="Fill"
             onConfirm={(rates) => { onFilled({ raw, rates }); setRaw(null); }}
             onCancel={() => setRaw(null)} />
         </div>
@@ -119,11 +121,11 @@ export function PeerRowFetch({ name, company, onFilled }) {
 }
 
 /**
- * Batch builder: paste tickers (comma / space separated) and fetch every peer
- * in one go, or open the peer finder (ranked, explained candidates) and fetch
- * the ticked ones. Per-ticker chips show what landed and what failed;
- * foreign-currency peers need one confirmed rate per currency before they are
- * added. `finder` = { inputs, seed } — the target's figures and default seed.
+ * Batch builder for the peer slots: paste tickers (comma / space separated)
+ * and fetch every peer in one go, or open the peer finder (ranked, explained
+ * candidates) and fetch the ticked ones. Foreign-currency peers need one
+ * confirmed rate per currency before they are added.
+ * `finder` = { inputs, seed } — the target's figures and default seed.
  */
 export function PeerBatchAdd({ company, existingNames = [], onAddMany, finder = {} }) {
   const [text, setText] = useState('');
@@ -159,7 +161,7 @@ export function PeerBatchAdd({ company, existingNames = [], onAddMany, finder = 
     }
   };
   const add = (raws, rates) => {
-    onAddMany(raws.map((raw) => mergePeerRow(blankCompany(), { raw, rates }, company)));
+    onAddMany(raws.map((raw) => ({ raw, rates })));
     setText(''); setPending(null);
   };
 
@@ -198,7 +200,7 @@ export function PeerBatchAdd({ company, existingNames = [], onAddMany, finder = 
         </div>
       )}
       {pending && (
-        <RateConfirm raws={pending} company={company} action={`Add ${pending.length} peer${pending.length > 1 ? 's' : ''}`}
+        <RateConfirm raws={pending} company={company} action={`Add ${pending.length} compan${pending.length > 1 ? 'ies' : 'y'}`}
           onConfirm={(rates) => add(pending, rates)} onCancel={() => setPending(null)} />
       )}
     </div>
@@ -207,9 +209,9 @@ export function PeerBatchAdd({ company, existingNames = [], onAddMany, finder = 
 
 /**
  * Search box: type a company name or ticker, pick the listing, confirm the
- * rate if it reports in another currency, and `onAdd(m)` receives the fetch.
+ * rate if it reports in another currency, and `onPick(m)` receives the fetch.
  */
-export function PeerSearchAdd({ company, onAdd, placeholder = 'Add a peer — name or ticker (RELIANCE.NS, AAPL…)' }) {
+export function YahooSearch({ company, onPick, placeholder = 'Name or ticker (RELIANCE.NS, AAPL…)', action = 'Fill' }) {
   const [q, setQ] = useState('');
   const [results, setResults] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -237,7 +239,7 @@ export function PeerSearchAdd({ company, onAdd, placeholder = 'Add a peer — na
       const listing = await fetchListing(r.symbol, { search: r });
       setResults(null);
       if (requiredCurrencies(listing, company.currency).length) setRaw(listing);
-      else { onAdd({ raw: listing, rates: {} }); setQ(''); }
+      else { onPick({ raw: listing, rates: {} }); setQ(''); }
     } catch (e) {
       setErr(`Could not load ${r.symbol}: ${e.message}`);
     } finally {
@@ -267,8 +269,8 @@ export function PeerSearchAdd({ company, onAdd, placeholder = 'Add a peer — na
         </div>
       )}
       {raw && (
-        <RateConfirm raws={[raw]} company={company} action="Add peer"
-          onConfirm={(rates) => { onAdd({ raw, rates }); setRaw(null); setQ(''); }}
+        <RateConfirm raws={[raw]} company={company} action={action}
+          onConfirm={(rates) => { onPick({ raw, rates }); setRaw(null); setQ(''); }}
           onCancel={() => setRaw(null)} />
       )}
     </div>

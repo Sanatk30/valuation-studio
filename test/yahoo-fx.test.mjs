@@ -9,13 +9,14 @@
  */
 import fs from 'node:fs';
 import {
-  parseListing, mapListing, ltmPeriod, balanceSheetDate, peerPageFromListing, requiredCurrencies, parseSearch, UNIT_FACTOR,
+  parseListing, mapListing, ltmPeriod, balanceSheetDate, templateFromListing, requiredCurrencies, parseSearch, UNIT_FACTOR, ebitdaSuspect,
 } from '../src/lib/yahoo.js';
 import { parseRateResponse, fetchLiveRate, fetchLiveRates, normalizeCurrency } from '../src/lib/fx.js';
 import { convertCompanyRecord, rescaleUnit } from '../src/lib/currency.js';
 import { blankMethodState, METHOD_IDS } from '../src/store/methodModel.js';
 import { blankManualHistory } from '../src/lib/historyModel.js';
 import { buildHistoryStatements } from '../src/lib/history.js';
+import { computePage } from '../src/lib/engine/companyPage.js';
 
 let failures = 0, checks = 0;
 const ok = (cond, msg) => { checks++; if (!cond) { failures++; console.error('FAIL:', msg); } else console.log('ok  :', msg); };
@@ -105,25 +106,31 @@ for (const [sym, company, pairs] of [
   ok(near(m.company.currentPrice, px.value * pxRate), `${sym}: price converts at the ${px.currency} rate only (no unit)`);
   ok(near(m.company.sharesOut, bs('OrdinarySharesNumber').value / uf), `${sym}: shares scale by the unit only`);
 
-  // prior year: the fiscal year before the LTM year, or the latest completed FY before a TTM
-  const prior = L.basis === 'ttm' ? L.fy0 : (raw.annual.TotalRevenue || []).map((p) => p.date).filter((d) => d < L.date).pop();
-  ok(near(m.compsTarget.priorRevenue, conv(pt(raw.annual, 'TotalRevenue', prior))), `${sym}: prior-FY revenue = ${prior}`);
-
   ok(m.listing.symbol === raw.symbol && m.listing.rates && m.listing.ltmLabel === L.label, `${sym}: listing metadata recorded`);
   ok(!('growthStart' in m.drivers) && !('marginStart' in m.drivers) && !('daPct' in m.drivers), `${sym}: no growth / margin / cost-ratio prefill`);
   ok(m.history?.source === 'yahoo' && m.history.statements?.currency === company.currency, `${sym}: history converted into ${company.currency}`);
 
-  // peer page follows the same rules
-  const pg = peerPageFromListing(raw, company, rates);
-  const pbsd = balanceSheetDate(raw);
-  ok(near(pg.bs.cash[1], conv(pt(raw.quarterly, 'CashAndCashEquivalents', pbsd) || pt(raw.annual, 'CashAndCashEquivalents', pbsd))), `${sym}: peer cash = cash & equivalents only`);
-  ok(rep === null || rep < 0 ? pg.taxRate === null : near(pg.taxRate, rep), `${sym}: peer tax rate NA when negative`);
-  ok(!('est' in pg) && !('ltGrowth' in pg), `${sym}: peer page has no estimates`);
-  if (L.basis === 'ttm') {
-    ok(near(pg.is.sales[4] - pg.is.sales[3] + pg.is.sales[2], conv(pt(raw.trailing, 'TotalRevenue', L.date))), `${sym}: peer LTM = the reported TTM (12-month stubs)`);
-  }
-  const gp = pt(raw.annual, 'GrossProfit', pg.fyEnd), eb = pt(raw.annual, 'EBIT', pg.fyEnd);
-  if (gp && eb && pg.grossKnown) ok(near(pg.is.sga[2], conv(gp) - conv(eb), 1e-6), `${sym}: peer SG&A = gross profit − EBIT (balancing line)`);
+  // template company page (comps / precedent): reported figures, balanced to Yahoo's totals
+  const tp = templateFromListing(raw, company, rates, { n: 3 });
+  const pgc = computePage(tp.page, { n: 3, market: { price: tp.price, shares: tp.shares } });
+  const fyd = tp.fyDates;
+  ok(fyd.length > 0 && tp.page.labels.fy.slice(-fyd.length).every((l, i) => l === `FY${fyd[i].slice(2, 4)}`), `${sym}: page labels FYyy from the reported fiscal years (${tp.page.labels.fy.join(', ')})`);
+  fyd.forEach((d, j) => {
+    const i = 3 - fyd.length + j;
+    const A = (b) => conv(pt(raw.annual, b, d));
+    ok(near(pgc.v.rev[i], A('TotalRevenue')), `${sym} ${d}: revenue = reported`);
+    if (!ebitdaSuspect(raw.annual, d) && A('EBITDA') !== null) ok(near(pgc.v.ebitda[i], A('EBITDA'), 1e-6), `${sym} ${d}: page EBITDA = Yahoo's EBITDA (Other Expenses balance)`);
+    if (A('PretaxIncome') !== null && pgc.v.ebitda[i] !== 0) ok(near(pgc.v.pbt[i], A('PretaxIncome'), 1e-6), `${sym} ${d}: page PBT = reported pre-tax income (Other Income balances)`);
+    if (A('CashAndCashEquivalents') !== null) ok(near(pgc.v.cash[i], A('CashAndCashEquivalents')), `${sym} ${d}: cash = cash & equivalents`);
+    if (A('TotalAssets') !== null && A('CurrentAssets') !== null && A('CurrentLiabilities') !== null) ok(Math.abs(pgc.v.check[i]) < 0.05 && near(pgc.v.totalAssets[i], A('TotalAssets'), 1e-6), `${sym} ${d}: balance check 0 and total assets = reported`);
+    if (A('OperatingCashFlow') !== null) ok(near(pgc.v.cfo[i], A('OperatingCashFlow'), 1e-6), `${sym} ${d}: CFO ties to reported`);
+    if (A('FinancingCashFlow') !== null) ok(near(pgc.v.cff[i], A('FinancingCashFlow'), 1e-6), `${sym} ${d}: CFF ties to reported`);
+  });
+  ok(Object.values(tp.page.lines).every((l) => l.p === null && l.c === null), `${sym}: YTD columns and interim balance sheet left blank`);
+  const dil = (L.block ? pt(raw[L.block], 'DilutedAverageShares', L.date) : null) || (raw.annual.DilutedAverageShares || []).slice(-1)[0];
+  ok(dil ? near(tp.shares, dil.value / uf) : tp.shares === null, `${sym}: diluted shares = latest diluted weighted-average shares`);
+  const before = templateFromListing(raw, company, rates, { n: 3, before: fyd[fyd.length - 1] });
+  ok(before.fyDates.every((d) => d < fyd[fyd.length - 1]), `${sym}: a deal date keeps only fiscal years ending before it`);
 }
 
 /* ---- a negative reported tax rate is left blank ---- */
@@ -152,17 +159,25 @@ console.log('\n=== currency & unit conversion ===');
     methods: Object.fromEntries(METHOD_IDS.map((m) => [m, blankMethodState(m)])),
   };
   const M = rec.methods;
-  M.dcf.data.company = { ...M.dcf.data.company, sharesOut: 10, currentPrice: 850, grossDebt: 1200, cash: 400, taxRate: 25, nol0: 50 };
-  M.dcf.data.drivers = { ...M.dcf.data.drivers, revenue0: 5000, ebitda0: 1100, nwc0: 600, growthStart: 10,
+  const page0 = () => ({ lines: { rev: { fy: [1, 2, 3], p: null, c: null }, shares: { fy: [5, 5, 5], p: null, c: 5 }, cash: { fy: [10, 20], p: null, c: null } }, labels: null });
+  M.ipo.data.company = { ...M.ipo.data.company, sharesOut: 10, currentPrice: 850, grossDebt: 1200, cash: 400, taxRate: 25, nol0: 50 };
+  M.ipo.data.drivers = { ...M.ipo.data.drivers, revenue0: 5000, ebitda0: 1100, nwc0: 600, growthStart: 10,
     perYear: { revenueMode: 'abs', revenue: [5500, null], ebitdaMode: 'margin', ebitda: [22, 23], daMode: 'pct', da: [4, 4], capexMode: 'abs', capex: [300, 320], nwcMode: 'pct', nwc: [12, 12] } };
   M.ts.data.ts = { ...M.ts.data.ts, startingPPE: 2500, equity0: 2300, interestRateDebt: 9 };
-  M.lbo.data.lbo = { ...M.lbo.data.lbo, cashAtClose: 100, minCash: 50, entryMultiple: 10 };
+  M.dcf.data.dcf.company = { ...M.dcf.data.dcf.company, price: 850, shares: 10, page: page0() };
+  M.dcf.data.dcf.drivers = { ...M.dcf.data.dcf.drivers, netBorrow: [100, null], gRev: [12, 11] };
+  M.dcf.data.dcf.capm = { ...M.dcf.data.dcf.capm, rf: 7, beta: 1.1 };
+  M.lbo.data.lbo.company = { page: page0() };
+  M.lbo.data.lbo.deal = { ...M.lbo.data.lbo.deal, cashUsed: 100, entryMultiple: 10 };
+  M.lbo.data.lbo.cash = { sweepPct: 100, minCash: 50 };
+  M.lbo.data.lbo.debt = { ...M.lbo.data.lbo.debt, senA: { ...M.lbo.data.lbo.debt.senA, x: 2.5, rate: 9 } };
   M.ipo.data.ipo = { ...M.ipo.data.ipo, primaryRaise: 1500, offerPE: 20 };
-  M.comps.data.comps.target = { ...M.comps.data.comps.target, revenue: 5000, high52: 900, beta: 1.1 };
-  M.comps.data.comps.peers = [{ id: 'p', price: 100, basicShares: 5, is: { sales: [1, 2, 3, null, null], dilutedShares: [5, 5, 5, null, null] }, bs: { cash: [10, 20] }, options: [{ shares: 1, strike: 50 }], converts: [{ amount: 100, price: 40 }], cf: {}, adj: {} }];
-  M.comps.data.regression.targetOverrides = { revSize: 5000, growth: 10 };
-  M.precedent.data.precedent.target = { revenue: 5000, ebitda: 1100, ltmLabel: '' };
-  M.precedent.data.precedent.deals = [{ id: 'd', cashOffer: 900, exchangeRatio: 0.5, acquirerPrice: 200, unaffected: { 1: 700, 7: null, 30: 650 }, target: { is: { sales: [1, 1, 1, 0, 0] }, bs: {}, cf: {}, adj: {}, options: [], converts: [] } }];
+  const page = () => ({ lines: { rev: { fy: [1, 2, 3], p: 1, c: null }, shares: { fy: [5, 5, 5], p: null, c: 5 }, cash: { fy: [10, 20], p: null, c: null } }, labels: null });
+  M.comps.data.comps.target = { ...M.comps.data.comps.target, price: 900, shares: 10, page: page() };
+  M.comps.data.comps.peers = [{ id: 'p', name: 'P', price: 100, shares: 5, include: 1, page: page() }];
+  M.comps.data.regression.targetOverrides = { revSize: 5000, ebitdaMargin: 10 };
+  M.precedent.data.precedent.company = { ticker: '', price: 850, shares: 10, page: page() };
+  M.precedent.data.precedent.deals = [{ id: 'd', stakePct: 51, consideration: 900, offerPrice: 700, unaffectedPrice: 650, page: page() }];
   const h = blankManualHistory(2, '2026-03-31');
   h.annual.lines.revenue = [4000, null];
   M.ratios.data.history = h;
@@ -172,31 +187,39 @@ console.log('\n=== currency & unit conversion ===');
   const c = convertCompanyRecord(rec, 'USD', r);
   const D = (id) => c.methods[id].data;
   ok(c.currency === 'USD' && c.unit === 'Cr', 'currency changed, unit kept');
-  ok(near(D('dcf').company.grossDebt, 1200 * r) && near(D('dcf').company.currentPrice, 850 * r) && near(D('dcf').company.nol0, 50 * r), 'company money and price convert');
-  ok(D('dcf').company.sharesOut === 10 && D('dcf').company.taxRate === 25, 'shares and % untouched');
-  ok(near(D('dcf').drivers.ebitda0, 1100 * r) && D('dcf').drivers.growthStart === 10, 'drivers: LTM anchors convert, % untouched');
-  ok(near(D('dcf').drivers.perYear.revenue[0], 5500 * r) && D('dcf').drivers.perYear.revenue[1] === null, 'absolute grid rows convert, blanks stay blank');
-  ok(D('dcf').drivers.perYear.ebitda[0] === 22 && near(D('dcf').drivers.perYear.capex[1], 320 * r), '% grid rows untouched, absolute capex converts');
+  ok(near(D('ipo').company.grossDebt, 1200 * r) && near(D('ipo').company.currentPrice, 850 * r) && near(D('ipo').company.nol0, 50 * r), 'company money and price convert');
+  ok(D('ipo').company.sharesOut === 10 && D('ipo').company.taxRate === 25, 'shares and % untouched');
+  ok(near(D('ipo').drivers.ebitda0, 1100 * r) && D('ipo').drivers.growthStart === 10, 'drivers: LTM anchors convert, % untouched');
+  ok(near(D('ipo').drivers.perYear.revenue[0], 5500 * r) && D('ipo').drivers.perYear.revenue[1] === null, 'absolute grid rows convert, blanks stay blank');
+  ok(D('ipo').drivers.perYear.ebitda[0] === 22 && near(D('ipo').drivers.perYear.capex[1], 320 * r), '% grid rows untouched, absolute capex converts');
+  const dc = D('dcf').dcf;
+  ok(near(dc.company.price, 850 * r) && dc.company.shares === 10 && near(dc.company.page.lines.rev.fy[2], 3 * r) && dc.company.page.lines.shares.fy[0] === 5, 'DCF: price and page money convert, shares do not');
+  ok(near(dc.drivers.netBorrow[0], 100 * r) && dc.drivers.netBorrow[1] === null && dc.drivers.gRev[0] === 12 && dc.capm.rf === 7 && dc.capm.beta === 1.1, 'DCF: net borrowing converts; %, days, rates and beta do not');
   ok(near(D('ts').ts.equity0, 2300 * r) && D('ts').ts.interestRateDebt === 9, 'ts balances convert, rates untouched');
-  ok(near(D('lbo').lbo.cashAtClose, 100 * r) && near(D('lbo').lbo.minCash, 50 * r) && D('lbo').lbo.entryMultiple === 10, 'LBO cash lines convert, multiples untouched');
+  const lb = D('lbo').lbo;
+  ok(near(lb.deal.cashUsed, 100 * r) && near(lb.cash.minCash, 50 * r) && lb.deal.entryMultiple === 10 && lb.cash.sweepPct === 100, 'LBO: cash used and minimum cash convert, multiples and % untouched');
+  ok(near(lb.company.page.lines.cash.fy[1], 20 * r) && lb.company.page.lines.shares.c === 5 && lb.debt.senA.x === 2.5 && lb.debt.senA.rate === 9, 'LBO: page money converts; tranche multiples and rates do not');
   ok(near(D('ipo').ipo.primaryRaise, 1500 * r) && D('ipo').ipo.offerPE === 20, 'IPO raise converts');
-  ok(near(D('comps').comps.target.revenue, 5000 * r) && near(D('comps').comps.target.high52, 900 * r) && D('comps').comps.target.beta === 1.1, 'comps target converts');
+  const t = D('comps').comps.target;
+  ok(near(t.price, 900 * r) && t.shares === 10 && near(t.page.lines.rev.fy[2], 3 * r) && near(t.page.lines.rev.p, r) && t.page.lines.rev.c === null, 'comps target: price and page money convert, blanks stay blank');
+  ok(t.page.lines.shares.fy[0] === 5 && t.page.lines.shares.c === 5, 'page share counts untouched by FX');
   const p = D('comps').comps.peers[0];
-  ok(near(p.price, 100 * r) && p.basicShares === 5 && near(p.is.sales[2], 3 * r) && p.is.sales[3] === null && p.is.dilutedShares[0] === 5, 'peer page: prices and money convert, shares do not');
-  ok(near(p.options[0].strike, 50 * r) && p.options[0].shares === 1 && near(p.converts[0].amount, 100 * r) && near(p.converts[0].price, 40 * r), 'peer options / converts convert by kind');
-  ok(near(D('comps').regression.targetOverrides.revSize, 5000 * r) && D('comps').regression.targetOverrides.growth === 10, 'regression size override converts, growth does not');
+  ok(near(p.price, 100 * r) && p.shares === 5 && near(p.page.lines.cash.fy[1], 20 * r), 'peer slot: price and page convert, shares do not');
+  ok(near(D('comps').regression.targetOverrides.revSize, 5000 * r) && D('comps').regression.targetOverrides.ebitdaMargin === 10, 'regression size override converts, a margin does not');
   const d = D('precedent').precedent.deals[0];
-  ok(near(d.cashOffer, 900 * r) && near(d.acquirerPrice, 200 * r) && d.exchangeRatio === 0.5 && near(d.unaffected[1], 700 * r) && d.unaffected[7] === null, 'deal offer terms and unaffected prices convert');
-  ok(near(D('precedent').precedent.target.revenue, 5000 * r), 'precedent target converts');
+  ok(near(d.consideration, 900 * r) && near(d.offerPrice, 700 * r) && near(d.unaffectedPrice, 650 * r) && d.stakePct === 51 && near(d.page.lines.rev.fy[0], r), 'deal consideration, offer / unaffected prices and page convert; stake does not');
+  ok(near(D('precedent').precedent.company.price, 850 * r) && near(D('precedent').precedent.company.page.lines.cash.fy[0], 10 * r), 'company being valued converts');
   ok(near(D('ratios').history.annual.lines.revenue[0], 4000 * r) && D('ratios').history.annual.lines.revenue[1] === null, 'history lines convert');
   ok(near(D('combined').combined.marketPrice, 850 * r), 'combined market price converts');
 
   const u = rescaleUnit(rec, 'Mn');   // 1 Cr = 10 Mn
   const U = (id) => u.methods[id].data;
   ok(u.unit === 'Mn' && u.currency === 'INR', 'unit changed, currency kept');
-  ok(near(U('dcf').company.grossDebt, 12000) && near(U('dcf').company.sharesOut, 100) && U('dcf').company.currentPrice === 850, 'unit: money and shares rescale, price does not');
-  ok(near(U('comps').comps.peers[0].is.dilutedShares[0], 50) && U('comps').comps.peers[0].price === 100, 'unit: peer shares rescale, peer price does not');
-  ok(near(U('comps').comps.peers[0].options[0].shares, 10) && U('comps').comps.peers[0].options[0].strike === 50, 'unit: option counts rescale, strikes do not');
+  ok(near(U('ipo').company.grossDebt, 12000) && near(U('ipo').company.sharesOut, 100) && U('ipo').company.currentPrice === 850, 'unit: money and shares rescale, price does not');
+  ok(near(U('dcf').dcf.company.shares, 100) && U('dcf').dcf.company.price === 850 && near(U('dcf').dcf.drivers.netBorrow[0], 1000), 'unit: DCF shares and net borrowing rescale, price does not');
+  ok(near(U('lbo').lbo.deal.cashUsed, 1000) && near(U('lbo').lbo.cash.minCash, 500) && U('lbo').lbo.deal.entryMultiple === 10, 'unit: LBO cash lines rescale, multiples do not');
+  ok(near(U('comps').comps.peers[0].page.lines.shares.fy[0], 50) && near(U('comps').comps.peers[0].shares, 50) && U('comps').comps.peers[0].price === 100, 'unit: page and slot shares rescale, price does not');
+  ok(near(U('comps').comps.peers[0].page.lines.rev.fy[2], 30), 'unit: page money rescales');
   let threw = false;
   try { convertCompanyRecord(rec, 'USD', null); } catch { threw = true; }
   ok(threw, 'no rate → no conversion');

@@ -1,6 +1,6 @@
-import { SAMPLE_TIERS, samplePeers } from './compsSample.mjs';
-import { sampleDeals } from './precedentSample.mjs';
-import { SENS_DEFAULTS } from '../../src/store/methodModel.js';
+import { sampleCompsData, samplePrecedentData } from './templateSample.mjs';
+import { sampleDcfData } from './dcfSample.mjs';
+import { sampleLboData } from './lboSample.mjs';
 
 /**
  * A complete engine-input fixture (the shape `toEngineInput` produces) for the
@@ -16,7 +16,6 @@ export const SAMPLE_MODEL = {
   settings: { currency: 'INR', unit: 'Cr', period: { startYear: 2026, fyEndMonth: 12 }, scenario: 'base' },
   history: null,
   listing: null,
-  sens: JSON.parse(JSON.stringify(SENS_DEFAULTS)),
   ratio: { span: 'future', histYears: null, freq: 'Y' },
   company: {
     name: 'Sample Industries Ltd',
@@ -39,22 +38,7 @@ export const SAMPLE_MODEL = {
     nwcPct: 12.0,       // NWC balance as % of revenue (forecast years)
     perYear: null,
   },
-  wacc: {
-    riskFree: 7.0, erp: 6.5,
-    betaMode: 'hamada',
-    beta: 1.10,
-    unleveredBeta: 0.88,
-    sizePremium: 0.0,
-    costDebt: 9.0, debtWeight: 25,
-    betaPeers: [],
-  },
-  dcf: {
-    terminalGrowth: 5.0,
-    exitMultiple: 12.0,
-    exitPE: 22.0,
-    midYear: true,
-    primaryTV: 'gordon',
-  },
+  dcf: sampleDcfData(),
   ts: {
     interestRateDebt: 9.0,
     interestRateCash: 4.0,
@@ -63,20 +47,7 @@ export const SAMPLE_MODEL = {
     startingPPE: 2500,
     equity0: 2300,      // reported opening equity (= cash + NWC + PP&E − debt = 400 + 600 + 2500 − 1200, so no other net assets)
   },
-  lbo: {
-    entryMultiple: 11.0,
-    exitMultiple: 11.0,
-    exitYear: 5,
-    seniorX: 3.5, seniorRate: 9.5, seniorAmort: 7.5,
-    mezzX: 1.0, mezzRate: 13.0,
-    mezzPIK: false,
-    feesPctEV: 2.0,
-    finFeesPct: 2.5,
-    cashAtClose: 0,
-    minCash: 100,
-    sweepPct: 75,
-    hurdleRate: 20,
-  },
+  lbo: sampleLboData(),
   ipo: {
     basis: 'pe',
     offerPE: 24.0,
@@ -91,31 +62,15 @@ export const SAMPLE_MODEL = {
     useProceedsDebtPct: 50,
     rangeBand: 8,
   },
-  comps: {
-    target: {
-      revenue: 5000, ebitda: 1100, ebit: 875, netIncome: 560,
-      priorRevenue: 4500, priorEbitda: 960,
-      grossProfit: null, interest: 108, equity: 2400,
-      beta: 1.05, high52: 910, low52: 690,
-      ticker: 'SMPL', exchange: 'NSE', description: 'Sample target', moodys: '', sp: '',
-      ltmLabel: 'FY2025',
-    },
-    tiers: SAMPLE_TIERS,
-    peers: samplePeers(),
-    asOfDate: '', source: 'Company filings',
-  },
+  comps: sampleCompsData(),
   regression: {
-    yVar: 'evEbitda',
+    yVar: 'evEbitdaLtm',
     yLog: false,
-    xVars: [{ key: 'growth', transform: 'lin', degree: 1 }],
+    xVars: [{ key: 'ebitdaMargin', transform: 'lin', degree: 1 }],
     customVars: [],
     targetOverrides: {},
   },
-  precedent: {
-    target: { revenue: 5000, ebitda: 1100, ltmLabel: 'FY2025' },
-    deals: sampleDeals(),
-    source: 'Company filings, press releases, merger proxies',
-  },
+  precedent: samplePrecedentData(),
 };
 
 /** A deep copy with `patch` merged one level into each section. */

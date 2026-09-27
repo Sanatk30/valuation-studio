@@ -1,9 +1,9 @@
 import { toEngineInput } from '../store/methodModel.js';
-import { computeDcf, dcfSensitivity } from '../lib/engine/dcf.js';
+import { computeDcfT, CF_KINDS, exitMultipleName } from '../lib/engine/dcfTemplate.js';
 import { computeComps } from '../lib/engine/comps.js';
 import { runRegression } from '../lib/engine/regressionModel.js';
 import { computePrecedent } from '../lib/engine/precedent.js';
-import { computeLbo } from '../lib/engine/lbo.js';
+import { STAT_SHORT } from '../lib/engine/templateStats.js';
 import { computeIpo } from '../lib/engine/ipo.js';
 
 /**
@@ -14,38 +14,49 @@ import { computeIpo } from '../lib/engine/ipo.js';
  */
 
 const fin = Number.isFinite;
-const point = (key, label, value, note = 'point estimate — no range') => ({ key, label, value, low: value, high: value, rangeNote: note });
 
 function gridRange(grid) {
   const flat = (grid || []).flat().filter(fin);
   return flat.length ? [Math.min(...flat), Math.max(...flat)] : [NaN, NaN];
 }
 
+const isNum = (v) => typeof v === 'number' && fin(v);
+const statRange = (sel) => `${STAT_SHORT[sel.low]}–${STAT_SHORT[sel.high]}`;
+
+/**
+ * Comps / precedent: one figure per implied-valuation row (mid-statistic
+ * price, low–high range). When a headline multiple is chosen on the output
+ * page, only that row is offered to Combined.
+ */
+function impliedFigures(prefix, name, rows, headline, note) {
+  const pick = headline ? rows.filter((r) => r.key === headline) : rows;
+  return pick.filter((r) => isNum(r.price.mid)).map((r) => {
+    const ends = [r.price.low, r.price.high].filter(isNum);
+    return {
+      key: `${prefix}_${r.key}`, label: `${name} — ${r.label}`, value: r.price.mid,
+      low: ends.length ? Math.min(r.price.mid, ...ends) : r.price.mid,
+      high: ends.length ? Math.max(r.price.mid, ...ends) : r.price.mid,
+      rangeNote: note,
+    };
+  });
+}
+
 const FIGURES = {
-  dcf: (a, skipped) => {
-    const dcf = computeDcf(a);
-    const sens = dcfSensitivity(a);
-    const [gLo, gHi] = gridRange(sens.gordonGrid);
-    const [eLo, eHi] = gridRange(sens.exitGrid);
-    const out = [
-      { key: 'fcffGordon', label: 'DCF — FCFF, perpetuity growth', value: dcf.gordon.price, low: gLo, high: gHi, rangeNote: 'WACC × terminal-growth grid' },
-      { key: 'fcffExit', label: 'DCF — FCFF, exit multiple', value: dcf.exit.price, low: eLo, high: eHi, rangeNote: 'WACC × exit-multiple grid' },
-    ];
-    if (!skipped.fcfe) {
-      const [fLo, fHi] = gridRange(sens.fcfeGrid);
-      out.push(
-        { key: 'fcfeGordon', label: 'DCF — FCFE, perpetuity growth', value: dcf.fcfeGordon.price, low: fLo, high: fHi, rangeNote: 'CoE × terminal-growth grid' },
-        point('fcfeExit', 'DCF — FCFE, exit P/E', dcf.fcfeExit.price),
-      );
-    }
-    return out;
+  dcf: (a) => {
+    const r = computeDcfT(a);
+    const [lo, hi] = gridRange(r.sens.grid);
+    const cf = CF_KINDS.find((k) => k.value === r.cf).label;
+    const tv = r.tv === 'exit' ? `exit ${exitMultipleName(r.cf)}` : 'Gordon growth';
+    const rate = r.cf === 'fcff' ? 'WACC' : 'cost of equity';
+    return [{
+      key: 'dcf', label: `DCF — ${cf}, ${tv}, ${r.coeKind === 'capm' ? 'CAPM' : 'build-up'}`,
+      value: r.valuation.perShare, low: lo, high: hi,
+      rangeNote: `${rate} × ${r.tv === 'exit' ? 'exit multiple' : 'terminal growth'} grid`,
+    }];
   },
   comps: (a, skipped) => {
     const comps = computeComps(a);
-    const out = comps.rows.map((r) => ({
-      key: `comps_${r.key}`, label: `Comps — ${r.label}`,
-      value: r.impliedMedian, low: r.impliedLow, high: r.impliedHigh, rangeNote: 'peer 25th–75th percentile',
-    }));
+    const out = impliedFigures('comps', 'Comps', comps.implied, a.comps?.headline, `peer ${statRange(comps.statSel)}`);
     if (!skipped.regression) {
       const reg = runRegression(a);
       if (reg?.price) {
@@ -60,18 +71,7 @@ const FIGURES = {
   },
   precedent: (a) => {
     const p = computePrecedent(a);
-    const out = p.rows.map((r) => ({
-      key: `prec_${r.key}`, label: `Precedent — ${r.label}`,
-      value: r.impliedMedian, low: r.impliedLow, high: r.impliedHigh, rangeNote: 'deal 25th–75th percentile',
-    }));
-    if (a.company.currentPrice > 0) {
-      out.push({ key: 'prec_premia', label: 'Precedent — premiums paid', value: p.premia.impliedMedian, low: p.premia.impliedLow, high: p.premia.impliedHigh, rangeNote: '25th–75th percentile 1-day premium' });
-    }
-    return out;
-  },
-  lbo: (a) => {
-    const l = computeLbo(a);
-    return [{ key: 'lboFloor', label: 'LBO — floor price at the hurdle IRR', value: l.floorPrice, low: l.floorLow, high: l.floorHigh, rangeNote: `hurdle ± ${l.hurdleStep} pts` }];
+    return impliedFigures('prec', 'Precedent', p.implied, a.precedent?.headline, `deal ${statRange(p.statSel)}`);
   },
   ipo: (a) => {
     const i = computeIpo(a);

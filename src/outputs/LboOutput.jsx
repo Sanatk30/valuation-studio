@@ -1,327 +1,276 @@
 import React, { useMemo } from 'react';
-import StatementTable from '../components/StatementTable.jsx';
 import Heatmap from '../components/Heatmap.jsx';
 import Waterfall from '../components/Waterfall.jsx';
-import * as LBO from '../lib/engine/lbo.js';
-import { periodLabels } from '../lib/period.js';
+import { computeLboT, repayKind, LBO_DRIVERS } from '../lib/engine/lboTemplate.js';
+import { fmtTpl } from '../lib/format.js';
 import Headline from './parts/Headline.jsx';
 import Collapsible, { Sections } from './parts/Collapsible.jsx';
-import SensStepInputs from './parts/SensStepInputs.jsx';
 import ChartBox, { EngineError } from './parts/ChartBox.jsx';
-import { makeFmt, fin, upsidePct, upsideText, allFinite, rnd, attempt, tone } from './parts/format.js';
-import {
-  themed, xCat, yVal, tipBy, vgrad, agrad, refMarkLine, COL, barSeries, lineSeries, moneyAxis,
-} from './parts/charts.js';
-import { PALETTE } from '../lib/chartkit.js';
-
-const DASH = '—';
+import { makeFmt, fin, rnd, tone, attempt } from './parts/format.js';
+import { themed, xCat, tipBy, COL, lineSeries, moneyAxis, yVal } from './parts/charts.js';
 
 /**
- * LBO output.
- * Props: { a, set, company, skipped } — `set` only for the grid / floor-range
- * step sizes (sens.lbo.*).
+ * LBO output — the chosen template's Sources & Uses, Returns (exit waterfall,
+ * IRR / MOIC, value creation bridge), the four sensitivity tables and the LBO
+ * Model behind them. Every figure is the engine's (lboTemplate.js), which
+ * reproduces the template's formulas.
  */
-export default function LboOutput({ a, set }) {
+export default function LboOutput({ a }) {
   const f = useMemo(() => makeFmt(a.settings), [a.settings]);
-  const model = useMemo(() => attempt(() => ({
-    lbo: LBO.computeLbo(a),
-    sens: LBO.lboSensitivity(a),
-    hold: LBO.lboHoldSensitivity(a),
-  })), [a]);
+  const model = useMemo(() => attempt(() => computeLboT(a)), [a]);
   if (model.error) return <div className="qo"><EngineError what="The LBO" error={model.error} /></div>;
-  return <LboPage a={a} set={set} f={f} {...model.value} />;
+  return <LboPage a={a} f={f} r={model.value} />;
 }
 
-function LboPage({ a, set, f, lbo, sens, hold }) {
-  const l = a.lbo;
-  const ops = lbo.ops;
-  const n = ops.n;
-  const labels = useMemo(() => periodLabels(a.settings, 'Y', n), [a.settings, n]);
-  const ey = lbo.exitYear;
-  const px = a.company.currentPrice;
-  const hasPx = fin(px) && px > 0;
-  const leverage = lbo.totalDebt0 / lbo.ebitda0;
+const num = (v) => (fin(v) ? v : NaN);
 
-  // LBO floor range: the floor at the hurdle ± one step (engine)
-  const hStep = lbo.hurdleStep;
-  const floorLo = lbo.floorLow;
-  const floorHi = lbo.floorHigh;
+function LboPage({ a, f, r }) {
+  const L = f.locale;
+  const t = (x, fmt = 'n1') => fmtTpl(x, fmt, L);
+  const x2 = (v) => (fin(v) ? `${v.toFixed(2)}x` : 'NM');
+  const { n, m, F, S, C } = r;
+  const hold = r.labels.fcst;
+  const yearsWithEntry = [r.labels.hist[n - 1], ...hold];
+  const kind = repayKind(r.repay);
+  const sweep = r.repay !== 'mandatory';
+  const shortYears = hold.filter((_, j) => C.shortfall[j] === 'SHORTFALL');
+  // a blank driver counts as 0 (as in the template) — name the years where any is blank
+  const stored = a.lbo?.drivers || {};
+  const blankYears = hold.filter((_, j) => LBO_DRIVERS.some((d) => d.key && !fin(stored[d.key]?.[j])));
 
-  const netDebtArr = lbo.closeSenior.map((v, i) => v + lbo.closeMezz[i] - lbo.cashBal[i]);
-  const exitEqArr = ops.ebitda.map((e, i) => l.exitMultiple * e - netDebtArr[i]);
-  const moicArr = exitEqArr.map((v) => (lbo.sponsorEquity > 0 ? v / lbo.sponsorEquity : NaN));
-  const irrArr = moicArr.map((m, i) => (m > 0 ? (m ** (1 / (i + 1)) - 1) * 100 : NaN));
-  const debtLeftPct = lbo.totalDebt0 > 0 ? ((lbo.closeSenior[ey - 1] + lbo.closeMezz[ey - 1]) / lbo.totalDebt0) * 100 : NaN;
-  const sourcesTotal = lbo.senior0 + lbo.mezz0 + lbo.sponsorEquity;
-
+  /* ---------------- charts ---------------- */
+  const b = r.bridge;
   const bridgeItems = [
-    { label: 'Entry equity', value: lbo.bridge.entryEquity, total: true },
-    { label: 'Fees', value: lbo.bridge.fees },
-    { label: 'EBITDA growth', value: lbo.bridge.ebitdaGrowth },
-    { label: 'Multiple', value: lbo.bridge.multipleChange },
-    { label: 'Deleveraging', value: lbo.bridge.deleveraging },
-    { label: 'Exit equity', value: lbo.bridge.exitEquity, total: true },
+    { label: 'Entry equity', value: b.entry, total: true },
+    { label: 'EBITDA growth', value: b.parts[0] },
+    { label: 'Multiple exp.', value: b.parts[1] },
+    { label: 'Net debt reduction', value: b.parts[2] },
+    { label: 'Fees', value: b.parts[3] },
+    { label: 'Exit equity', value: b.exit, total: true },
   ];
-  const bridgeOk = allFinite(bridgeItems.map((it) => it.value));
-
-  const debtOpt = useMemo(() => themed({
-    tooltip: tipBy({ 'Net debt / EBITDA': (v) => f.x(v) }, f.num),
-    xAxis: xCat(labels, { boundaryGap: false }),
-    yAxis: [moneyAxis(f), yVal({ position: 'right', splitLine: { show: false }, axisLabel: { color: COL.amber, formatter: '{value}x' } })],
+  const debtOpt = themed({
+    tooltip: { ...tipBy({ 'Net debt / EBITDA': (v) => `${v}x` }, f.num), axisPointer: { type: 'shadow' } },
+    xAxis: xCat(yearsWithEntry),
+    yAxis: [moneyAxis(f), yVal({ position: 'right', splitLine: { show: false }, axisLabel: { color: COL.gold, formatter: '{value}x' } })],
     series: [
-      {
-        name: 'Senior', type: 'line', stack: 'd', smooth: true, showSymbol: false,
-        lineStyle: { width: 1.6, color: COL.teal }, itemStyle: { color: COL.teal }, areaStyle: { color: agrad(COL.teal, 0.5, 0.06) },
-        data: lbo.closeSenior.map((v) => rnd(v)),
-        markLine: { silent: true, symbol: 'none', lineStyle: { color: COL.ref, type: 'dashed', width: 1 }, label: { color: COL.ref, fontSize: 9.5, formatter: 'EXIT' }, data: [{ xAxis: labels[ey - 1] }] },
-      },
-      { name: 'Mezzanine', type: 'line', stack: 'd', smooth: true, showSymbol: false, lineStyle: { width: 1.6, color: COL.violet }, itemStyle: { color: COL.violet }, areaStyle: { color: agrad(COL.violet, 0.5, 0.06) }, data: lbo.closeMezz.map((v) => rnd(v)) },
-      {
-        ...lineSeries('Cash', COL.green, lbo.cashBal.map((v) => rnd(v)), { symbol: false, width: 2 }),
-        ...(fin(l.minCash) && l.minCash > 0 ? { markLine: refMarkLine([{ yAxis: Math.round(l.minCash), label: { formatter: 'cash floor', position: 'insideEndTop' } }]) } : {}),
-      },
-      lineSeries('Net debt / EBITDA', COL.amber, lbo.levNet.map((v) => rnd(v, 2)), { dashed: true, width: 2, yAxisIndex: 1 }),
+      { name: 'Senior A', type: 'bar', stack: 'd', barMaxWidth: 36, itemStyle: { color: COL.tealDeep }, data: [r.tranches.senA.amount, ...S.aClose].map((v) => rnd(v)) },
+      { name: 'Senior B', type: 'bar', stack: 'd', barMaxWidth: 36, itemStyle: { color: COL.teal }, data: [r.tranches.senB.amount, ...S.bClose].map((v) => rnd(v)) },
+      { name: 'Mezzanine (incl. PIK)', type: 'bar', stack: 'd', barMaxWidth: 36, itemStyle: { color: COL.gold }, data: [r.tranches.mezz.amount, ...S.mClose].map((v) => rnd(v)) },
+      { ...lineSeries('Net debt / EBITDA', COL.green, C.ndEbitda.map((v) => rnd(v, 2)), { yAxisIndex: 1 }) },
     ],
-  }, { zoom: n > 9 }), [lbo, labels, f, n, l.minCash, ey]);
+  });
 
-  const charts = useMemo(() => {
-    const irrByHold = themed({
-      tooltip: tipBy({}, (v) => f.pct(v)),
-      xAxis: xCat(hold.exitSteps.map((x) => f.x(x))), yAxis: yVal({ axisLabel: { color: COL.axis, formatter: '{value}%' } }),
-      series: hold.years.map((y, i) => ({
-        ...lineSeries(`${y}-year hold`, PALETTE[i % PALETTE.length], hold.grid[i].map((v) => rnd(v, 1))),
-        ...(i === 0 && fin(l.hurdleRate) ? { markLine: { silent: true, symbol: 'none', lineStyle: { color: COL.amber, type: 'dashed' }, label: { formatter: `hurdle ${f.pct(l.hurdleRate)}`, color: COL.amber, fontSize: 11 }, data: [{ yAxis: l.hurdleRate }] } } : {}),
-      })),
-    });
-    const equityByYear = themed({
-      tooltip: tipBy({ MOIC: (v) => f.x(v) }, f.num),
-      xAxis: xCat(labels),
-      yAxis: [moneyAxis(f), yVal({ position: 'right', splitLine: { show: false }, axisLabel: { color: COL.gold, formatter: '{value}x' } })],
-      series: [
-        { ...barSeries('Exit equity', COL.teal, exitEqArr.map((v) => rnd(v)), { barMaxWidth: 40 }), markLine: refMarkLine([{ xAxis: labels[ey - 1], label: { formatter: 'exit' } }]) },
-        lineSeries('MOIC', COL.gold, moicArr.map((v) => rnd(v, 2)), { yAxisIndex: 1 }),
-      ],
-    });
-    const su = themed({
-      tooltip: { ...tipBy({}, f.num), axisPointer: { type: 'shadow' } },
-      xAxis: xCat(['Uses', 'Sources']), yAxis: moneyAxis(f),
-      series: [
-        { name: 'Enterprise value', type: 'bar', stack: 's', itemStyle: { color: vgrad(COL.tealDeep) }, data: [rnd(lbo.entryEV), '-'] },
-        { name: 'Transaction fees', type: 'bar', stack: 's', itemStyle: { color: vgrad(COL.outflow) }, data: [rnd(lbo.feesTxn), '-'] },
-        { name: 'Financing fees', type: 'bar', stack: 's', itemStyle: { color: vgrad(COL.outflow2) }, data: [rnd(lbo.feesFin), '-'] },
-        { name: 'Cash at close', type: 'bar', stack: 's', itemStyle: { color: vgrad(COL.cyan) }, data: [rnd(lbo.cashAtClose), '-'] },
-        { name: 'Senior debt', type: 'bar', stack: 's', itemStyle: { color: vgrad(COL.rose) }, data: ['-', rnd(lbo.senior0)] },
-        { name: 'Mezzanine', type: 'bar', stack: 's', itemStyle: { color: vgrad(COL.violet) }, data: ['-', rnd(lbo.mezz0)] },
-        { name: 'Sponsor equity', type: 'bar', stack: 's', itemStyle: { color: vgrad(COL.green) }, data: ['-', rnd(lbo.sponsorEquity)] },
-      ],
-    });
-    const credit = themed({
-      tooltip: { ...tipBy({}, (v) => f.x(v)), axisPointer: { type: 'shadow' } },
-      xAxis: xCat(labels),
-      yAxis: [yVal({ axisLabel: { color: COL.axis, formatter: '{value}x' } }), yVal({ position: 'right', splitLine: { show: false }, axisLabel: { color: COL.green, formatter: '{value}x' } })],
-      series: [
-        barSeries('Net debt / EBITDA', COL.outflow, lbo.levNet.map((v) => rnd(v, 2)), { barMaxWidth: 40 }),
-        lineSeries('EBITDA / cash interest', COL.green, lbo.coverage.map((v) => rnd(v, 2)), { yAxisIndex: 1 }),
-      ],
-    });
-    return { irrByHold, equityByYear, su, credit };
-  }, [lbo, hold, labels, f, l.hurdleRate, ey]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const amortRow = ops.years.map((_, i) => (i < ey ? lbo.feeAmort : 0));
-  const scheduleRows = [
-    { label: 'Revenue', values: ops.revenue, fmt: f.num, sub: true },
-    { label: 'EBITDA', values: ops.ebitda, fmt: f.num, bold: true },
-    { label: 'Less: D&A', values: ops.da.map((v) => -v), fmt: f.num, sub: true },
-    { label: 'EBIT', values: ops.ebit, fmt: f.num },
-    { label: 'Less: cash interest', values: lbo.cashInterest.map((v) => -v), fmt: f.num, sub: true },
-    { label: 'Less: PIK interest (non-cash)', values: lbo.pikAccrual.map((v) => -v), fmt: f.num, sub: true },
-    { label: 'Less: financing-fee amortisation', values: amortRow.map((v) => -v), fmt: f.num, sub: true },
-    { label: 'Pre-tax income', values: lbo.ebt, fmt: f.num },
-    ...(lbo.nolOpen ? [
-      { label: 'Memo: tax-loss (NOL) balance — opening', values: lbo.nolOpen, fmt: f.num, sub: true },
-      { label: 'Memo: NOL used', values: lbo.nolUsed, fmt: f.num, sub: true },
-      { label: 'Memo: NOL balance — closing', values: lbo.nolClose, fmt: f.num, sub: true },
-    ] : []),
-    { label: 'Less: tax', values: lbo.taxAmt.map((v) => -v), fmt: f.num, sub: true },
-    { label: 'Net income', values: lbo.netIncome, fmt: f.num, bold: true },
-    { label: 'Add back: D&A, fee amortisation, PIK', values: ops.years.map((_, i) => ops.da[i] + amortRow[i] + lbo.pikAccrual[i]), fmt: f.num, sub: true },
-    { label: 'Less: capex', values: ops.capex.map((v) => -v), fmt: f.num, sub: true },
-    { label: 'Less: increase in NWC', values: ops.deltaNwc.map((v) => -v), fmt: f.num, sub: true },
-    { label: 'Free cash flow', values: lbo.fcf, fmt: f.num, bold: true },
-    { sechead: true, label: 'Debt and cash' },
-    { label: 'Mandatory amortisation', values: lbo.mandatory.map((v) => -v), fmt: f.num, sub: true },
-    { label: 'Cash sweep — senior', values: lbo.sweepSenior.map((v) => -v), fmt: f.num, sub: true },
-    { label: 'Cash sweep — mezzanine', values: lbo.sweepMezz.map((v) => -v), fmt: f.num, sub: true },
-    { label: 'Closing senior debt', values: lbo.closeSenior, year0: lbo.senior0, fmt: f.num },
-    { label: 'Closing mezzanine', values: lbo.closeMezz, year0: lbo.mezz0, fmt: f.num },
-    { label: `Cash balance (floor ${f.num(l.minCash)})`, values: lbo.cashBal, year0: lbo.cashAtClose, fmt: f.num },
-    { label: 'Net debt', values: netDebtArr, year0: lbo.senior0 + lbo.mezz0 - lbo.cashAtClose, fmt: f.num, bold: true },
+  /* ---------------- tables ---------------- */
+  const cols = [...r.labels.hist, ...hold];
+  const yr = (i) => (i < n - 1 ? '' : i - (n - 1));
+  const FROWS = [
+    ['OPERATING MODEL'],
+    ['Revenue from Operations', F.rev], ['  Revenue growth', F.growth, 'pct'],
+    ['Cost of Materials', F.materials], ['Employee Benefits Expense', F.employee], ['Other Expenses', F.otherExp],
+    ['EBITDA', F.ebitda, 'n1', true], ['  EBITDA margin', F.margin, 'pct'], ['Depreciation & Amortisation', F.da], ['EBIT', F.ebit, 'n1', true],
+    ['Interest – Senior A', S.intA, 'n1', false, true], ['Interest – Senior B', S.intB, 'n1', false, true],
+    ['Interest – Mezzanine (cash)', S.intMezz, 'n1', false, true], ['Interest – Mezzanine (PIK, non-cash)', S.pik, 'n1', false, true],
+    ['Amortisation of financing fees (non-cash)', S.feeAmort, 'n1', false, true],
+    ['Profit Before Tax', S.pbt, 'n1', true, true], ['Tax', S.tax, 'n1', false, true], ['Net Income', S.ni, 'n1', true, true],
+    ['WORKING CAPITAL & CAPEX'],
+    ['Inventories', F.inv], ['Trade Receivables', F.rec], ['Other Current Assets', F.oca], ['Trade Payables', F.pay],
+    ['Other Current Liabilities & Provisions', F.ocl], ['Net Working Capital', F.nwc, 'n1', true], ['Increase / (Decrease) in NWC', F.dNwc], ['Capex', F.capex],
+    ['FREE CASH FLOW AVAILABLE FOR DEBT REPAYMENT'],
+    ['Free Cash Flow', S.fcf, 'n1', true, true],
+    ['CASH & DEBT SCHEDULE'],
+    ['Opening cash', S.cashOpen, 'n1', false, true], ['(+) Free cash flow', S.fcf, 'n1', false, true], ['(−) Mandatory repayments', S.mand, 'n1', false, true],
+    ...(sweep ? [['(−) Minimum cash balance', S.minCash, 'n1', false, true], ['Cash available for sweep', S.avail, 'n1', false, true], ['(−) Cash sweep', S.sweep, 'n1', false, true]] : []),
+    ['Closing cash', [r.entry.cashAfter, ...S.cashClose], 'n1', true, 'entry'],
+    ['Senior A — closing balance', [r.tranches.senA.amount, ...S.aClose], 'n1', false, 'entry'],
+    ['Senior B — closing balance', [r.tranches.senB.amount, ...S.bClose], 'n1', false, 'entry'],
+    ['Mezzanine — closing balance (incl. PIK)', [r.tranches.mezz.amount, ...S.mClose], 'n1', false, 'entry'],
+    ['CREDIT STATISTICS'],
+    ['Total debt', C.totalDebt, 'n1', true, 'entry'], ['Lease liabilities (held constant)', C.leases, 'n1', false, 'entry'], ['Net debt', C.netDebt, 'n1', true, 'entry'],
+    ['Total debt / EBITDA', C.debtEbitda, 'x', false, 'entry'], ['Net debt / EBITDA', C.ndEbitda, 'x', false, 'entry'],
+    ['EBITDA / Cash interest', C.intCover, 'x', false, true], ['Cumulative senior debt repaid (% of original)', C.seniorRepaid, 'pct', false, true],
+    ['Cash shortfall check', C.shortfall, 'txt', false, true],
   ];
+  /** Values across all columns: full (n + m), hold years only, or entry + hold. */
+  const spread = (vals, part) => (part === true ? [...Array(n).fill(null), ...vals] : part === 'entry' ? [...Array(n - 1).fill(null), ...vals] : vals);
 
-  const x0 = (v) => f.x(v / lbo.ebitda0);
-  const upFloor = upsideText(lbo.floorPrice, px);
+  const su = r.su;
+  const USES = ['Equity purchase price', 'Refinance existing borrowings', 'Transaction fees', 'Financing fees'];
+  const SRCS = ['Senior A (Term Loan A)', 'Senior B (Term Loan B)', 'Mezzanine', 'Existing cash used', 'Sponsor equity (balancing figure)'];
+  const w = r.exit;
+  const ss = r.sens;
+  const heat = (grid) => grid.map((row) => row.map((v) => (fin(v) ? v : NaN)));
 
   return (
     <div className="qo">
       <Headline
-        eyebrow={`Leveraged buyout — sponsor IRR, ${ey}-year hold`}
-        value={lbo.irr}
-        fmt={(v) => f.pct(v)}
-        sub={`Entry at ${f.x1(l.entryMultiple)} LTM EBITDA (${f.money(lbo.ebitda0)}) with ${f.x1(leverage)} of debt; exit at ${f.x1(l.exitMultiple)} in ${labels[ey - 1] || `year ${ey}`}. The LBO floor is the most a sponsor could pay per share and still earn the ${f.pct(l.hurdleRate)} hurdle.${upFloor ? ` Floor is ${upFloor} to the market price of ${f.price(px)}.` : ''}`}
+        eyebrow={`LBO — ${kind.label} (template ${kind.file})`}
+        sub={`Entry at ${t(r.entry.multiple, 'x')} ${r.labels.hist[n - 1]} EBITDA (EV ${f.money(r.entry.ev)}), ${m}-year hold, exit at ${t(w.multiple, 'x')} ${hold[m - 1]} EBITDA (EV ${f.money(w.ev)}). ${kind.note}`}
         warnings={[
-          !(lbo.sponsorEquity > 0) && 'Debt covers all of the uses — sponsor equity is zero, so IRR and MOIC are not meaningful. Reduce the debt in the Debt structure step.',
-          lbo.sponsorEquity > 0 && !(lbo.exitEquity > 0) && 'Exit equity is negative — debt left at exit exceeds the exit enterprise value.',
+          blankYears.length ? `Blank operating drivers in ${blankYears.join(', ')} count as 0, as in the template — fill them on the Assumptions step.` : null,
+          shortYears.length ? `Cash goes negative in ${shortYears.join(', ')} — mandatory repayments exceed the cash available; the structure would need a revolver or lower leverage.` : null,
+          su.sponsor < 0 ? 'Sponsor equity is negative — the structure is over-levered.' : null,
+          r.entry.cashWarn ? 'The existing cash used exceeds the existing cash on the balance sheet.' : null,
+          su.check !== 0 ? `Sources − uses = ${t(su.check)} (must be 0).` : null,
         ]}
         kpis={[
-          { label: 'MOIC', value: lbo.moic, fmt: (v) => f.x(v), sub: 'no interim distributions' },
-          { label: `LBO floor @ ${f.pct(l.hurdleRate)} hurdle`, value: lbo.floorPrice, fmt: (v) => f.price(v), hero: true,
-            tone: hasPx ? tone(upsidePct(lbo.floorPrice, px)) : undefined,
-            sub: `${f.price(floorLo)} – ${f.price(floorHi)} at hurdle ± ${f.pct(hStep)}` },
-          hasPx && { label: 'Floor vs market price', value: upsidePct(lbo.floorPrice, px), fmt: (v) => `${v >= 0 ? '+' : ''}${f.pct(v)}`, tone: tone(upsidePct(lbo.floorPrice, px)), sub: `market ${f.price(px)}` },
-          { label: 'Entry EV · sponsor equity', text: `${f.money(lbo.entryEV)} · ${f.money(lbo.sponsorEquity)}`, sub: `fees ${f.money(lbo.feesTxn)} transaction + ${f.money(lbo.feesFin)} financing` },
-          { label: `Exit equity (${labels[ey - 1] || `year ${ey}`})`, value: lbo.exitEquity, fmt: (v) => f.money(v), sub: `exit EV ${f.money(lbo.exitEV)} − net debt ${f.money(lbo.netDebtExit)}` },
-          { label: 'Debt repaid by exit', value: fin(debtLeftPct) ? 100 - debtLeftPct : NaN, fmt: (v) => f.pct0(v), sub: `of ${f.money(lbo.totalDebt0)} raised` },
+          { label: 'Sponsor IRR', text: fin(r.irr) ? t(r.irr, 'pct') : 'NM', hero: true, tone: fin(r.irr) ? tone(r.irr) : undefined, sub: `${m}-year hold, single entry and exit` },
+          { label: 'MOIC', text: x2(r.moic), sub: `${f.money(su.sponsor)} in → ${f.money(w.equity)} out` },
+          { label: 'Sponsor equity', value: num(su.sponsor), fmt: (v) => f.money(v), sub: `${t(su.stats.equityPct, 'pct')} of sources` },
+          { label: 'Total debt at entry', value: r.totalDebt.amount, fmt: (v) => f.money(v), sub: `${t(r.totalDebt.x, 'x')} EBITDA` },
+          { label: 'Net debt / EBITDA', text: `${t(C.ndEbitda[0], 'x')} → ${t(C.ndEbitda[m], 'x')}`, sub: 'entry → exit' },
         ]}
       >
         <div className="grid2">
-          <ChartBox title={`Debt paydown, cash build and net leverage (${f.unitLabel})`} option={debtOpt} />
           <div className="chartbox">
-            <div className="ct">Value creation — entry equity to exit equity ({f.unitLabel})</div>
-            {bridgeOk ? <Waterfall items={bridgeItems} fmt={f.num} /> : <div className="sec-note">A bridge step is NA, so the bridge can't be drawn.</div>}
+            <div className="ct">Value creation bridge — sponsor equity ({f.unitLabel})</div>
+            {bridgeItems.every((it) => fin(it.value)) ? <Waterfall items={bridgeItems} fmt={f.num} /> : <div className="empty">Not available.</div>}
           </div>
+          <ChartBox title={`Debt by tranche (${f.unitLabel}) and net debt / EBITDA`} option={debtOpt} />
         </div>
       </Headline>
 
       <Sections>
-        <Collapsible title={`Sources & uses at close (${f.unitLabel})`} tag="S&U">
+        <Collapsible title="Sources & Uses of funds (at entry)" tag="S&U" defaultOpen>
           <div className="grid2">
             <div className="tablewrap">
-              <table className="fin">
-                <thead><tr><th>Uses</th><th /><th>x LTM EBITDA</th></tr></thead>
+              <table className="fin compact">
+                <thead><tr><th>Uses</th><th>{f.unitLabel}</th><th>% of total</th><th>x EBITDA</th></tr></thead>
                 <tbody>
-                  <tr><td>Enterprise value @ {f.x(l.entryMultiple)}</td><td>{f.num(lbo.entryEV)}</td><td>{x0(lbo.entryEV)}</td></tr>
-                  <tr><td>Transaction fees ({f.pct(l.feesPctEV)} of EV)</td><td>{f.num(lbo.feesTxn)}</td><td>{x0(lbo.feesTxn)}</td></tr>
-                  <tr><td>Financing fees ({f.pct(l.finFeesPct)} of debt)</td><td>{f.num(lbo.feesFin)}</td><td>{x0(lbo.feesFin)}</td></tr>
-                  <tr><td>Cash left on the balance sheet at close</td><td>{f.num(lbo.cashAtClose)}</td><td>{x0(lbo.cashAtClose)}</td></tr>
-                  <tr className="bold"><td>Total uses</td><td>{f.num(lbo.uses)}</td><td>{x0(lbo.uses)}</td></tr>
+                  {USES.map((lab, i) => <tr key={lab}><td>{lab}</td><td>{t(su.uses[i])}</td><td>{t(su.usesPct[i], 'pct')}</td><td>{t(su.usesX[i], 'x')}</td></tr>)}
+                  <tr className="tp-sub"><td>Total uses</td><td>{t(su.totalUses)}</td><td>{t(su.usesPct[4], 'pct')}</td><td>{t(su.usesX[4], 'x')}</td></tr>
                 </tbody>
               </table>
             </div>
             <div className="tablewrap">
-              <table className="fin">
-                <thead><tr><th>Sources</th><th /><th>x LTM EBITDA</th></tr></thead>
+              <table className="fin compact">
+                <thead><tr><th>Sources</th><th>{f.unitLabel}</th><th>% of total</th><th>x EBITDA</th></tr></thead>
                 <tbody>
-                  <tr><td>Senior debt @ {f.pct(l.seniorRate)}</td><td>{f.num(lbo.senior0)}</td><td>{f.x(l.seniorX)}</td></tr>
-                  {lbo.mezz0 > 0 && <tr><td>Mezzanine @ {f.pct(l.mezzRate)}{l.mezzPIK ? ' (PIK)' : ''}</td><td>{f.num(lbo.mezz0)}</td><td>{f.x(l.mezzX)}</td></tr>}
-                  <tr><td>Sponsor equity (plug)</td><td>{f.num(lbo.sponsorEquity)}</td><td>{x0(lbo.sponsorEquity)}</td></tr>
-                  <tr className="bold"><td>Total sources</td><td>{f.num(sourcesTotal)}</td><td>{x0(sourcesTotal)}</td></tr>
+                  {SRCS.map((lab, i) => <tr key={lab} className={i === 4 ? 'bold' : ''}><td>{lab}</td><td>{t(su.sources[i])}</td><td>{t(su.sourcesPct[i], 'pct')}</td><td>{t(su.sourcesX[i], 'x')}</td></tr>)}
+                  <tr className="tp-sub"><td>Total sources</td><td>{t(su.totalSources)}</td><td>{t(su.sourcesPct[5], 'pct')}</td><td>{t(su.sourcesX[5], 'x')}</td></tr>
                 </tbody>
               </table>
             </div>
           </div>
-          <div className="qo-note">Entry EV = entry multiple × LTM EBITDA; debt is sized as multiples of LTM EBITDA and equity is the plug.</div>
+          <div className="tablewrap" style={{ maxWidth: 560, marginTop: 12 }}>
+            <table className="fin compact">
+              <thead><tr><th>Entry</th><th /></tr></thead>
+              <tbody>
+                <tr><td>Entry EBITDA ({r.labels.hist[n - 1]})</td><td>{t(r.entry.ebitda)}</td></tr>
+                <tr><td>Entry EV / EBITDA</td><td>{t(su.stats.entryMultiple, 'x')}</td></tr>
+                <tr><td>Entry Enterprise Value</td><td>{t(r.entry.ev)}</td></tr>
+                <tr><td>(−) Existing borrowings (refinanced)</td><td>{t(r.entry.borrowings)}</td></tr>
+                <tr><td>(−) Lease liabilities (per toggle)</td><td>{t(r.entry.leases)}</td></tr>
+                <tr><td>(+) Existing cash, bank balances & current investments</td><td>{t(r.entry.cash)}</td></tr>
+                <tr><td>(−) Non-controlling interest</td><td>{t(r.entry.nci)}</td></tr>
+                <tr className="tp-sub"><td>Equity purchase price</td><td>{t(r.entry.equityPrice)}</td></tr>
+                <tr><td>Total debt / EBITDA · senior debt / EBITDA</td><td>{t(su.stats.debtEbitda, 'x')} · {t(su.stats.seniorEbitda, 'x')}</td></tr>
+                <tr><td>Debt / (debt + sponsor equity)</td><td>{t(su.stats.debtPct, 'pct')}</td></tr>
+                <tr><td>Check: sources − uses (must be 0) · sponsor equity</td><td>{t(su.check)} · {su.equityFlag}</td></tr>
+              </tbody>
+            </table>
+          </div>
         </Collapsible>
 
-        <Collapsible title={`Debt schedule and free cash flow (${f.unitLabel})`} tag="DEBT">
-          <StatementTable labels={labels} years={ops.years} showYear0 rows={scheduleRows} />
+        <Collapsible title="Exit, sponsor returns & value creation" tag="RETURNS" defaultOpen>
+          <div className="grid2">
+            <div className="tablewrap">
+              <table className="fin compact">
+                <thead><tr><th>Exit waterfall</th><th>{f.unitLabel}</th></tr></thead>
+                <tbody>
+                  <tr><td>Exit-year EBITDA</td><td>{t(w.ebitda)}</td></tr>
+                  <tr><td>Exit EV / EBITDA multiple</td><td>{t(w.multiple, 'x')}</td></tr>
+                  <tr className="tp-sub"><td>Exit Enterprise Value</td><td>{t(w.ev)}</td></tr>
+                  <tr><td>(−) Senior A outstanding</td><td>{t(w.senA)}</td></tr>
+                  <tr><td>(−) Senior B outstanding</td><td>{t(w.senB)}</td></tr>
+                  <tr><td>(−) Mezzanine outstanding (incl. PIK)</td><td>{t(w.mezz)}</td></tr>
+                  <tr><td>(−) Lease liabilities</td><td>{t(w.leases)}</td></tr>
+                  <tr><td>(−) Non-controlling interest</td><td>{t(w.nci)}</td></tr>
+                  <tr><td>(+) Cash on balance sheet</td><td>{t(w.cash)}</td></tr>
+                  <tr className="tp-sub"><td>Exit Equity Value (to sponsor)</td><td>{t(w.equity)}</td></tr>
+                  <tr><td>Sponsor equity invested</td><td>{t(su.sponsor)}</td></tr>
+                  <tr className="bold"><td>MOIC · IRR</td><td>{x2(r.moic)} · {fin(r.irr) ? t(r.irr, 'pct') : 'NM'}</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div className="tablewrap">
+              <table className="fin compact">
+                <thead><tr><th>Value creation bridge</th><th>{f.unitLabel}</th><th>% of value created</th></tr></thead>
+                <tbody>
+                  <tr><td>Sponsor equity at entry</td><td>{t(b.entry)}</td><td /></tr>
+                  {['(+) EBITDA growth', '(+) Multiple expansion / (contraction)', '(+) Net debt reduction', '(−) Transaction & financing fees'].map((lab, i) => (
+                    <tr key={lab}><td>{lab}</td><td>{t(b.parts[i])}</td><td>{t(b.pct[i], 'pct')}</td></tr>
+                  ))}
+                  <tr className="tp-sub"><td>Sponsor equity at exit</td><td>{t(b.exit)}</td><td /></tr>
+                  <tr><td>Check: bridge vs exit waterfall (must be 0)</td><td>{t(b.check)}</td><td /></tr>
+                  <tr><td>Entry → exit EBITDA CAGR</td><td>{t(r.summary.ebitdaCagr, 'pct')}</td><td /></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div className="qo-note">EBITDA growth uses the exit multiple; multiple expansion uses entry EBITDA — this pairing adds up exactly. Sponsor cash flows: {r.flows.map((v) => t(v)).join(' · ')} (years 0 to {m}; no interim dividends).</div>
+        </Collapsible>
+
+        <Collapsible title="Returns sensitivity" tag="SENS" defaultOpen>
+          <div className="grid2">
+            {[['IRR – exit multiple vs revenue growth', ss.growthIrr, 'pct'], ['MOIC – exit multiple vs revenue growth', ss.growthMoic, 'x']].map(([title, grid, fmt]) => (
+              <div key={title} style={{ minWidth: 0 }}>
+                <div className="ct" style={{ marginBottom: 6 }}>{title}</div>
+                <Heatmap corner="Exit ↓ / growth shift →" rowLabels={ss.exitRows} colLabels={ss.cases.map((c) => c.shift)} grid={heat(grid)}
+                  fmt={(v) => (fmt === 'pct' ? t(v, 'pct') : x2(v))} fmtRow={(v) => t(v, 'x')} fmtCol={(v) => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(1)}%`} />
+              </div>
+            ))}
+            {[['IRR – entry multiple vs exit multiple (base-case operations)', ss.multIrr, 'pct'], ['MOIC – entry multiple vs exit multiple (base-case operations)', ss.multMoic, 'x']].map(([title, grid, fmt]) => (
+              <div key={title} style={{ minWidth: 0 }}>
+                <div className="ct" style={{ marginBottom: 6 }}>{title}</div>
+                <Heatmap corner="Entry ↓ / exit →" rowLabels={ss.entryRows} colLabels={ss.exitRows} grid={heat(grid)}
+                  fmt={(v) => (fmt === 'pct' ? t(v, 'pct') : x2(v))} fmtRow={(v) => t(v, 'x')} fmtCol={(v) => t(v, 'x')} />
+              </div>
+            ))}
+          </div>
           <div className="qo-note">
-            Interest accrues on opening balances{l.mezzPIK ? '; mezzanine interest is PIK and accretes to the balance' : ''}. After mandatory
-            amortisation, {f.pct0(l.sweepPct)} of free cash flow sweeps into debt (senior first), capped so cash never falls below{' '}
-            {f.money(l.minCash)}. Financing fees amortise over the hold as a non-cash, tax-deductible charge. Loss years pay no tax and build a tax-loss balance used against later profits.
+            EBITDA CAGR by growth case: {ss.cases.map((c) => `${c.shift >= 0 ? '+' : ''}${(c.shift * 100).toFixed(1)}% → ${t(c.ebitdaCagr, 'pct')}`).join(' · ')}.
+            The growth tables re-run the full model (debt paydown, interest, tax) for each case. n/m = NM. Steps are set on the Exit & sensitivity step.
           </div>
         </Collapsible>
 
-        <Collapsible title="Credit statistics" tag="CREDIT">
-          <StatementTable labels={labels} years={ops.years} rows={[
-            { label: 'Gross leverage (debt / EBITDA)', values: lbo.levGross, fmt: (v) => f.x(v) },
-            { label: 'Net leverage (net debt / EBITDA)', values: lbo.levNet, fmt: (v) => f.x(v) },
-            { label: 'Cash interest coverage (EBITDA / cash interest)', values: lbo.coverage, fmt: (v) => (fin(v) ? f.x1(v) : 'n/m') },
-            { label: '% of original debt outstanding', values: lbo.closeSenior.map((v, i) => (lbo.totalDebt0 > 0 ? ((v + lbo.closeMezz[i]) / lbo.totalDebt0) * 100 : NaN)), fmt: (v) => f.pct0(v) },
-          ]} />
-          <ChartBox title="Net leverage (×) and cash interest coverage (×)" option={charts.credit} />
-        </Collapsible>
-
-        <Collapsible title={`Returns analysis — exit in any year @ ${f.x1(l.exitMultiple)} EV/EBITDA`} tag="RETURNS">
-          <StatementTable labels={labels} years={ops.years} rows={[
-            { label: 'EBITDA', values: ops.ebitda, fmt: f.num },
-            { label: `Exit EV @ ${f.x(l.exitMultiple)}`, values: ops.ebitda.map((e) => e * l.exitMultiple), fmt: f.num },
-            { label: 'Less: net debt at exit', values: netDebtArr.map((v) => -v), fmt: f.num, sub: true },
-            { label: 'Exit equity value', values: exitEqArr, fmt: f.num, bold: true },
-            { label: `MOIC (on ${f.num(lbo.sponsorEquity)} equity)`, values: moicArr, fmt: (v) => (fin(v) && v > 0 ? f.x(v) : DASH) },
-            { label: 'IRR', values: irrArr, fmt: (v) => f.pct(v), bold: true },
-          ]} />
-          <div className="qo-note">Each year's exit equity = exit multiple × that year's EBITDA − the net debt left on the schedule above. Your modelled exit ({labels[ey - 1] || `year ${ey}`}) is one column of this table.</div>
-          <ChartBox title={`Sponsor equity if exited each year (${f.unitLabel}) and MOIC`} option={charts.equityByYear} />
-        </Collapsible>
-
-        <Collapsible title="Value-creation bridge" tag="BRIDGE">
-          <div className="tablewrap">
-            <table className="fin qo-kv">
+        <Collapsible title="LBO model" tag="MODEL">
+          <div className="tablewrap tp-grid">
+            <table className="fin compact">
+              <thead>
+                <tr><th>{f.unitLabel}</th>{cols.map((l, i) => <th key={i} className={i < n - 1 ? 'dg-hist' : ''}>{l}</th>)}</tr>
+                <tr className="dg-band"><th>Year</th>{cols.map((_, i) => <th key={i}>{yr(i)}</th>)}</tr>
+              </thead>
               <tbody>
-                <tr><td>Entry equity (sponsor cheque)</td><td>{f.num(lbo.bridge.entryEquity)}</td></tr>
-                <tr className="sub"><td>Less: fees</td><td>{f.num(lbo.bridge.fees)}</td></tr>
-                <tr><td>EBITDA growth × entry multiple</td><td>{f.num(lbo.bridge.ebitdaGrowth)}</td></tr>
-                <tr><td>Multiple expansion / (contraction) × exit EBITDA</td><td>{f.num(lbo.bridge.multipleChange)}</td></tr>
-                <tr><td>Deleveraging (entry net debt − exit net debt)</td><td>{f.num(lbo.bridge.deleveraging)}</td></tr>
-                <tr className="bold"><td>Exit equity</td><td>{f.num(lbo.bridge.exitEquity)}</td></tr>
+                {FROWS.map(([lab, vals, fmt = 'n1', bold, part]) => (vals
+                  ? (
+                    <tr key={lab} className={bold ? 'tp-sub' : ''}>
+                      <td>{lab}</td>
+                      {spread(vals, part).map((v, i) => <td key={i} className={`${i < n - 1 ? 'dg-hist' : ''}${v === 'n.a.' ? ' tp-mute' : ''}${v === 'SHORTFALL' ? ' neg' : ''}`}>{fmt === 'txt' ? (v || '') : t(v, fmt)}</td>)}
+                    </tr>
+                  )
+                  : <tr key={lab} className="tp-sec dg-sec"><td colSpan={cols.length + 1}>{lab}</td></tr>))}
               </tbody>
             </table>
           </div>
+          <div className="qo-note">Interest on each tranche’s opening balance (no circularity). Other income is not forecast. Leases and NCI are held at the entry balance sheet level and deducted at entry and exit.</div>
         </Collapsible>
 
-        <Collapsible title="LBO floor — the most a sponsor could pay" tag="FLOOR" note={`${f.price(lbo.floorPrice)} per share`}>
-          <SensStepInputs a={a} set={set} items={[{ path: 'sens.lbo.hurdleStep', label: 'Hurdle step (range)', suffix: '% pts' }]} />
-          <div className="tablewrap">
-            <table className="fin">
-              <thead><tr><th /><th>Hurdle + step</th><th>Your hurdle</th><th>Hurdle − step</th></tr></thead>
+        <Collapsible title="Assumptions (drivers)" tag="DRIVERS">
+          <div className="tablewrap tp-grid">
+            <table className="fin compact">
+              <thead><tr><th>Driver</th>{cols.map((l, i) => <th key={i} className={i < n ? 'dg-hist' : ''}>{l}</th>)}</tr></thead>
               <tbody>
-                <tr className="sub"><td>Hurdle IRR</td><td>{f.pct(l.hurdleRate + hStep)}</td><td>{f.pct(l.hurdleRate)}</td><td>{f.pct(l.hurdleRate - hStep)}</td></tr>
-                <tr className="bold"><td>Floor price per share</td><td>{f.price(floorLo)}</td><td>{f.price(lbo.floorPrice)}</td><td>{f.price(floorHi)}</td></tr>
-                {hasPx && <tr className="sub"><td>vs market ({f.price(px)})</td><td>{f.pct(upsidePct(floorLo, px))}</td><td>{f.pct(upsidePct(lbo.floorPrice, px))}</td><td>{f.pct(upsidePct(floorHi, px))}</td></tr>}
+                {LBO_DRIVERS.map((d) => (d.section
+                  ? <tr key={d.section} className="tp-sec dg-sec"><td colSpan={cols.length + 1}>{d.section}</td></tr>
+                  : (
+                    <tr key={d.key}>
+                      <td>{d.label}</td>
+                      {r.ref[d.key].map((v, i) => <td key={`h${i}`} className={`dg-hist${v === 'n.a.' ? ' tp-mute' : ''}`}>{t(v, d.fmt === 'pct' ? 'pct' : 'n0')}</td>)}
+                      {r.drivers[d.key].map((v, j) => <td key={`f${j}`}>{t(v, d.fmt === 'pct' ? 'pct' : 'n0')}</td>)}
+                    </tr>
+                  )))}
               </tbody>
             </table>
-          </div>
-          <div className="tablewrap">
-            <table className="fin qo-kv">
-              <tbody>
-                <tr><td>Exit equity (fixed by the operating plan and debt schedule)</td><td>{f.num(lbo.exitEquity)}</td></tr>
-                <tr><td>Maximum entry enterprise value at the hurdle</td><td>{f.num(lbo.entryEvMax)}</td></tr>
-                <tr className="sub"><td>Implied maximum entry multiple</td><td>{x0(lbo.entryEvMax)}</td></tr>
-                <tr className="sub"><td>Less: current net debt</td><td>{f.num(-(a.company.grossDebt - a.company.cash))}</td></tr>
-                <tr className="sub"><td>÷ Shares outstanding</td><td>{f.shares(a.company.sharesOut)}</td></tr>
-                <tr className="bold"><td>LBO floor price</td><td>{f.price(lbo.floorPrice)}</td></tr>
-              </tbody>
-            </table>
-          </div>
-          <div className="qo-note">Exit equity does not depend on the entry price, so the floor solves the entry EV at which the sponsor earns exactly the hurdle.</div>
-        </Collapsible>
-
-        <Collapsible title="Sensitivity — sponsor IRR" tag="SENS" note="steps editable">
-          <div className="qo-sens">
-            <div className="qo-sens-cell">
-              <div className="qo-sub">Entry multiple (rows) × exit multiple (columns)</div>
-              <SensStepInputs a={a} set={set} items={[
-                { path: 'sens.lbo.entryStep', label: 'Entry step', suffix: 'x' },
-                { path: 'sens.lbo.exitStep', label: 'Exit step', suffix: 'x' },
-              ]} />
-              <Heatmap corner="Entry \ Exit" rowLabels={sens.entrySteps} colLabels={sens.exitSteps} grid={sens.grid}
-                fmt={(v) => f.pct(v)} fmtRow={(v) => f.x(v)} fmtCol={(v) => f.x(v)} />
-            </div>
-            <div className="qo-sens-cell">
-              <div className="qo-sub">Holding period (rows) × exit multiple (columns)</div>
-              <SensStepInputs a={a} set={set} items={[{ path: 'sens.lbo.exitStep', label: 'Exit step', suffix: 'x' }]} />
-              <Heatmap corner="Hold \ Exit" rowLabels={hold.years} colLabels={hold.exitSteps} grid={hold.grid}
-                fmt={(v) => f.pct(v)} fmtRow={(v) => `${v}y`} fmtCol={(v) => f.x(v)} />
-            </div>
-          </div>
-          <div className="qo-note">Multiples run two steps either side of your entry and exit multiples. The holding-period grid exits the modelled debt schedule in other years. n/m = equity at entry or exit not positive.</div>
-          <ChartBox title="Sponsor IRR vs exit multiple, by holding period" option={charts.irrByHold} />
-        </Collapsible>
-
-        <Collapsible title="More charts" tag="CHARTS">
-          <div className="grid2">
-            <ChartBox title={`Sources & uses at close (${f.unitLabel})`} option={charts.su} />
-            <ChartBox title={`Sponsor equity if exited each year (${f.unitLabel}) and MOIC`} option={charts.equityByYear} />
           </div>
         </Collapsible>
       </Sections>

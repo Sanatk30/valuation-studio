@@ -1,18 +1,25 @@
 import { lazy } from 'react';
 import { METHOD_META } from './labels.js';
 import { companyStep, historyStep, forecastStep } from './steps/common.jsx';
-import { waccStep, terminalStep, fcfeStep } from './steps/dcfSteps.jsx';
+import { dcfSettingsStep, dcfCompanyStep, dcfDriversStep, dcfRateStep, dcfTerminalStep } from './steps/dcfSteps.jsx';
+import { lboSettingsStep, lboCompanyStep, lboDriversStep, lboTransactionStep, lboExitStep } from './steps/lboSteps.jsx';
 import {
-  lboEntryStep, lboDebtStep, lboSweepStep, ipoFinancingStep, ipoPricingStep, ipoStructureStep,
-  financingStep, ratioSettingsStep, compsTargetStep, precTargetStep,
+  ipoFinancingStep, ipoPricingStep, ipoStructureStep,
+  financingStep, ratioSettingsStep,
 } from './steps/fieldSteps.js';
-import { peersStep, regressionStep, dealsStep, peerStatus, dealStatus } from './steps/marketSteps.jsx';
+import {
+  compsSettingsStep, compsTargetStep, peersStep, regressionStep,
+  precSettingsStep, precCompanyStep, dealListStep, dealPagesStep,
+} from './steps/templateSteps.jsx';
+import { computeComps } from '../lib/engine/comps.js';
+import { computePrecedent } from '../lib/engine/precedent.js';
 import { combinedStep } from './combined.jsx';
 import { toEngineInput } from '../store/methodModel.js';
 import { projectOperations } from '../lib/engine/drivers.js';
-import { computeWacc } from '../lib/engine/wacc.js';
+import { computeDcfT, templateName } from '../lib/engine/dcfTemplate.js';
+import { computeLboT, repayKind } from '../lib/engine/lboTemplate.js';
 import { computeThreeStatement } from '../lib/engine/threeStatement.js';
-import { fmtMoney, fmtPct, fmtX } from '../lib/format.js';
+import { fmtMoney, fmtPct, fmtX, fmtPrice } from '../lib/format.js';
 
 /**
  * Every method: its steps (in order), its output page and a running preview of
@@ -50,60 +57,71 @@ function opsRows(a, company) {
 
 export const METHODS = {
   dcf: {
-    steps: [companyStep(PROJ), historyStep(), forecastStep(), waccStep(), terminalStep(), fcfeStep()],
+    steps: [dcfSettingsStep(), dcfCompanyStep(), dcfDriversStep(), dcfRateStep(), dcfTerminalStep()],
     Output: out.dcf,
     preview(def, a, states, company) {
-      const rows = [];
-      if (valid(def, states, 'company', 'forecast')) rows.push(...opsRows(a, company));
-      if (valid(def, states, 'company', 'wacc')) {
-        const k = computeWacc(a);
-        rows.push({ label: 'Cost of equity', value: fmtPct(k.costEquity, 2) }, { label: 'WACC', value: fmtPct(k.wacc, 2) });
+      if (!valid(def, states, 'dcfSettings')) return [];
+      const r = computeDcfT(a);
+      const rows = [{ label: 'Template', value: templateName(r.settings) }];
+      if (valid(def, states, 'dcfCompany')) {
+        const T = r.n + r.m - 1;
+        rows.push({ label: `Revenue, ${r.labels.fcst[r.m - 1]}`, value: fmtMoney(r.F.rev[T], company) }, { label: `EBITDA margin, ${r.labels.fcst[r.m - 1]}`, value: fmtPct(r.F.margin[T] * 100, 1) });
       }
+      if (valid(def, states, 'dcfRate')) {
+        rows.push({ label: 'Cost of equity', value: fmtPct(r.coe.ke * 100, 2) });
+        if (r.wacc) rows.push({ label: 'WACC', value: fmtPct(r.wacc.wacc * 100, 2) });
+      }
+      if (valid(def, states, 'dcfTerminal') && fin(r.valuation.perShare)) rows.push({ label: 'Value per share', value: fmtPrice(r.valuation.perShare, company, 2) });
       return rows;
     },
   },
   comps: {
-    steps: [companyStep({ priceHint: 'Optional — used for the target’s own multiples and upside' }), compsTargetStep(), peersStep(), regressionStep()],
+    steps: [compsSettingsStep(), compsTargetStep(), peersStep(), regressionStep()],
     Output: out.comps,
-    preview(def, a, states, company) {
+    preview(def, a, states) {
+      if (!valid(def, states, 'compsSettings')) return [];
+      const c = computeComps(a);
       const rows = [];
-      const t = a.comps.target;
-      if (valid(def, states, 'compsTarget')) {
-        rows.push({ label: 'LTM EBITDA margin', value: fmtPct((t.ebitda / t.revenue) * 100, 1) });
-      }
-      const usable = (a.comps.peers || []).map(peerStatus).filter((s) => s.ok);
-      if (usable.length) {
-        const m = usable.map((s) => s.page.multiples?.evEbitda?.values?.[0]).filter(fin).sort((x, y) => x - y);
-        rows.push({ label: 'Usable peers', value: String(usable.length) });
-        if (m.length) rows.push({ label: 'Median EV / LTM EBITDA', value: fmtX(m.length % 2 ? m[(m.length - 1) / 2] : (m[m.length / 2 - 1] + m[m.length / 2]) / 2, 1) });
-      }
+      const m = c.target.bench.ebitdaMargin;
+      if (typeof m === 'number') rows.push({ label: `Target EBITDA margin (${c.labels.ltm})`, value: fmtPct(m * 100, 1) });
+      const filled = c.peers.filter((p) => !p.empty);
+      if (filled.length) rows.push({ label: 'Peers included', value: `${filled.filter((p) => p.include === 1).length} of ${filled.length}` });
+      const med = c.stats1.evEbitdaLtm?.median;
+      if (typeof med === 'number') rows.push({ label: `Median EV / EBITDA ${c.labels.ltm}`, value: fmtX(med, 1) });
       return rows;
     },
   },
   precedent: {
-    steps: [companyStep({ priceHint: 'Optional — needed for the premiums-paid analysis' }), precTargetStep(), dealsStep()],
+    steps: [precSettingsStep(), precCompanyStep(), dealListStep(), dealPagesStep()],
     Output: out.precedent,
     preview(def, a, states) {
+      if (!valid(def, states, 'precSettings')) return [];
+      const p = computePrecedent(a);
       const rows = [];
-      const usable = (a.precedent.deals || []).map(dealStatus).filter((s) => s.ok);
-      if (usable.length) {
-        const m = usable.map((s) => s.page.evEbitda).filter(fin).sort((x, y) => x - y);
-        rows.push({ label: 'Usable deals', value: String(usable.length) });
-        if (m.length) rows.push({ label: 'Median EV / LTM EBITDA', value: fmtX(m.length % 2 ? m[(m.length - 1) / 2] : (m[m.length / 2 - 1] + m[m.length / 2]) / 2, 1) });
-      }
+      const filled = p.deals.filter((d) => !d.empty);
+      if (filled.length) rows.push({ label: 'Deals included', value: `${filled.filter((d) => d.include === 1).length} of ${filled.length}` });
+      const med = p.stats1.evEbitda?.median;
+      if (typeof med === 'number') rows.push({ label: 'Median EV / LTM EBITDA', value: fmtX(med, 1) });
+      const prem = p.stats1.premium?.median;
+      if (typeof prem === 'number') rows.push({ label: 'Median control premium', value: fmtPct(prem * 100, 1) });
       return rows;
     },
   },
   lbo: {
-    steps: [companyStep(PROJ), forecastStep(), lboEntryStep(), lboDebtStep(), lboSweepStep()],
+    steps: [lboSettingsStep(), lboCompanyStep(), lboDriversStep(), lboTransactionStep(), lboExitStep()],
     Output: out.lbo,
     preview(def, a, states, company) {
-      const rows = [];
-      if (valid(def, states, 'company', 'forecast')) rows.push(...opsRows(a, company));
-      if (valid(def, states, 'forecast', 'lboEntry')) rows.push({ label: 'Entry enterprise value', value: fmtMoney(a.lbo.entryMultiple * a.drivers.ebitda0, company) });
-      if (valid(def, states, 'forecast', 'lboEntry', 'lboDebt')) {
-        const debt = (a.lbo.seniorX + a.lbo.mezzX) * a.drivers.ebitda0;
-        rows.push({ label: 'New debt', value: `${fmtMoney(debt, company)} (${fmtX(a.lbo.seniorX + a.lbo.mezzX, 1)})` });
+      if (!valid(def, states, 'lboSettings')) return [];
+      const r = computeLboT(a);
+      const rows = [{ label: 'Debt repayment', value: repayKind(r.repay).label }];
+      if (valid(def, states, 'lboCompany')) rows.push({ label: 'Entry EBITDA', value: fmtMoney(r.entry.ebitda, company) });
+      if (valid(def, states, 'lboTransaction')) {
+        rows.push({ label: 'Entry enterprise value', value: fmtMoney(r.entry.ev, company) });
+        rows.push({ label: 'Sponsor equity', value: fmtMoney(r.su.sponsor, company) }, { label: 'Total debt', value: `${fmtMoney(r.totalDebt.amount, company)} (${fmtX(r.totalDebt.x, 1)})` });
+      }
+      if (valid(def, states, 'lboExit')) {
+        if (fin(r.irr)) rows.push({ label: 'IRR', value: fmtPct(r.irr * 100, 1) });
+        if (fin(r.moic)) rows.push({ label: 'MOIC', value: fmtX(r.moic, 2) });
       }
       return rows;
     },

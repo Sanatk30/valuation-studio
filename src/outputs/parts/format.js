@@ -48,16 +48,6 @@ export function makeFmt(settings) {
 export const upsidePct = (value, market) =>
   (fin(value) && fin(market) && market > 0 ? (value / market - 1) * 100 : NaN);
 
-/** Compound annual growth between two positive values over `years` intervals, in %. */
-export const cagrPct = (from, to, years) =>
-  (fin(from) && fin(to) && from > 0 && to > 0 && years > 0 ? ((to / from) ** (1 / years) - 1) * 100 : NaN);
-
-/** Running cumulative sum. */
-export const cumsum = (arr) => {
-  let run = 0;
-  return (arr || []).map((v) => (run += v));
-};
-
 /** True when every value is a finite number (and there is at least one). */
 export const allFinite = (arr) => Array.isArray(arr) && arr.length > 0 && arr.every(fin);
 
@@ -66,13 +56,6 @@ export const rnd = (v, dp = 0) => (fin(v) ? +v.toFixed(dp) : null);
 
 /** Tone for a signed figure: 'pos' / 'neg' / undefined. */
 export const tone = (v) => (fin(v) ? (v >= 0 ? 'pos' : 'neg') : undefined);
-
-/** "12.3% upside" / "4.5% downside" — or null without a market price. */
-export function upsideText(value, market) {
-  const u = upsidePct(value, market);
-  if (!fin(u)) return null;
-  return `${fmtPct(Math.abs(u), 1)} ${u >= 0 ? 'upside' : 'downside'}`;
-}
 
 /**
  * Run an engine call without letting one bad input take the whole page down.
