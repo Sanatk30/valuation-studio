@@ -440,21 +440,13 @@ export function buildPrecedentWorkbook(a) {
   inp.views = [{ state: 'frozen', xSplit: 0, ySplit: 16, topLeftCell: 'A17' }];
 
   /* ---------------- company sheets ---------------- */
-  const labelsOf = (pg) => {
-    const L = p.defaultLabels;
-    const st = pg?.labels || {};
-    const fy = Array.isArray(st.fy) ? st.fy.slice(-n) : [];
-    return {
-      fy: [...L.fy.slice(0, n - fy.length), ...fy].map((x, i) => (String(x ?? '').trim() ? x : L.fy[i])),
-      p: st.p || L.p, c: st.c || L.c, ltm: st.ltm || L.ltm,
-    };
-  };
+  // each page's own period labels, exactly as the app shows them (years added in front continue the numbering)
   const cbvWs = wb.addWorksheet('Company Being Valued');
   const cRef = writeCompanySheet(cbvWs, {
     page: co.page, n, ytd,
     title: fx('IF(Inputs!$C$10="","Company Being Valued: [enter name in Inputs]","Company Being Valued: "&Inputs!$C$10)'),
     subtitle: `Latest available financials. Consolidated, ${unitLabel}. Expenses positive in P&L; outflows negative in cash flow.`,
-    labels: { input: labelsOf(co.page) }, lease: 'Inputs!$B$7',
+    labels: { input: p.company.labels }, lease: 'Inputs!$B$7',
     market: { kind: 'listed', price: 'Inputs!$C$12', shares: 'Inputs!$C$13', heading: 'Market Data & Net Debt (latest)', priceLabel: `Current Share Price (${sym})`, evLabel: 'Current Enterprise Value', bvps: false },
     unitLabel, sym, unitWord: unit,
   });
@@ -465,7 +457,7 @@ export function buildPrecedentWorkbook(a) {
       page: d.page, n, ytd,
       title: fx(`IF(Inputs!$C$${rr}="","Deal ${k + 1}: [enter target in Inputs]","Deal ${k + 1}: "&Inputs!$C$${rr}&IF(Inputs!$D$${rr}="",""," acquired by "&Inputs!$D$${rr})&IF(Inputs!$B$${rr}="",""," ("&TEXT(Inputs!$B$${rr},"dd-mmm-yyyy")&")"))`),
       subtitle: `Target financials AS OF ANNOUNCEMENT. Consolidated, ${unitLabel}. Expenses positive in P&L; outflows negative in cash flow.`,
-      labels: { input: labelsOf(d.page) }, lease: 'Inputs!$B$7',
+      labels: { input: p.deals[k].labels }, lease: 'Inputs!$B$7',
       market: { kind: 'deal', equity: `Inputs!$H$${rr}`, stake: `Inputs!$F$${rr}`, consideration: `Inputs!$G$${rr}` },
       unitLabel, sym, unitWord: unit,
     });

@@ -93,8 +93,8 @@ export const impliedEquity100 = (d) => {
   const stake = z(d.stakePct) / 100;
   return stake === 0 ? 0 : z(d.consideration) / stake;
 };
-/** Inputs!N = IF(AND(Listed="Yes", Unaffected>0, Offer>0), Offer/Unaffected − 1, ""). */
-export const controlPremium = (d) => (d.listed === 'Yes' && z(d.unaffectedPrice) > 0 && z(d.offerPrice) > 0 ? d.offerPrice / d.unaffectedPrice - 1 : '');
+/** Inputs!N = IF(AND(Listed="Yes", Unaffected>0, Offer>0), Offer/Unaffected − 1, "") — Excel's "=" ignores case. */
+export const controlPremium = (d) => (String(d.listed ?? '').toLowerCase() === 'yes' && z(d.unaffectedPrice) > 0 && z(d.offerPrice) > 0 ? d.offerPrice / d.unaffectedPrice - 1 : '');
 
 const multipleOf = (base, metric) => (z(metric) <= 0 ? 'NM' : z(base) / z(metric));
 
@@ -124,7 +124,7 @@ export function computePrecedent(a) {
     return {
       id: d.id, role: `Deal ${i + 1}`, deal: d, page: pg,
       labels: periodLabels(d.page?.labels, n, null),
-      include: d.include === 1 ? 1 : d.include === 0 ? 0 : null,
+      include: d.include === 0 ? 0 : 1,   // anything but 0 is 1, as the Deal list step and the workbook show it
       empty: isBlankDeal(d),
       equity, netDebt: pg.market.netDebt, ev: pg.market.ev,
       revLtm: pg.v.rev[L], ebitdaLtm: pg.v.ebitda[L], patLtm: pg.v.patOwners[L],
