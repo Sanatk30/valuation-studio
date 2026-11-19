@@ -100,6 +100,13 @@ for (const [sym, company, pairs] of [
   const tax = pt(blk, 'TaxProvision', L.date), pbt = pt(blk, 'PretaxIncome', L.date);
   const rep = tax && pbt && pbt.value > 0 ? (tax.value / pbt.value) * 100 : null;
   ok(rep === null || rep < 0 ? m.company.taxRate === null : near(m.company.taxRate, rep), `${sym}: tax rate = provision ÷ pre-tax (NA if negative)`);
+  // the preview's "Reported" column shows the computed reported rate / NWC, not NA
+  const pvTax = m.preview.find((r) => r.label === 'Tax rate');
+  ok(rep === null ? pvTax.reported === null : near(pvTax.reported, rep), `${sym}: preview shows the reported tax rate in the Reported column`);
+  const nb = ['CurrentAssets', 'CashCashEquivalentsAndShortTermInvestments', 'CurrentLiabilities', 'CurrentDebtAndCapitalLeaseObligation'].map(bs);
+  const pvNwc = m.preview.find((r) => r.label === 'Opening operating NWC');
+  ok(nb.every(Boolean) ? near(pvNwc.reported, (nb[0].value - nb[1].value) - (nb[2].value - nb[3].value)) && pvNwc.reportedCcy === (nb[0].currency || raw.financialCurrency) : pvNwc.reported === null,
+    `${sym}: preview shows the reported NWC build in the reported currency`);
 
   const px = raw.price;
   const pxRate = px.currency === company.currency ? 1 : rates[px.currency].rate;

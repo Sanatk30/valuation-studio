@@ -623,7 +623,11 @@ function mapCore(raw, company, rates, opts) {
   for (const o of shareOptions) row('Balance sheet', o.label, { reported: o.reported, reportedKind: 'shares', value: o.value, kind: 'shares', sub: true, ref: true, note: o.id === shareBasis ? 'applied' : '' });
   row('Balance sheet', "Shareholders' equity", { basis: bsBasis, fields: ['ts.equity0'], reported: rep(pEq), reportedCcy: pEq?.currency || fc, value: equity });
   row('Balance sheet', 'Net PP&E', { basis: bsBasis, fields: ['ts.startingPPE'], reported: rep(pPpe), reportedCcy: pPpe?.currency || fc, value: out.ts.startingPPE });
-  row('Balance sheet', 'Opening operating NWC', { basis: bsBasis, fields: ['drivers.nwc0'], value: nwc0, note: nwc0 === null ? 'NA — a component below is not reported' : '(current assets − cash & ST investments) − (current liabilities − current debt)' });
+  // the same build on the reported figures, in their own currency (only when all four share one)
+  const nwcSrc = [pCA, pCashSti, pCL, pCurDebt];
+  const nwcCcy = nwcSrc.every(Boolean) && new Set(nwcSrc.map((p) => p.currency || fc)).size === 1 ? (pCA.currency || fc) : null;
+  const nwcReported = nwcCcy ? (pCA.value - pCashSti.value) - (pCL.value - pCurDebt.value) : null;
+  row('Balance sheet', 'Opening operating NWC', { basis: bsBasis, fields: ['drivers.nwc0'], reported: nwcReported, reportedCcy: nwcCcy, value: nwc0, note: nwc0 === null ? 'NA — a component below is not reported' : '(current assets − cash & ST investments) − (current liabilities − current debt)' });
   const nwcRow = (label, p, v) => row('Balance sheet', label, { reported: rep(p), reportedCcy: p?.currency || fc, value: v, sub: true, note: p ? '' : 'not reported' });
   nwcRow('Current assets', pCA, nwcParts[0]);
   nwcRow('Less: cash, equivalents & short-term investments', pCashSti, nwcParts[1]);
@@ -633,7 +637,7 @@ function mapCore(raw, company, rates, opts) {
   const lb = ltm.label || 'not reported';
   row('LTM', 'Revenue', { basis: lb, fields: ['drivers.revenue0'], reported: rep(pRev), reportedCcy: pRev?.currency || fc, value: revenue });
   row('LTM', 'EBITDA', { basis: lb, fields: ['drivers.ebitda0'], reported: rep(pEbitda), reportedCcy: pEbitda?.currency || fc, value: ebitda, note: ebitdaBad ? 'not used — equals EBIT with no D&A reported' : '' });
-  row('LTM', 'Tax rate', { basis: lb, fields: ['company.taxRate'], reportedKind: 'pct', kind: 'pct', value: taxRate, note: taxNegative ? `NA — the reported rate is negative (${reportedTaxRate.toFixed(1)} %)` : taxRate === null ? 'NA — tax provision or pre-tax income not reported, or pre-tax income ≤ 0' : 'tax provision ÷ pre-tax income' });
+  row('LTM', 'Tax rate', { basis: lb, fields: ['company.taxRate'], reported: reportedTaxRate, reportedKind: 'pct', kind: 'pct', value: taxRate, note: taxNegative ? `NA — the reported rate is negative (${reportedTaxRate.toFixed(1)} %)` : taxRate === null ? 'NA — tax provision or pre-tax income not reported, or pre-tax income ≤ 0' : 'tax provision ÷ pre-tax income' });
   row('LTM', 'Tax provision', { reported: rep(pTax), reportedCcy: pTax?.currency || fc, value: conv.money(pTax), sub: true, note: pTax ? '' : 'not reported' });
   row('LTM', 'Pre-tax income', { reported: rep(pPbt), reportedCcy: pPbt?.currency || fc, value: conv.money(pPbt), sub: true, note: pPbt ? '' : 'not reported' });
 
