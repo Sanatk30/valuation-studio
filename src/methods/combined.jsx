@@ -3,7 +3,7 @@ import FootballField from '../components/FootballField.jsx';
 import { NumBox } from '../wizard/Field.jsx';
 import { METHOD_META } from './labels.js';
 import { fmtPrice, fmtPct } from '../lib/format.js';
-import { includeBox } from './figures.js';
+import { includeBox, methodMarketPrice } from './figures.js';
 
 /** Methods that can feed the Combined valuation. */
 export const COMBINABLE = ['dcf', 'comps', 'precedent', 'ipo'];
@@ -43,9 +43,7 @@ function CombinedPicker({ data, setData, company, ctx }) {
   // market-price suggestions from the included methods' own Company steps
   const prices = COMBINABLE.filter((id) => entries[id]?.include)
     .map((id) => {
-      const d = ctx.record.methods[id]?.data;
-      const px = id === 'comps' ? d?.comps?.target?.price : id === 'precedent' ? d?.precedent?.company?.price : d?.company?.currentPrice;
-      return { id, px };
+      return { id, px: methodMarketPrice(id, ctx.record.methods[id]?.data) };
     })
     .filter((x) => fin(x.px) && x.px > 0);
 

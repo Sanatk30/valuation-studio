@@ -12,7 +12,7 @@ import { computeIpo } from '../src/lib/engine/ipo.js';
 import { blankManualHistory, validFyEnd } from '../src/lib/historyModel.js';
 import { ratioSettingsStep, ipoStructureStep, gridErrors } from '../src/methods/steps/fieldSteps.js';
 import { fieldErrors } from '../src/methods/fields.js';
-import { includeBox, methodFigures } from '../src/methods/figures.js';
+import { includeBox, methodFigures, methodMarketPrice } from '../src/methods/figures.js';
 
 let failures = 0;
 const ok = (cond, msg) => { if (!cond) { failures++; console.error('FAIL:', msg); } else console.log('ok  :', msg); };
@@ -124,6 +124,8 @@ const data = (patch = {}) => ({ company: clone(A.company), drivers: clone(A.driv
   ok(r.rangeHigh < r.offerPrice, `ipo: fair value post-listing ${r.rangeHigh.toFixed(2)} below the offer ${r.offerPrice.toFixed(2)}`);
   const [fig] = methodFigures('ipo', company, { data: d });
   ok(fig && fig.low <= fig.value && fig.value <= fig.high && close(fig.high, r.offerPrice) && close(fig.low, r.rangeLow), 'combined: the IPO range still runs low ≤ value ≤ high');
+  ok(methodMarketPrice('dcf', { dcf: { company: { price: 812.5 } } }) === 812.5, 'combined: the DCF\'s market price is offered (template company page)');
+  ok(methodMarketPrice('comps', { comps: { target: { price: 10 } } }) === 10 && methodMarketPrice('precedent', { precedent: { company: { price: 11 } } }) === 11 && methodMarketPrice('ipo', data()) === A.company.currentPrice, 'combined: comps / precedent / IPO market prices');
   const [fig2] = methodFigures('ipo', company, { data: data() });
   const r2 = computeIpo(withModel({}));
   ok(close(fig2.low, r2.rangeLow) && close(fig2.high, r2.rangeHigh) && close(fig2.value, r2.offerPrice), 'combined: the usual IPO range is bookbuild low → fair value');

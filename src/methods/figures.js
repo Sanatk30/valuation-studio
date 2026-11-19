@@ -97,6 +97,18 @@ export function includeBox(progress, entry) {
   return { checked: include, disabled: !progress.complete && !include };
 }
 
+/**
+ * The market price a method's own inputs carry (Combined offers it for the
+ * market-price field): DCF and comps / precedent keep it on their template
+ * company page, IPO on its Company step. undefined when the method has none.
+ */
+export function methodMarketPrice(methodId, data) {
+  if (methodId === 'dcf') return data?.dcf?.company?.price;
+  if (methodId === 'comps') return data?.comps?.target?.price;
+  if (methodId === 'precedent') return data?.precedent?.company?.price;
+  return data?.company?.currentPrice;
+}
+
 /** Figures for a method, or [] when it cannot be computed. */
 export function methodFigures(methodId, company, mstate) {
   const fn = FIGURES[methodId];
