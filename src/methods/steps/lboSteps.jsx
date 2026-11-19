@@ -38,7 +38,7 @@ function SettingsExtra({ data, setData, company }) {
   return (
     <div className="step-tools">
       <PeriodLabelsCard
-        labels={labelsOf(data, company)} latestName="Latest actual year (entry)"
+        labels={dcfLabels(S(data).labels, nHist(data), nHold(data), company?.startYear, { keepBlank: true })} latestName="Latest actual year (entry)"
         fcstName={(i, m) => `Forecast year ${i + 1}${i === m - 1 ? ' (exit)' : ''}`}
         onChange={(labels) => setData((d) => ({ ...d, lbo: { ...d.lbo, settings: { ...d.lbo.settings, labels } } }))}
       />

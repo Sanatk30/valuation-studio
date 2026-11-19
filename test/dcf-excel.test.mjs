@@ -9,7 +9,7 @@
 import { checkDcfWorkbook } from './helpers/dcfChecks.mjs';
 import { sampleDcfData } from './fixtures/dcfSample.mjs';
 import { blankPage } from '../src/lib/engine/companyPage.js';
-import { computeDcfT } from '../src/lib/engine/dcfTemplate.js';
+import { computeDcfT, dcfLabels } from '../src/lib/engine/dcfTemplate.js';
 
 let checks = 0, failures = 0;
 const ok = (cond, msg) => { checks++; if (!cond) { failures++; console.error('FAIL:', msg); } };
@@ -86,6 +86,16 @@ console.log('\n=== blank drivers (the output warns: a blank counts as 0) ===');
   ok(by({ cf: 'fcfe' }, (d) => { d.drivers.netBorrow[4] = null; }) === '4', 'FCFE: a blank net borrowing is flagged');
   ok(by({ cf: 'fcfe' }, (d) => { d.drivers.payout = []; }) === '', 'FCFE: the payout is not used');
   ok(by({ cf: 'ddm' }, (d) => { d.drivers.payout[0] = null; }) === '0', 'DDM: a blank payout is flagged');
+}
+
+console.log('\n=== period labels ===');
+{
+  const st = { hist: ['FY24', '', 'FY26'], fcst: ['FY27E', '', 'FY29E', 'FY30E', 'FY31E'] };
+  const eng = dcfLabels(st, 3, 5, 2027);
+  ok(eng.hist[1] === 'FY25' && eng.fcst[1] === 'FY28E', 'engine / workbook: a blank label reads as its default');
+  const ed = dcfLabels(st, 3, 5, 2027, { keepBlank: true });
+  ok(ed.hist[1] === '' && ed.fcst[1] === '' && ed.hist[0] === 'FY24', 'label editor: a cleared label stays blank so it can be retyped');
+  ok(dcfLabels({ hist: [null, 'FY25', 'FY26'] }, 3, 5, 2027, { keepBlank: true }).hist[0] === 'FY24', 'label editor: a never-typed label still shows its default');
 }
 
 console.log(`\n${checks - failures}/${checks} checks passed`);

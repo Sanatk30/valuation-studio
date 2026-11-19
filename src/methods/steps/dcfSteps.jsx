@@ -61,7 +61,7 @@ function DcfLabelsEditor({ data, setData, company }) {
   const s = S(data);
   return (
     <div className="step-tools">
-      <PeriodLabelsCard labels={labelsOf(data, company)} onChange={(labels) => setData((d) => ({ ...d, dcf: { ...d.dcf, settings: { ...d.dcf.settings, labels } } }))} />
+      <PeriodLabelsCard labels={dcfLabels(s.labels, nHist(data), nFcst(data), company?.startYear, { keepBlank: true })} onChange={(labels) => setData((d) => ({ ...d, dcf: { ...d.dcf, settings: { ...d.dcf.settings, labels } } }))} />
       {s.cf && s.tv && s.coe && (
         <div className="readout">
           Template <b>{templateName(s)}.xlsx</b> — {CF_KINDS.find((k) => k.value === s.cf)?.long}, terminal value by {s.tv === 'exit' ? `exit ${exitMultipleName(s.cf)}` : 'Gordon growth'}, cost of equity by {s.coe === 'capm' ? 'CAPM' : 'the build-up method'}.

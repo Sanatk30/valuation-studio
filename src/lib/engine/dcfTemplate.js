@@ -145,15 +145,17 @@ export function defaultDcfLabels(n, m, startYear) {
  * Labels for n historical and m forecast years from stored labels. Historical
  * labels are kept latest-last (added years continue the numbering
  * backwards); forecast labels first-first (added years continue forwards).
+ * A blank label reads as its default; `keepBlank` (the label editor) keeps a
+ * label the user has just cleared blank, so it can be retyped from scratch.
  */
-export function dcfLabels(stored, n, m, startYear) {
+export function dcfLabels(stored, n, m, startYear, { keepBlank = false } = {}) {
   const d = defaultDcfLabels(n, m, startYear);
   const sh = Array.isArray(stored?.hist) ? stored.hist.slice(-n) : [];
   const sf = Array.isArray(stored?.fcst) ? stored.fcst.slice(0, m) : [];
   const padH = n - sh.length;
   const hist = [...Array.from({ length: padH }, (_, i) => (sh.length ? shiftLabel(sh[0], -(padH - i)) : null) || d.hist[i]), ...sh];
   const fcst = [...sf, ...Array.from({ length: m - sf.length }, (_, i) => (sf.length ? shiftLabel(sf[sf.length - 1], i + 1) : null) || d.fcst[sf.length + i])];
-  const clean = (arr, def) => arr.map((x, i) => (String(x ?? '').trim() ? x : def[i]));
+  const clean = (arr, def) => arr.map((x, i) => (String(x ?? '').trim() ? x : keepBlank && x === '' ? '' : def[i]));
   return { hist: clean(hist, d.hist), fcst: clean(fcst, d.fcst) };
 }
 
