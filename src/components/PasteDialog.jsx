@@ -99,13 +99,19 @@ export default function PasteDialog({ mode = 'page', title, page, n, columns = [
                 </div>
               )}
               <div className="sec-note" style={{ marginTop: 6 }}>
-                Rows naming the same line are added together. A blank pasted cell leaves the page’s cell unchanged. The balance sheet has no prior-YTD column.
+                Rows making up one template line (e.g. materials + purchases + change in inventories) are added together. A blank pasted cell leaves the page’s cell unchanged. The balance sheet has no prior-YTD column.
               </div>
             </div>
-            {parsed.skipped.length > 0 && (
+            {parsed.skipped.some((u) => !u.duplicate) && (
               <div className="bulk-sec">
                 <h4>Calculated on the page — skipped</h4>
-                <div className="sec-note">{parsed.skipped.map((u) => u.label).join(' · ')}</div>
+                <div className="sec-note">{parsed.skipped.filter((u) => !u.duplicate).map((u) => u.label).join(' · ')}</div>
+              </div>
+            )}
+            {parsed.skipped.some((u) => u.duplicate) && (
+              <div className="bulk-sec">
+                <h4>Another name for a line already pasted — skipped</h4>
+                <div className="sec-note">{parsed.skipped.filter((u) => u.duplicate).map((u) => `${u.label} (${u.line}: “${u.duplicate}” kept)`).join(' · ')}</div>
               </div>
             )}
             {parsed.unmatched.length > 0 && (
@@ -134,6 +140,7 @@ export default function PasteDialog({ mode = 'page', title, page, n, columns = [
                 </tbody>
               </table>
             </div>
+            {parsed.target && <div className="sec-note" style={{ marginTop: 6 }}>The Target row{parsed.target.name ? ` (${parsed.target.name})` : ''} is the company being valued — it is left out of the peers.</div>}
             {parsed.unmatched?.length > 0 && <div className="sec-note" style={{ marginTop: 6 }}>Unrecognised columns skipped: {parsed.unmatched.join(' · ')}</div>}
           </div>
         )}

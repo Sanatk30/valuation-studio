@@ -6,10 +6,12 @@
  *               out of the template workbook or an annual-report table).
  *               Rows are matched to the page's input lines by label; totals
  *               and other calculated rows are recognised and skipped (the page
- *               recomputes them). Rows naming the same line (e.g. "Cost of
- *               materials consumed", "Purchases of stock-in-trade", "Changes
+ *               recomputes them). Rows making up one template line (e.g. "Cost
+ *               of materials consumed", "Purchases of stock-in-trade", "Changes
  *               in inventories", which the template combines into one line)
- *               are added together. Section headings in the block ("BALANCE
+ *               are added together; a second name for a single figure ("Total
+ *               revenue" after "Revenue from operations") is skipped, never
+ *               added (see ADDITIVE). Section headings in the block ("BALANCE
  *               SHEET", "CASH FLOW STATEMENT") decide which statement a
  *               repeated label ("Profit Before Tax") belongs to.
  *   list      — one row per company with a header row: Company Name, Ticker,
@@ -34,7 +36,8 @@ export function parseNum(raw) {
   if (/^\(.*\)$/.test(s)) { neg = true; s = s.slice(1, -1); }
   const pct = /%\s*$/.test(s);
   s = s.replace(/[%\s]/g, '').replace(/[$₹€£]/g, '').replace(/,/g, '');
-  if (/^-/.test(s)) { neg = !neg; s = s.slice(1); }
+  // a leading minus: "-", or the typographic minus / en dash PDFs and annual reports print (−1,234 · –1,234)
+  if (/^[-−–]/.test(s)) { neg = !neg; s = s.slice(1); }
   if (!/^\d*\.?\d+(e[+-]?\d+)?$/i.test(s)) return { ok: false, value: 0 };
   let v = parseFloat(s);
   if (!Number.isFinite(v)) return { ok: false, value: 0 };
@@ -42,12 +45,27 @@ export function parseNum(raw) {
   return { ok: true, value: neg ? -v : v };
 }
 
-/** Split a pasted block into a matrix. Tabs win; otherwise commas. */
+/**
+ * Split a pasted block into a matrix. Tabs win when any line has one (a title
+ * line copied above the table carries none); otherwise commas, where a quoted
+ * cell keeps its own commas ("1,234").
+ */
 export function splitBlock(text) {
   const lines = String(text || '').replace(/\r\n?/g, '\n').split('\n').filter((l) => l.trim() !== '');
   if (!lines.length) return [];
-  const sep = lines[0].includes('\t') ? '\t' : ',';
-  return lines.map((l) => l.split(sep).map((c) => c.trim().replace(/^"(.*)"$/, '$1')));
+  const unquote = (c) => c.trim().replace(/^"(.*)"$/, '$1');
+  if (lines.some((l) => l.includes('\t'))) return lines.map((l) => l.split('\t').map(unquote));
+  const csv = (l) => {
+    const cells = [];
+    let cur = '', quoted = false;
+    for (const ch of l) {
+      if (ch === '"') quoted = !quoted;
+      if (ch === ',' && !quoted) { cells.push(cur); cur = ''; } else cur += ch;
+    }
+    cells.push(cur);
+    return cells.map(unquote);
+  };
+  return lines.map(csv);
 }
 
 const norm = (s) => String(s || '').toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]+/g, '');
@@ -108,6 +126,16 @@ const ALT = {
   otherFin: ['other financing items'],
 };
 
+/**
+ * Lines the template builds from several reported lines, so rows naming them
+ * are added together (cost of materials + purchases + inventory change; PP&E +
+ * CWIP; goodwill + other intangibles; …). Every other line's labels are
+ * alternative names for ONE figure ("Revenue from operations", "Total
+ * revenue", "Net sales"): a second row naming such a line is not added — the
+ * first is kept and the second is listed as skipped.
+ */
+const ADDITIVE = new Set(['materials', 'ppe', 'intangibles', 'otherNcl', 'otherCl', 'investNet', 'intDivRecd', 'borrowNet', 'equityIssue']);
+
 const GROUPS = { is: IS_LINES, bs: BS_LINES, cf: CF_LINES };
 
 /** Label → { key, input } per statement; the template's own labels first. */
@@ -151,10 +179,12 @@ function matchLabel(label, current) {
 export function parsePageGrid(text, { columns, offset: want = 'auto' }) {
   const rows = splitBlock(text);
   if (!rows.length) return { ok: false, reason: 'Nothing to paste.' };
-  const first = rows[0];
-  const headerish = first.slice(1).filter((c) => c && !parseNum(c).ok).length > (first.length - 1) / 2;
+  // the header is the first row with anything right of the label column (a title line above it has nothing there)
+  const hi = rows.findIndex((r) => r.slice(1).some((c) => c));
+  const first = rows[Math.max(0, hi)];
+  const headerish = hi >= 0 && first.slice(1).filter((c) => c && !parseNum(c).ok).length > (first.length - 1) / 2;
   const header = headerish ? first : null;
-  const body = headerish ? rows.slice(1) : rows;
+  const body = headerish ? rows.filter((_, i) => i !== hi) : rows;
   let offset = Number.isInteger(want) ? want : 0;
   if (want === 'auto' && header) {
     const at = columns.findIndex((c) => norm(c.label) && norm(c.label) === norm(header[1]));
@@ -181,6 +211,10 @@ export function parsePageGrid(text, { columns, offset: want = 'auto' }) {
     if (!hit) { if (numbers.some((x) => x.ok)) unmatched.push({ label, cells }); continue; }
     if (hit.group === 'is') seen.is.add(hit.key);
     if (!hit.input) { skipped.push({ label, line: hit.label }); continue; }
+    if (lines.has(hit.key) && !ADDITIVE.has(hit.key)) {
+      skipped.push({ label, line: hit.label, duplicate: lines.get(hit.key).sources[0] });
+      continue;
+    }
     const cur = lines.get(hit.key) || { key: hit.key, group: hit.group, line: hit.label, sources: [], values: [] };
     cur.sources.push(label);
     numbers.forEach((x, i) => {
@@ -213,6 +247,7 @@ export function applyPageGrid(page, parsed, n) {
 /* ------------------------------------------------------------- company list */
 
 const LIST_COLS = [
+  { key: 'role', alt: ['role'] },
   { key: 'name', alt: ['company name', 'company', 'name', 'peer', 'target'] },
   { key: 'ticker', alt: ['ticker', 'nse bse ticker', 'symbol', 'code'] },
   { key: 'sector', alt: ['sector sub sector', 'sector', 'industry', 'sub sector'] },
@@ -223,26 +258,46 @@ const LIST_COLS = [
 ];
 const LIST_INDEX = new Map(LIST_COLS.flatMap((c) => c.alt.map((a) => [norm(a), c.key])));
 
-/** Parse a company list (header row + one row per company). */
+/** Include as typed: a number (0 → 0, else 1) or Yes / No, Y / N, True / False. */
+const includeOf = (raw) => {
+  const t = String(raw).trim().toLowerCase();
+  if (['yes', 'y', 'true'].includes(t)) return 1;
+  if (['no', 'n', 'false'].includes(t)) return 0;
+  const x = parseNum(raw);
+  return x.ok ? (x.value === 0 ? 0 : 1) : undefined;
+};
+
+/**
+ * Parse a company list (header row + one row per company). A "Role" column,
+ * as in the template's own Company List, marks the Target row: it is the
+ * company being valued, not a peer, so it is left out (`target`).
+ */
 export function parseCompanyList(text) {
   const rows = splitBlock(text);
   if (rows.length < 2) return { ok: false, reason: 'Paste a header row plus at least one company row.' };
   const header = rows[0];
   const cols = header.map((h) => LIST_INDEX.get(norm(String(h).replace(/\(.*?\)/g, ''))) || LIST_INDEX.get(norm(h)) || null);
   if (!cols.includes('name')) return { ok: false, reason: 'No "Company Name" column found in the header row.' };
+  let target = null;
   const companies = rows.slice(1).map((r) => {
     const o = {};
     cols.forEach((k, i) => {
       if (!k || r[i] == null || r[i] === '') return;
-      if (k === 'name' || k === 'ticker' || k === 'sector' || k === 'tier') o[k] = r[i];
-      else {
+      if (k === 'name' || k === 'ticker' || k === 'sector' || k === 'tier' || k === 'role') o[k] = r[i];
+      else if (k === 'include') {
+        const v = includeOf(r[i]);
+        if (v !== undefined) o.include = v;
+      } else {
         const x = parseNum(r[i]);
-        if (x.ok) o[k] = k === 'include' ? (x.value === 0 ? 0 : 1) : x.value;
+        if (x.ok) o[k] = x.value;
       }
     });
     return o;
-  }).filter((o) => String(o.name || '').trim());
-  return { ok: companies.length > 0, companies, cols, unmatched: header.filter((h, i) => h && !cols[i]), reason: companies.length ? '' : 'No row carried a company name.' };
+  }).filter((o) => {
+    if (norm(o.role) === 'target') { target = o; return false; }
+    return String(o.name || '').trim();
+  }).map(({ role: _role, ...o }) => o);
+  return { ok: companies.length > 0, companies, target, cols, unmatched: header.filter((h, i) => h && !cols[i]), reason: companies.length ? '' : 'No row carried a company name.' };
 }
 
 /** Header row users can copy to see the expected list shape. */
