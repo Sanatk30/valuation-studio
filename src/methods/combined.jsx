@@ -3,6 +3,7 @@ import FootballField from '../components/FootballField.jsx';
 import { NumBox } from '../wizard/Field.jsx';
 import { METHOD_META } from './labels.js';
 import { fmtPrice, fmtPct } from '../lib/format.js';
+import { includeBox } from './figures.js';
 
 /** Methods that can feed the Combined valuation. */
 export const COMBINABLE = ['dcf', 'comps', 'precedent', 'ipo'];
@@ -65,7 +66,7 @@ function CombinedPicker({ data, setData, company, ctx }) {
                   <td>{METHOD_META[id].label}</td>
                   <td>{p.complete ? <span className="pill ok">complete</span> : <span className="pill">{p.started ? 'in progress' : 'not started'}</span>}</td>
                   <td>
-                    <input type="checkbox" disabled={!p.complete} checked={!!e.include && p.complete}
+                    <input type="checkbox" {...includeBox(p, e)}
                       onChange={(ev) => setEntry(id, { include: ev.target.checked })} />
                   </td>
                   <td>

@@ -5,9 +5,10 @@ import { METHOD_META } from '../labels.js';
 import YearGrid from '../../wizard/YearGrid.jsx';
 import ListingSearch from '../../components/ListingSearch.jsx';
 import {
-  HISTORY_LINES, HISTORY_GROUPS, HISTORY_MAX_YEARS, blankManualHistory, hasHistory, historyReference, fyLabel,
+  HISTORY_LINES, HISTORY_GROUPS, HISTORY_MAX_YEARS, blankManualHistory, hasHistory, historyReference, fyLabel, validFyEnd,
 } from '../../lib/historyModel.js';
 import { fmtPct, fmtNum, CURRENCIES } from '../../lib/format.js';
+import { GRID_ROWS, gridErrors, resize } from './fieldSteps.js';
 
 /* ======================================================================
    Company & balance sheet
@@ -144,8 +145,9 @@ function HistoryEditor({ data, setData, company }) {
         <div className="hist-new">
           <label>Years <input type="number" min={1} max={HISTORY_MAX_YEARS} value={years} onChange={(e) => setYears(Math.max(1, Math.min(HISTORY_MAX_YEARS, parseInt(e.target.value, 10) || 1)))} /></label>
           <label>Latest fiscal year end <input type="date" value={lastEnd} onChange={(e) => setLastEnd(e.target.value)} /></label>
-          <button className="btn" onClick={() => setData((d) => ({ ...d, history: blankManualHistory(years, lastEnd) }))}>Enter history by hand</button>
+          <button className="btn" disabled={!validFyEnd(lastEnd)} onClick={() => setData((d) => ({ ...d, history: blankManualHistory(years, lastEnd) }))}>Enter history by hand</button>
         </div>
+        {!validFyEnd(lastEnd) && <div className="fld-e">Enter the latest fiscal year end date.</div>}
       </div>
     );
   }
@@ -234,14 +236,6 @@ export const historyStep = () => ({
    Operating forecast
    ====================================================================== */
 
-const GRID_ROWS = [
-  { key: 'revenue', modeKey: 'revenueMode', label: 'Revenue', modes: [['growth', 'growth %'], ['abs', 'absolute']] },
-  { key: 'ebitda', modeKey: 'ebitdaMode', label: 'EBITDA', modes: [['margin', 'margin %'], ['abs', 'absolute']] },
-  { key: 'da', modeKey: 'daMode', label: 'D&A', modes: [['pct', '% of revenue'], ['abs', 'absolute']] },
-  { key: 'capex', modeKey: 'capexMode', label: 'Capex', modes: [['pct', '% of revenue'], ['abs', 'absolute']] },
-  { key: 'nwc', modeKey: 'nwcMode', label: 'NWC balance', modes: [['pct', '% of revenue'], ['abs', 'absolute']] },
-];
-
 const emptyGrid = (n) => ({
   revenueMode: 'growth', revenue: Array(n).fill(null),
   ebitdaMode: 'margin', ebitda: Array(n).fill(null),
@@ -249,7 +243,6 @@ const emptyGrid = (n) => ({
   capexMode: 'pct', capex: Array(n).fill(null),
   nwcMode: 'pct', nwc: Array(n).fill(null),
 });
-const resize = (arr, n) => Array.from({ length: n }, (_, i) => (arr?.[i] ?? null));
 
 export function forecastSpecs(data) {
   const d = data.drivers || {};
@@ -276,23 +269,6 @@ export function forecastSpecs(data) {
     );
   }
   return specs;
-}
-
-function gridErrors(d) {
-  if (d.mode !== 'grid') return [];
-  const n = d.years;
-  if (!Number.isInteger(n) || n < 3 || n > 15) return [];
-  const g = d.perYear;
-  if (!g) return ['Fill the year-by-year grid.'];
-  const errs = [];
-  for (const r of GRID_ROWS) {
-    const vals = resize(g[r.key], n);
-    const missing = vals.filter((v) => v === null || !Number.isFinite(v)).length;
-    if (missing) errs.push(`${r.label}: ${missing} year${missing > 1 ? 's' : ''} missing`);
-    if (r.key === 'revenue' && g.revenueMode === 'growth' && vals.some((v) => Number.isFinite(v) && v <= -100)) errs.push('Revenue growth must be above −100 %');
-    if (r.key === 'revenue' && g.revenueMode === 'abs' && vals.some((v) => Number.isFinite(v) && v <= 0)) errs.push('Absolute revenue must be above 0');
-  }
-  return errs;
 }
 
 function ForecastExtras({ data, setData, company, ctx }) {

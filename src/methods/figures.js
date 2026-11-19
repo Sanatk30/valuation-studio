@@ -75,9 +75,27 @@ const FIGURES = {
   },
   ipo: (a) => {
     const i = computeIpo(a);
-    return [{ key: 'ipoOffer', label: 'IPO — offer price', value: i.offerPrice, low: i.rangeLow, high: i.rangeHigh, rangeNote: 'bookbuild low → fair value post-listing' }];
+    // the fair value post-listing can sit below the offer (high fees, little or
+    // no discount): the range is the span of the three, so low ≤ value ≤ high
+    const ends = [i.rangeLow, i.rangeHigh].filter(isNum);
+    return [{
+      key: 'ipoOffer', label: 'IPO — offer price', value: i.offerPrice,
+      low: ends.length ? Math.min(i.offerPrice, ...ends) : i.offerPrice,
+      high: ends.length ? Math.max(i.offerPrice, ...ends) : i.offerPrice,
+      rangeNote: 'bookbuild low → fair value post-listing',
+    }];
   },
 };
+
+/**
+ * The Combined step's "include" tick box for one method. Only a complete method
+ * can be ticked; one that was included and has since become incomplete stays
+ * ticked AND enabled, so the user can untick it as the step's error asks.
+ */
+export function includeBox(progress, entry) {
+  const include = !!entry?.include;
+  return { checked: include, disabled: !progress.complete && !include };
+}
 
 /** Figures for a method, or [] when it cannot be computed. */
 export function methodFigures(methodId, company, mstate) {

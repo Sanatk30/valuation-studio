@@ -32,7 +32,7 @@ function IpoPage({ a, f, ipo }) {
   const peBasis = p.basis === 'pe';
   const y1 = useMemo(() => periodLabels(a.settings, 'Y', 1)[0], [a.settings]);
   const gsPrimary = ipo.greenshoeType === 'primary';
-  const gsWho = ipo.greenshoeType === 'primary' ? 'Company' : ipo.greenshoeType === 'secondary' ? 'Selling holders' : DASH;
+  const gsWho = ipo.greenshoeShares === 0 ? DASH : ipo.greenshoeType === 'primary' ? 'Company' : ipo.greenshoeType === 'secondary' ? 'Selling holders' : DASH;
 
   const proceedsItems = [
     { label: 'Gross primary', value: ipo.grossPrimary, total: true },
@@ -118,7 +118,7 @@ function IpoPage({ a, f, ipo }) {
                 <tr><td>Secondary ({f.pct0(p.secondaryPct)} of existing)</td><td>{f.shares(ipo.secondaryShares)}</td><td>{f.num(ipo.secondaryShares * ipo.offerPrice)}</td><td>Selling holders</td></tr>
                 <tr className="sub"><td>Base deal</td><td>{f.shares(ipo.baseDealShares)}</td><td>{f.num(ipo.baseDealShares * ipo.offerPrice)}</td><td /></tr>
                 <tr>
-                  <td>Greenshoe ({f.pct0(p.greenshoePct)} of base, {f.pct0(p.greenshoeExercisedPct)} exercised · {gsPrimary ? 'new shares' : ipo.greenshoeType === 'secondary' ? 'existing holders’ shares' : 'type not chosen'})</td>
+                  <td>Greenshoe ({f.pct0(p.greenshoePct)} of base, {f.pct0(p.greenshoeExercisedPct)} exercised · {ipo.greenshoeShares === 0 ? 'none sold' : gsPrimary ? 'new shares' : ipo.greenshoeType === 'secondary' ? 'existing holders’ shares' : 'type not chosen'})</td>
                   <td>{f.shares(ipo.greenshoeShares)}</td><td>{f.num(ipo.greenshoeProceeds)}</td><td>{gsWho}</td>
                 </tr>
                 <tr className="bold"><td>Post-IPO shares</td><td>{f.shares(ipo.postShares)}</td><td>{f.num(ipo.mktCapAtOffer)}</td><td /></tr>

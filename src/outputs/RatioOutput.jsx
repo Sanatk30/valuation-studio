@@ -23,14 +23,16 @@ const TAGS = {
  * forecast off the linked 3-statement model. The period is chosen in the
  * Ratio settings step.
  */
-export default function RatioOutput({ a, set }) {
+export default function RatioOutput({ a, set, skipped = {} }) {
   const f = useMemo(() => makeFmt(a.settings), [a.settings]);
-  const past = a.ratio?.span === 'past' && hasHistory(a.history);
+  // a skipped history step means no history — as in the Excel file, which then has no Past Ratios sheet
+  const wantPast = a.ratio?.span === 'past';
+  const past = wantPast && hasHistory(a.history) && !skipped.history;
   const freq = past && a.ratio?.freq === 'Q' && a.history?.quarterly?.dates?.length ? 'Q' : 'Y';
   const periods = Number.isInteger(a.ratio?.histYears) ? a.ratio.histYears * (freq === 'Q' ? 4 : 1) : null;
   const model = useMemo(() => attempt(() => (past ? computeHistoryRatios(a, freq, periods) : computeForecastRatios(a))), [a, past, freq, periods]);
   if (model.error) return <div className="qo"><EngineError what="The ratio analysis" error={model.error} /></div>;
-  if (!model.value) return <div className="qo"><div className="warn">No reported history to analyse — enter it in the Historical financials step, or choose Future in Ratio settings.</div></div>;
+  if (!model.value || (wantPast && !past)) return <div className="qo"><div className="warn">No reported history to analyse — enter it in the Historical financials step, or choose Future in Ratio settings.</div></div>;
   return <RatioPage a={a} set={set} f={f} R={model.value} past={past} freq={freq} />;
 }
 
@@ -62,7 +64,9 @@ function RatioPage({ a, set, f, R, past, freq }) {
     series: rows.filter(Boolean).map((r, i) => lineSeries(r.label, [COL.teal, COL.green, COL.gold, COL.violet][i], r.vals.map((v) => rnd(v, 2)))),
   });
   const marginRows = ['EBITDA margin', 'Net profit margin', 'Return on equity (ROE)'].map(find).filter(Boolean);
-  const levRows = [find(past ? 'Net debt / EBITDA' : 'Net debt / EBITDA (ann.)'), find('Interest coverage (EBIT / int.)')].filter(Boolean);
+  // the past annual table labels it without "(ann.)"; the forecast and past quarterly ones annualise
+  const ndLabel = past && freq !== 'Q' ? 'Net debt / EBITDA' : 'Net debt / EBITDA (ann.)';
+  const levRows = [find(ndLabel), find('Interest coverage (EBIT / int.)')].filter(Boolean);
   const levOpt = levRows.length ? themed({
     tooltip: tipBy({}, (v) => f.x(v)),
     xAxis: xCat(R.labels, { boundaryGap: false }),
@@ -79,7 +83,9 @@ function RatioPage({ a, set, f, R, past, freq }) {
 
   const nRatios = R.sections.reduce((s, x) => s + x.rows.length, 0);
   const span = `${R.labels[0]}–${R.labels[R.labels.length - 1]}`;
-  const avail = past ? (freq === 'Q' ? Math.floor((R.available || R.N) / 4) : R.available || R.N) : 0;
+  // years the reported periods cover (a part year of quarters counts), and the choice shown within them
+  const avail = past ? (freq === 'Q' ? Math.ceil((R.available || R.N) / 4) : R.available || R.N) : 0;
+  const yearsShown = Number.isInteger(a.ratio?.histYears) ? Math.min(a.ratio.histYears, Math.max(1, avail)) : '';
 
   return (
     <div className="qo">
@@ -91,7 +97,7 @@ function RatioPage({ a, set, f, R, past, freq }) {
         kpis={[
           { label: `ROE · ${refLbl}`, value: pick('Return on equity (ROE)'), fmt: (v) => f.pct(v) },
           { label: `EBITDA margin · ${refLbl}`, value: pick('EBITDA margin'), fmt: (v) => f.pct(v) },
-          { label: `Net debt / EBITDA · ${refLbl}`, value: pick(past ? 'Net debt / EBITDA' : 'Net debt / EBITDA (ann.)'), fmt: (v) => f.x(v) },
+          { label: `Net debt / EBITDA · ${refLbl}`, value: pick(ndLabel), fmt: (v) => f.x(v) },
           { label: `Interest coverage · ${refLbl}`, value: pick('Interest coverage (EBIT / int.)'), fmt: (v) => f.x1(v) },
           !past && { label: `EPS · ${refLbl}`, value: pick('EPS (ann.)'), fmt: (v) => f.price(v) },
           { label: 'Ratios', text: `${nRatios}`, sub: `${R.N} period${R.N > 1 ? 's' : ''}` },
@@ -107,7 +113,7 @@ function RatioPage({ a, set, f, R, past, freq }) {
             ) : null}
             <label className="qo-step">
               <span>Years shown</span>
-              <select className="fld-in" value={a.ratio?.histYears ?? ''} onChange={(e) => set('ratio.histYears', Number(e.target.value))}>
+              <select className="fld-in" value={yearsShown} onChange={(e) => set('ratio.histYears', Number(e.target.value))}>
                 {Array.from({ length: Math.max(1, avail) }, (_, i) => i + 1).map((y) => <option key={y} value={y}>{y}</option>)}
               </select>
             </label>
