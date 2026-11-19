@@ -7,6 +7,7 @@ import { fieldError, fieldErrors, anyFilled, f } from '../src/methods/fields.js'
 import { blankManualHistory, hasHistory, historyReference, historyLine, fyLabel, HISTORY_KEYS } from '../src/lib/historyModel.js';
 import { setPath, getPath, normalizeState, syncFromStorage, getState, createCompany, updateMethod } from '../src/store/store.js';
 import { routeOf } from '../src/methods/labels.js';
+import { parseInputNumber, fmtNum, fmtPct, fmtX, fmtMoney, fmtPrice } from '../src/lib/format.js';
 import { stepErrors, methodProgress } from '../src/methods/progress.js';
 
 let failures = 0;
@@ -176,6 +177,21 @@ ok(fieldError(f.num('x', 'X'), NaN) === 'Required', 'NaN counts as blank');
   ok(getState().companies.c2 && getState().companies[id].methods.ts.step === 1, "this tab's next save keeps the other tab's company");
   syncFromStorage('{not json');
   ok(getState().companies.c2, 'an unreadable storage event changes nothing');
+}
+
+/* ---------------- number boxes and formatting ---------------- */
+{
+  const P = parseInputNumber;
+  ok(P('') === null && P('   ') === null && P(null) === null, 'number box: blank → null');
+  ok(P('1,234.5') === 1234.5 && P('1,23,456') === 123456 && P('(1,234)') === -1234 && P('-12') === -12 && P('12.') === 12 && P('.5') === 0.5 && P('1e3') === 1000,
+    'number box: grouped (incl. Indian), bracketed and signed decimals');
+  ok(P('−1,234') === -1234, 'number box: the app’s own minus sign (U+2212, as figures display) pastes back as a negative');
+  ok(['0x10', '0b11', 'Infinity', '-', '.', '12abc', '1-2', '₹5'].every((x) => Number.isNaN(P(x))), 'number box: hex / binary literals, Infinity and junk are not numbers');
+  ok(fmtPct(-0.04) === '0.0%' && fmtX(-0.001, 2) === '0.00x' && fmtNum(-0.004, 2, 'en-US') === '0.00', 'a value that rounds to zero never prints as "-0.0"');
+  const usd = { currency: 'USD', unit: 'Mn' };
+  ok(fmtMoney(-0.3, usd) === '$0 Mn' && fmtMoney(-1.6, usd) === '−$2 Mn' && fmtPrice(-0.004, usd, 2) === '$0.00', 'money / price: no minus sign on a figure shown as zero');
+  ok(fmtNum(722740, 0) === '7,22,740' && fmtMoney(1234567, { currency: 'INR', unit: 'Cr' }) === '₹12,34,567 Cr', 'INR figures use Indian grouping');
+  ok(fmtNum(NaN) === '—' && fmtMoney(null, usd) === '—' && fmtPct(undefined) === '—', 'NA prints as —');
 }
 
 /* ---------------- hash routes ---------------- */

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { getPath } from '../store/store.js';
 import { fieldError, unitSuffix } from '../methods/fields.js';
+import { parseInputNumber } from '../lib/format.js';
 
 /**
  * One input, rendered from its spec. Empty stays empty (stored as null) — the
@@ -122,16 +123,8 @@ export function NumBox({ value, onChange, onBlur, suffix, placeholder, small }) 
   );
 }
 
-/** "" → null; "1,234.5" → 1234.5; "(12)" → −12; junk → NaN. */
-export function parseNum(s) {
-  const t = String(s ?? '').trim();
-  if (!t) return null;
-  const neg = /^\(.*\)$/.test(t);
-  const clean = t.replace(/[(),\s]/g, '');
-  if (clean === '-' || clean === '.' || clean === '-.') return NaN;
-  const v = Number(clean);
-  return Number.isFinite(v) ? (neg ? -v : v) : NaN;
-}
+/** "" → null; "1,234.5" → 1234.5; "(12)" / "−12" → −12; junk → NaN (see lib/format.js parseInputNumber). */
+export const parseNum = parseInputNumber;
 
 /** A labelled group of fields in a two-column grid. */
 export function FieldGrid({ specs, data, onSet, company, reveal, cols = 2 }) {

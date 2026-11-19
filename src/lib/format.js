@@ -9,23 +9,26 @@ export const UNITS = {
   Cr: 'Cr', Lakh: 'Lakh', Mn: 'Mn', Bn: 'Bn', K: "'000",
 };
 
+/** A value that shows as zero at `dp` decimals (so −0.04 never prints as "-0.0"). */
+const roundsToZero = (v, dp) => Math.abs(v) < 0.5 * 10 ** -dp;
+
 export function fmtNum(v, dp = 1, locale = 'en-IN') {
   if (v === null || v === undefined || !isFinite(v)) return '—';
-  return v.toLocaleString(locale, { minimumFractionDigits: dp, maximumFractionDigits: dp });
+  return (typeof v === 'number' && roundsToZero(v, dp) ? 0 : v).toLocaleString(locale, { minimumFractionDigits: dp, maximumFractionDigits: dp });
 }
 
 /** Money figure in model units, e.g. "₹ 5,000 Cr" */
 export function fmtMoney(v, settings, dp = 0) {
   if (v === null || v === undefined || !isFinite(v)) return '—';
   const c = CURRENCIES[settings.currency];
-  return `${v < 0 ? '−' : ''}${c.symbol}${fmtNum(Math.abs(v), dp, c.locale)} ${UNITS[settings.unit]}`;
+  return `${v < 0 && !roundsToZero(v, dp) ? '−' : ''}${c.symbol}${fmtNum(Math.abs(v), dp, c.locale)} ${UNITS[settings.unit]}`;
 }
 
 /** Per-share price, e.g. "₹ 851.20" — no unit suffix */
 export function fmtPrice(v, settings, dp = 1) {
   if (v === null || v === undefined || !isFinite(v)) return '—';
   const c = CURRENCIES[settings.currency];
-  return `${v < 0 ? '−' : ''}${c.symbol}${fmtNum(Math.abs(v), dp, c.locale)}`;
+  return `${v < 0 && !roundsToZero(v, dp) ? '−' : ''}${c.symbol}${fmtNum(Math.abs(v), dp, c.locale)}`;
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -61,4 +64,20 @@ export function fmtTpl(v, fmt = 'n1', locale = 'en-IN') {
   const body = Math.abs(x).toLocaleString(locale, { minimumFractionDigits: dp, maximumFractionDigits: dp });
   const suf = fmt === 'pct' ? '%' : fmt === 'x' ? 'x' : '';
   return x < 0 ? `(${body}${suf})` : `${body}${suf}`;
+}
+
+/**
+ * What a number box holds once typed: "" → null; "1,234.5" / "1,23,456" →
+ * the number; "(12)" and "−12" (the minus sign the app's own figures use, so
+ * a value copied off a page pastes back) → −12; anything else → NaN — only
+ * plain decimals, never "0x10" or "Infinity".
+ */
+export function parseInputNumber(s) {
+  const t = String(s ?? '').trim();
+  if (!t) return null;
+  const neg = /^\(.*\)$/.test(t);
+  const clean = t.replace(/[(),\s]/g, '').replace(/^[\u2212\u2013]/, '-');
+  if (!/^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(clean)) return NaN;
+  const v = Number(clean);
+  return Number.isFinite(v) ? (neg ? -v : v) : NaN;
 }
