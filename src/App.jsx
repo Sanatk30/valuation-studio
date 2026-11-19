@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useStore } from './store/store.js';
+import { useStore, resetMethod } from './store/store.js';
 import { METHODS } from './methods/registry.js';
 import { routeOf } from './methods/labels.js';
 import MethodPage from './wizard/MethodPage.jsx';
@@ -7,6 +7,39 @@ import { TopBar, Home, FirstRun, NewCompanyForm, CompanySettings } from './home/
 
 /** `#/dcf` opens a method; `#/` (or nothing, or anything unknown) is the method picker. */
 const readRoute = () => routeOf(window.location.hash);
+
+/**
+ * A view that throws while rendering shows this instead of a blank page. It
+ * resets when the route or company changes (it is keyed on both). In a method,
+ * Start over clears that method's inputs — the way out when saved inputs are
+ * in a shape the steps cannot read.
+ */
+class ViewBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error) { console.error(error); }
+  render() {
+    const { error } = this.state;
+    if (!error) return this.props.children;
+    const { record, method, onHome } = this.props;
+    return (
+      <div className="step-card view-error">
+        <h2>This page could not be shown</h2>
+        <ul className="step-errs"><li>{String(error?.message || error)}</li></ul>
+        <div className="step-foot">
+          {method && <button className="btn ghost" onClick={onHome}>← All methods</button>}
+          <button className="btn ghost" onClick={() => window.location.reload()}>Reload</button>
+          <div className="spacer" />
+          {method && record && (
+            <button className="btn" onClick={() => { if (confirm(`Start ${METHODS[method].label} over? Every input in this method is cleared (other methods are untouched).`)) { resetMethod(record.id, method); this.setState({ error: null }); } }}>
+              Start {METHODS[method].short} over
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+}
 
 export default function App() {
   const state = useStore();
@@ -35,9 +68,11 @@ export default function App() {
         onSettings={() => setSettingsOpen(true)}
       />
       <main className="qv-main">
-        {!record ? <FirstRun />
-          : method ? <MethodPage key={`${record.id}-${method}`} record={record} methodId={method} onHome={() => open(null)} />
-            : <Home record={record} onOpen={open} />}
+        <ViewBoundary key={`${record?.id}-${method}`} record={record} method={method} onHome={() => open(null)}>
+          {!record ? <FirstRun />
+            : method ? <MethodPage key={`${record.id}-${method}`} record={record} methodId={method} onHome={() => open(null)} />
+              : <Home record={record} onOpen={open} />}
+        </ViewBoundary>
       </main>
 
       {newOpen && (

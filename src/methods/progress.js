@@ -8,7 +8,9 @@ import { blankMethodData } from '../store/methodModel.js';
 
 /** Errors for one step: { fields: {path: msg}, step: string[] }. */
 export function stepErrors(step, data, ctx) {
-  const specs = step.fields ? step.fields(data, ctx) : [];
+  // a step that cannot even list its fields (inputs in an unexpected shape) is invalid, not a crash
+  let specs;
+  try { specs = step.fields ? step.fields(data, ctx) : []; } catch (e) { return { fields: {}, step: [`This step's inputs could not be read (${e.message}) — Start over clears them.`], specs: [] }; }
   const fields = fieldErrors(specs, data);
   let extra = [];
   if (!Object.keys(fields).length && step.validate) {
@@ -42,9 +44,8 @@ export function methodProgress(def, mstate, ctx) {
   let blank = null;
   try { blank = def.id ? blankMethodData(def.id) : null; } catch { blank = null; }
   const started = def.steps.some((s) => {
-    const specs = s.fields ? s.fields(data, ctx) : [];
-    return anyFilled(specs, data, blank);
-  }) || def.startedWhen?.(data) || false;
+    try { return anyFilled(s.fields ? s.fields(data, ctx) : [], data, blank); } catch { return true; }
+  }) || (() => { try { return !!def.startedWhen?.(data); } catch { return true; } })();
   return { states, reachable, complete, started, skippedIds: Object.keys(skipped).filter((k) => skipped[k]) };
 }
 

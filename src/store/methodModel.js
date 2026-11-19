@@ -101,6 +101,42 @@ export function blankMethodData(methodId) {
   return make();
 }
 
+const plain = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+/**
+ * Fold pasted JSON (the Fill-all dialog's "Load") into a method's data: only
+ * the sections this method owns are taken, and each must have the shape of
+ * the blank section — an object where the blank has an object, a list where
+ * it has a list. Keys the paste leaves out keep the blank structure (so a
+ * partial paste such as `{ "dcf": { "settings": … } }` still has a company
+ * page to render), never a value. Returns { data, loaded, errors }; when
+ * there are errors nothing is loaded.
+ */
+export function mergePastedData(methodId, current, parsed) {
+  const blank = blankMethodData(methodId);
+  const errors = [];
+  if (!plain(parsed)) return { data: current, loaded: [], errors: ['The JSON must be an object of this method’s sections.'] };
+  const fit = (b, v, path) => {
+    if (plain(b)) {
+      if (!plain(v)) { errors.push(`${path} must be an object`); return b; }
+      const out = { ...b };
+      for (const [k, x] of Object.entries(v)) out[k] = k in b ? fit(b[k], x, `${path}.${k}`) : x;
+      return out;
+    }
+    if (Array.isArray(b) && !Array.isArray(v)) { errors.push(`${path} must be a list`); return b; }
+    return v;
+  };
+  const next = { ...current };
+  const loaded = [];
+  for (const k of Object.keys(current)) {
+    if (!(k in parsed)) continue;
+    next[k] = k in blank ? fit(blank[k], parsed[k], k) : parsed[k];
+    loaded.push(k);
+  }
+  if (!loaded.length) errors.push(`No ${methodId} section found — expected ${Object.keys(current).join(', ')}.`);
+  return errors.length ? { data: current, loaded: [], errors } : { data: next, loaded, errors };
+}
+
 export function blankMethodState(methodId) {
   return { data: blankMethodData(methodId), step: 0, done: {}, skipped: {}, completedAt: null, updatedAt: null };
 }

@@ -2,11 +2,12 @@
  * Shell data model: per-method blank data, the engine adapter, field
  * validation and the history helpers. No UI.
  */
-import { METHOD_IDS, blankMethodData, blankMethodState, toEngineInput } from '../src/store/methodModel.js';
+import { METHOD_IDS, blankMethodData, blankMethodState, toEngineInput, mergePastedData } from '../src/store/methodModel.js';
 import { fieldError, fieldErrors, anyFilled, f } from '../src/methods/fields.js';
 import { blankManualHistory, hasHistory, historyReference, historyLine, fyLabel, HISTORY_KEYS } from '../src/lib/historyModel.js';
 import { setPath, getPath } from '../src/store/store.js';
 import { routeOf } from '../src/methods/labels.js';
+import { stepErrors, methodProgress } from '../src/methods/progress.js';
 
 let failures = 0;
 const ok = (cond, msg) => { if (!cond) { failures++; console.error('FAIL:', msg); } else console.log('ok  :', msg); };
@@ -116,6 +117,36 @@ ok(fieldError(f.num('x', 'X'), NaN) === 'Required', 'NaN counts as blank');
   ok(close(r.cagr, 10) && r.cagrYears === 3, 'CAGR spans first to last reported revenue');
   ok(Number.isNaN(historyLine(h, 'revenue')[2]), 'historyLine: missing → NaN');
   ok(fyLabel('2026-03-31') === 'FY26' && fyLabel('2025-12-31') === '2025', 'fiscal-year labels');
+}
+
+/* ---------------- Fill-all JSON paste ---------------- */
+{
+  const cur = blankMethodData('dcf');
+  cur.dcf.settings.cf = 'fcff';
+  const rt = mergePastedData('dcf', blankMethodData('dcf'), JSON.parse(JSON.stringify(cur)));
+  ok(!rt.errors.length && JSON.stringify(rt.data) === JSON.stringify(cur), 'Fill-all JSON: a copied set loads back unchanged');
+  const nul = mergePastedData('dcf', cur, { dcf: null });
+  ok(nul.errors.length && nul.data === cur, 'Fill-all JSON: "dcf": null is refused (it used to blank the page)');
+  const part = mergePastedData('dcf', blankMethodData('dcf'), { dcf: { settings: { cf: 'fcfe', histYears: 3 } } });
+  ok(!part.errors.length && part.data.dcf.settings.cf === 'fcfe' && part.data.dcf.settings.rateStep === 0.5 && part.data.dcf.company.page.lines.rev && part.data.dcf.capm.peers.length === 0,
+    'Fill-all JSON: a partial section keeps the blank structure around what was pasted');
+  ok(part.data.dcf.company.price === null && part.data.dcf.capm.rf === null, 'Fill-all JSON: nothing is filled in for keys the paste left out');
+  const wrong = mergePastedData('dcf', cur, { dcf: { drivers: { gRev: 5 } } });
+  ok(wrong.errors.some((e) => e.includes('dcf.drivers.gRev')), 'Fill-all JSON: a number where a per-year list belongs is refused, naming the path');
+  const other = mergePastedData('dcf', cur, { comps: blankMethodData('comps').comps, history: {} });
+  ok(other.errors.length && other.data === cur, "Fill-all JSON: another method's sections are not loaded (and that is said)");
+  const ts = mergePastedData('ts', blankMethodData('ts'), { history: { source: 'manual' }, company: { sharesOut: 10 } });
+  ok(!ts.errors.length && ts.data.history.source === 'manual' && ts.data.company.sharesOut === 10 && ts.data.company.cash === null, 'Fill-all JSON: a null-blank section (history) takes an object; a partial company keeps the blank keys');
+  ok(mergePastedData('ts', blankMethodData('ts'), [1, 2]).errors.length > 0, 'Fill-all JSON: a list is not a set of sections');
+}
+
+/* ---------------- progress never throws ---------------- */
+{
+  const step = { id: 's', fields: (d) => [f.money(`dcf.company.${d.dcf.company.x}`, 'X')] };
+  const e = stepErrors(step, { dcf: null }, {});
+  ok(e.step.length === 1 && !Object.keys(e.fields).length, 'a step whose fields cannot be listed reports an error instead of throwing');
+  const p = methodProgress({ id: 'dcf', steps: [step] }, { data: { dcf: null }, skipped: {} }, {});
+  ok(!p.complete && p.reachable === 0 && p.started, 'progress of unreadable inputs: not complete, started (so Start over is offered)');
 }
 
 /* ---------------- hash routes ---------------- */

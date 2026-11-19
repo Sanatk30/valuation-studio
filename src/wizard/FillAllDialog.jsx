@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { stepErrors } from '../methods/progress.js';
 import { setPath } from '../store/store.js';
+import { mergePastedData } from '../store/methodModel.js';
 import { FieldGrid } from './Field.jsx';
 
 /**
@@ -25,18 +26,21 @@ export default function FillAllDialog({ def, mstate, ctx, company, onClose, onAp
   const allOk = statuses.every((s) => s !== 'invalid');
 
   const loadJson = () => {
+    let parsed;
     try {
-      const parsed = JSON.parse(json);
-      if (!parsed || typeof parsed !== 'object') throw new Error('Not an object');
-      // only keep the sections this method owns, so a paste can't smuggle in others
-      const next = { ...draft };
-      for (const k of Object.keys(draft)) if (k in parsed) next[k] = parsed[k];
-      setDraft(next);
-      setJson(null);
-      setJsonErr('');
+      parsed = JSON.parse(json);
     } catch (e) {
       setJsonErr(`Could not read that JSON: ${e.message}`);
+      return;
     }
+    // only the sections this method owns, each in the shape of its blank section — a paste
+    // can't smuggle in other sections, and a wrong shape (e.g. "dcf": null) is refused here
+    // instead of breaking the form
+    const { data, errors } = mergePastedData(def.id, draft, parsed);
+    if (errors.length) { setJsonErr(`Not loaded: ${errors.slice(0, 4).join('; ')}${errors.length > 4 ? ' …' : ''}`); return; }
+    setDraft(data);
+    setJson(null);
+    setJsonErr('');
   };
 
   return (

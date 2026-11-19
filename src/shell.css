@@ -258,3 +258,7 @@ table.comb-pick select.fld-in { padding: 5px 8px; font-size: 12px; }
 .set-sec { border-top: 1px solid var(--border); padding: 14px 0 12px; }
 .set-sec h3 { margin: 0 0 10px; font-size: 13.5px; }
 .set-sec .fld-grid { margin-bottom: 10px; }
+
+/* a view that failed to render (App.jsx ViewBoundary) */
+.view-error { max-width: 720px; margin: 40px auto; }
+.view-error h2 { margin: 0 0 6px; }
