@@ -4,7 +4,7 @@ import { NewCompanyForm, CompanySettings, FY_OPTIONS } from './CompanyForms.jsx'
 import { METHODS } from '../methods/registry.js';
 import { METHOD_META, VALUATION_ORDER, ANALYSIS_ORDER } from '../methods/labels.js';
 import { useCompanyCtx } from '../wizard/MethodPage.jsx';
-import { setActive, resetMethod } from '../store/store.js';
+import { setActive, resetMethod, updateMethod } from '../store/store.js';
 import { CURRENCIES, UNITS } from '../lib/format.js';
 
 const ICONS = {
@@ -85,7 +85,14 @@ function MethodCard({ id, record, ctx, onOpen }) {
         <div className={`m-status ${status.cls}`}>{status.cls === 'done' ? '✓ ' : ''}{status.text}</div>
       </div>
       <div className="m-acts">
-        <button className="btn primary sm" disabled={combinedLocked} onClick={() => onOpen(id)}>
+        <button
+          className="btn primary sm" disabled={combinedLocked}
+          onClick={() => {
+            // "View output" opens the output, even when a step was last open (an Edit left unsaved)
+            if (p.complete && (mstate?.step ?? 0) < n) updateMethod(record.id, id, (m) => ({ ...m, step: n }));
+            onOpen(id);
+          }}
+        >
           {p.complete ? 'View output' : p.started ? 'Continue' : 'Start'}
         </button>
         {p.started && (
