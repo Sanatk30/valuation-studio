@@ -9,7 +9,7 @@
  */
 import fs from 'node:fs';
 import {
-  parseListing, mapListing, ltmPeriod, balanceSheetDate, templateFromListing, requiredCurrencies, parseSearch, UNIT_FACTOR, ebitdaSuspect,
+  parseListing, mapListing, fetchListing, timeseriesWindow, ltmPeriod, balanceSheetDate, templateFromListing, requiredCurrencies, parseSearch, UNIT_FACTOR, ebitdaSuspect,
 } from '../src/lib/yahoo.js';
 import { parseRateResponse, fetchLiveRate, fetchLiveRates, normalizeCurrency, rateShown, validRate } from '../src/lib/fx.js';
 import { convertCompanyRecord, rescaleUnit } from '../src/lib/currency.js';
@@ -52,6 +52,26 @@ console.log('=== live FX ===');
   // a rate box keeps a typed 0 (on the way to 0.012) instead of wiping it; it is still not a usable rate
   ok(rateShown({ rate: 0, source: 'typed' }) === 0 && !validRate({ rate: 0 }), 'a typed 0 stays in the rate box but is not usable');
   ok(rateShown({ rate: 83.2, source: 'live' }) === 83.2 && rateShown({ rate: null, source: 'failed' }) === null && rateShown(undefined) === null, 'the rate box shows the held number, blank when none');
+}
+
+/* ------------------------------------------------- fetch: stable URLs */
+{
+  // two fetches on the same UTC day must ask for the same URLs, so the relay / browser caches can answer
+  const fx = load('AAPL.json');
+  const seen = [];
+  const fake = async (url) => {
+    seen.push(url);
+    const body = url.includes('/chart/') ? fx.chart : url.includes('type=annual') ? fx.annual : url.includes('type=quarterly') ? fx.quarterly : fx.trailing;
+    return { ok: true, status: 200, json: async () => body };
+  };
+  const t0 = Date.UTC(2026, 10, 19, 0, 0, 5), t1 = Date.UTC(2026, 10, 19, 23, 59, 50);
+  const r0 = await fetchListing('AAPL', { base: 'B', fetchImpl: fake, now: t0 });
+  const first = seen.splice(0);
+  await fetchListing('AAPL', { base: 'B', fetchImpl: fake, now: t1 });
+  ok(first.length === 4 && first.every((u, i) => u === seen[i]), 'fetchListing: the same URLs all day (cacheable)');
+  const w = timeseriesWindow(t1);
+  ok(w.until * 1000 > t1 && w.until * 1000 - t1 <= 86400e3 && w.until % 86400 === 0, 'the statement window ends at the end of the current UTC day');
+  ok(r0.symbol === 'AAPL' && r0.annual.TotalRevenue?.length > 0, 'fetchListing parses what it fetched');
 }
 
 /* ------------------------------------------------------------- search */

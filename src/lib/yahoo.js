@@ -119,6 +119,18 @@ export const chartUrl = (symbol, base = DEFAULT_BASE) =>
   `${base}/v8/finance/chart/${encodeURIComponent(symbol)}?range=1d&interval=1d`;
 
 /**
+ * The statement window (epoch seconds), whole UTC days ending at the end of
+ * today: the same URL all day, so the relay's edge cache and the browser cache
+ * can answer a repeat fetch (a window ending "now" made every URL unique).
+ * A period end later today is fine for Yahoo — it returns what is reported.
+ */
+export function timeseriesWindow(nowMs) {
+  const DAY = 86400;
+  const until = (Math.floor(nowMs / 1000 / DAY) + 1) * DAY;
+  return { until, annualFrom: until - (HISTORY_MAX_YEARS + 1) * 366 * DAY, recentFrom: until - 4 * 366 * DAY };
+}
+
+/**
  * Fetch everything a listing needs in one go: quote + annual (≤10y), quarterly
  * and trailing statements. Quarterly / trailing failures are not fatal — the
  * result says which parts are missing (`partial`).
@@ -126,14 +138,12 @@ export const chartUrl = (symbol, base = DEFAULT_BASE) =>
 export async function fetchListing(symbol, opts = {}) {
   const base = opts.base ?? DEFAULT_BASE;
   const f = opts.fetchImpl;
-  const now = Math.floor(Date.now() / 1000);
-  const annualFrom = now - (HISTORY_MAX_YEARS + 1) * 366 * 86400;
-  const recentFrom = now - 4 * 366 * 86400;
+  const { until, annualFrom, recentFrom } = timeseriesWindow(opts.now ?? Date.now());
   const [chart, annual, quarterly, trailing] = await Promise.all([
     getJson(chartUrl(symbol, base), f),
-    getJson(timeseriesUrl(symbol, 'annual', annualFrom, now, base), f),
-    getJson(timeseriesUrl(symbol, 'quarterly', recentFrom, now, base), f).catch(() => null),
-    getJson(timeseriesUrl(symbol, 'trailing', recentFrom, now, base), f).catch(() => null),
+    getJson(timeseriesUrl(symbol, 'annual', annualFrom, until, base), f),
+    getJson(timeseriesUrl(symbol, 'quarterly', recentFrom, until, base), f).catch(() => null),
+    getJson(timeseriesUrl(symbol, 'trailing', recentFrom, until, base), f).catch(() => null),
   ]);
   return parseListing({ symbol, chart, annual, quarterly, trailing, fetchedAt: new Date().toISOString(), search: opts.search });
 }
