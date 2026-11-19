@@ -6,6 +6,7 @@ import { METHOD_IDS, blankMethodData, blankMethodState, toEngineInput } from '..
 import { fieldError, fieldErrors, anyFilled, f } from '../src/methods/fields.js';
 import { blankManualHistory, hasHistory, historyReference, historyLine, fyLabel, HISTORY_KEYS } from '../src/lib/historyModel.js';
 import { setPath, getPath } from '../src/store/store.js';
+import { routeOf } from '../src/methods/labels.js';
 
 let failures = 0;
 const ok = (cond, msg) => { if (!cond) { failures++; console.error('FAIL:', msg); } else console.log('ok  :', msg); };
@@ -116,6 +117,11 @@ ok(fieldError(f.num('x', 'X'), NaN) === 'Required', 'NaN counts as blank');
   ok(Number.isNaN(historyLine(h, 'revenue')[2]), 'historyLine: missing → NaN');
   ok(fyLabel('2026-03-31') === 'FY26' && fyLabel('2025-12-31') === '2025', 'fiscal-year labels');
 }
+
+/* ---------------- hash routes ---------------- */
+ok(routeOf('#/dcf') === 'dcf' && routeOf('#/ratios') === 'ratios' && routeOf('#dcf') === 'dcf', 'a method route opens that method');
+ok(routeOf('') === null && routeOf('#/') === null && routeOf('#/nope') === null && routeOf('#/DCF') === null, 'an empty or unknown route is the method picker');
+ok(['constructor', 'toString', '__proto__', 'hasOwnProperty', 'valueOf'].every((k) => routeOf(`#/${k}`) === null), 'inherited Object properties are not routes (#/constructor used to blank the page)');
 
 if (failures) { console.error(`\n${failures} FAILURE(S)`); process.exit(1); }
 console.log('\nSHELL MODEL OK');

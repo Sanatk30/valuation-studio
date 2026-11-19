@@ -1,14 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { useStore } from './store/store.js';
 import { METHODS } from './methods/registry.js';
+import { routeOf } from './methods/labels.js';
 import MethodPage from './wizard/MethodPage.jsx';
 import { TopBar, Home, FirstRun, NewCompanyForm, CompanySettings } from './home/Home.jsx';
 
-/** `#/dcf` opens a method; `#/` (or nothing) is the method picker. */
-const readRoute = () => {
-  const m = window.location.hash.replace(/^#\/?/, '');
-  return METHODS[m] ? m : null;
-};
+/** `#/dcf` opens a method; `#/` (or nothing, or anything unknown) is the method picker. */
+const readRoute = () => routeOf(window.location.hash);
 
 export default function App() {
   const state = useStore();

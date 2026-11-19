@@ -12,3 +12,13 @@ export const METHOD_META = {
 
 export const VALUATION_ORDER = ['dcf', 'comps', 'precedent', 'lbo', 'ipo', 'combined'];
 export const ANALYSIS_ORDER = ['ts', 'ratios'];
+
+/**
+ * The method a location hash opens (`#/dcf` → 'dcf'), or null for the method
+ * picker. Only the methods' own ids count: `#/constructor` or `#/toString`
+ * must not resolve to a property every object inherits.
+ */
+export function routeOf(hash) {
+  const m = String(hash || '').replace(/^#\/?/, '');
+  return Object.prototype.hasOwnProperty.call(METHOD_META, m) ? m : null;
+}
