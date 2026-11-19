@@ -32,16 +32,57 @@ export function migrate(state) {
   return state;
 }
 
-function load() {
+const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+/**
+ * A saved state the shell can always render: company entries that are not
+ * records are dropped, every method has a state (a missing or unreadable one
+ * starts blank), and `activeId` names a company that exists — else the most
+ * recently edited one, so saved companies never hide behind the first-run card.
+ */
+export function normalizeState(raw) {
+  if (!isObj(raw) || !isObj(raw.companies)) return { activeId: null, companies: {} };
+  const companies = {};
+  for (const [id, rec] of Object.entries(raw.companies)) {
+    if (!isObj(rec)) continue;
+    const methods = isObj(rec.methods) ? { ...rec.methods } : {};
+    for (const m of METHOD_IDS) if (!isObj(methods[m]) || !isObj(methods[m].data)) methods[m] = blankMethodState(m);
+    companies[id] = { ...rec, id, methods };
+  }
+  const st = migrate({ ...raw, companies });
+  if (!companies[st.activeId]) {
+    st.activeId = Object.values(companies).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0]?.id ?? null;
+  }
+  return st;
+}
+
+function read() {
   try {
-    const raw = JSON.parse(localStorage.getItem(KEY));
-    if (raw && typeof raw === 'object' && raw.companies) return migrate(raw);
+    return normalizeState(JSON.parse(localStorage.getItem(KEY)));
   } catch { /* private mode, corrupt save */ }
   return { activeId: null, companies: {} };
 }
 
-let state = load();
+let state = read();
 const listeners = new Set();
+
+/** The current state (tests; components use useStore). */
+export const getState = () => state;
+
+/**
+ * Another tab of the app saved: take its state, so this tab's next save does
+ * not write its older copy over the companies and edits made there.
+ */
+export function syncFromStorage(json) {
+  let next;
+  try { next = normalizeState(JSON.parse(json)); } catch { return; }
+  if (next.companies[state.activeId]) next.activeId = state.activeId;   // each tab keeps the company it shows
+  state = next;
+  listeners.forEach((l) => l());
+}
+if (typeof window !== 'undefined' && window.addEventListener) {
+  window.addEventListener('storage', (e) => { if (e.key === KEY && e.newValue) syncFromStorage(e.newValue); });
+}
 
 function commit(next) {
   state = next;

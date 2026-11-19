@@ -5,7 +5,7 @@
 import { METHOD_IDS, blankMethodData, blankMethodState, toEngineInput, mergePastedData } from '../src/store/methodModel.js';
 import { fieldError, fieldErrors, anyFilled, f } from '../src/methods/fields.js';
 import { blankManualHistory, hasHistory, historyReference, historyLine, fyLabel, HISTORY_KEYS } from '../src/lib/historyModel.js';
-import { setPath, getPath } from '../src/store/store.js';
+import { setPath, getPath, normalizeState, syncFromStorage, getState, createCompany, updateMethod } from '../src/store/store.js';
 import { routeOf } from '../src/methods/labels.js';
 import { stepErrors, methodProgress } from '../src/methods/progress.js';
 
@@ -147,6 +147,35 @@ ok(fieldError(f.num('x', 'X'), NaN) === 'Required', 'NaN counts as blank');
   ok(e.step.length === 1 && !Object.keys(e.fields).length, 'a step whose fields cannot be listed reports an error instead of throwing');
   const p = methodProgress({ id: 'dcf', steps: [step] }, { data: { dcf: null }, skipped: {} }, {});
   ok(!p.complete && p.reachable === 0 && p.started, 'progress of unreadable inputs: not complete, started (so Start over is offered)');
+}
+
+/* ---------------- saved state ---------------- */
+{
+  ok(normalizeState(null).activeId === null && Object.keys(normalizeState('x').companies).length === 0, 'no save / a corrupt save → empty library');
+  const raw = { activeId: 'gone', companies: {
+    a: { id: 'a', name: 'A', currency: 'USD', unit: 'Mn', updatedAt: 1, methods: { ts: { data: { company: { sharesOut: 5 } }, step: 2, skipped: {} } } },
+    b: { id: 'b', name: 'B', currency: 'INR', unit: 'Cr', updatedAt: 9 },
+    bad: null, worse: 7,
+  } };
+  const n = normalizeState(raw);
+  ok(Object.keys(n.companies).join() === 'a,b', 'entries that are not company records are dropped');
+  ok(n.activeId === 'b', 'an active id that no longer exists falls back to the most recently edited company (not the first-run card)');
+  ok(METHOD_IDS.every((m) => n.companies.b.methods[m]?.data) && n.companies.a.methods.ts.data.company.sharesOut === 5 && n.companies.a.methods.ts.step === 2,
+    'every method has a state; saved ones are kept, missing ones start blank');
+  ok(normalizeState({ activeId: 'a', companies: { a: { name: 'A', methods: { dcf: { data: null } } } } }).companies.a.methods.dcf.data.dcf.settings, 'an unreadable method state starts blank');
+}
+{
+  // two tabs: this one creates a company, another tab saves its own; this tab must not write its old copy back
+  const id = createCompany({ name: 'Tab 1 Co', currency: 'USD', unit: 'Mn', startYear: 2027, fyEndMonth: 12 });
+  const other = JSON.parse(JSON.stringify(getState()));
+  other.companies.c2 = { ...other.companies[id], id: 'c2', name: 'Tab 2 Co', updatedAt: Date.now() + 5 };
+  other.activeId = 'c2';
+  syncFromStorage(JSON.stringify(other));
+  ok(getState().companies.c2?.name === 'Tab 2 Co' && getState().activeId === id, 'a save from another tab is taken in; this tab keeps showing its own company');
+  updateMethod(id, 'ts', (m) => ({ ...m, step: 1 }));
+  ok(getState().companies.c2 && getState().companies[id].methods.ts.step === 1, "this tab's next save keeps the other tab's company");
+  syncFromStorage('{not json');
+  ok(getState().companies.c2, 'an unreadable storage event changes nothing');
 }
 
 /* ---------------- hash routes ---------------- */
