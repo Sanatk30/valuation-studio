@@ -160,6 +160,18 @@ export function dcfLabels(stored, n, m, startYear) {
 /** A driver row's value for forecast year j (blank = 0, as the template's empty cell). */
 const drv = (drivers, key, j) => (Array.isArray(drivers?.[key]) ? drivers[key][j] : null);
 
+/**
+ * The drivers a cash flow's value depends on: the operating drivers, plus
+ * other income, net borrowing and the interest rate for the equity cash flows
+ * (through PAT and the debt schedule) and the payout for the DDM.
+ */
+export function valueDrivers(cf) {
+  const ops = ['gRev', 'materials', 'employee', 'otherExp', 'da', 'tax', 'capex', 'invDays', 'recDays', 'payDays', 'oca', 'ocl'];
+  if (cf === 'fcfe') return [...ops, 'otherInc', 'netBorrow', 'intRate'];
+  if (cf === 'ddm') return [...ops, 'otherInc', 'netBorrow', 'intRate', 'payout'];
+  return ops;
+}
+
 /* ------------------------------------------------------------ beta */
 
 /** Hamada: βu = βL ÷ (1 + (1 − t) × D/E); D/E and t in %. */
@@ -224,6 +236,8 @@ export function computeDcfT(a) {
   for (const dd of DRIVERS.filter((x) => x.key)) {
     D[dd.key] = Array.from({ length: m }, (_, j) => (dd.fmt === 'pct' ? pc(drv(d.drivers, dd.key, j)) : z(drv(d.drivers, dd.key, j))));
   }
+  // forecast years (0-based) where a driver the value depends on is blank — it counts as 0, as in the template
+  const blankYears = Array.from({ length: m }, (_, j) => j).filter((j) => valueDrivers(cf).some((k) => !isNum(drv(d.drivers, k, j))));
 
   /* ---- Forecast sheet: columns 0…n−1 historical, n…n+m−1 forecast ---- */
   const T = n + m;
@@ -383,7 +397,7 @@ export function computeDcfT(a) {
 
   return {
     settings: s, cf, tv, coeKind, n, m, labels, toggle, price, shares,
-    hist: H, ref, drivers: D, F, flows, coe, wacc, bridge, valuation: v,
+    hist: H, ref, drivers: D, blankYears, F, flows, coe, wacc, bridge, valuation: v,
     sens: { rows, cols, grid, rateStep, tvStep },
     template: templateName({ cf, tv, coe: coeKind }),
   };
