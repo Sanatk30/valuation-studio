@@ -9,6 +9,9 @@ import { parseRateResponse } from '../src/lib/fx.js';
 import {
   parseSnapshot, scoreCandidate, buildReference, rankCandidates, findPeers, makeConvert, WEIGHTS, SNAPSHOT_TYPES, mapLimit,
 } from '../src/lib/peerFinder.js';
+import { computePage, setCell } from '../src/lib/engine/companyPage.js';
+import { blankPeer } from '../src/lib/engine/comps.js';
+import { importJsx } from './helpers/bundleJsx.mjs';
 
 let failures = 0, checks = 0;
 const ok = (cond, msg) => { checks++; if (!cond) { failures++; console.error('FAIL:', msg); } else console.log('ok  :', msg); };
@@ -221,6 +224,45 @@ console.log('\n=== findPeers end to end ===');
 
   const order = await mapLimit([30, 10, 20], 2, (ms) => new Promise((r) => setTimeout(() => r(ms), ms)));
   ok(order.join() === '30,10,20', 'mapLimit keeps input order');
+}
+
+/* ------------------------------------------------- Yahoo fill into a slot */
+console.log('\n=== mergeFetch: a Yahoo fill into a used slot (components/PeerYahoo.jsx) ===');
+{
+  const { mergeFetch } = await importJsx('src/components/PeerYahoo.jsx');
+  const company = { name: 'X', currency: 'USD', unit: 'Mn', startYear: 2027, fyEndMonth: 12 };
+  const n = 3;
+  const rel = parseListing(FIX['RELIANCE.NS']), aapl = parseListing(FIX.AAPL);
+  const pg = (slot) => computePage(slot.page, { n, ytd: true, market: { price: slot.price, shares: slot.shares } });
+  const fresh = mergeFetch(blankPeer(), { raw: aapl, rates: {} }, company, { n });
+  const L = pg(fresh).cols.L;
+
+  // the ticker in a peer row changed from RELIANCE.NS to AAPL and ⟳ pressed
+  const relSlot = mergeFetch(blankPeer({ include: 0, tierId: 't1' }), { raw: rel, rates: { INR: 0.012 } }, company, { n });
+  ok(relSlot.page.lines.finance.fy.some((v) => v !== null) && relSlot.page.lines.nci.fy.some((v) => v !== null), 'RELIANCE fill carries finance costs and NCI (AAPL reports neither)');
+  const swapped = mergeFetch({ ...relSlot, ticker: 'AAPL' }, { raw: aapl, rates: {} }, company, { n });
+  ok(JSON.stringify(swapped.page.lines) === JSON.stringify(fresh.page.lines), 'another listing: no figure of the old company stays on the page');
+  ok(pg(swapped).v.check.slice(0, n).every((x) => x === 0) && pg(swapped).v.pbt[L] === pg(fresh).v.pbt[L], 'the page balances and PBT is the new company’s');
+  ok(swapped.include === 0 && swapped.tierId === 't1', 'include flag and tier are the user’s and stay');
+  ok(swapped.price === fresh.price && swapped.sector === fresh.sector, 'price and sector are the new listing’s');
+
+  // the same listing re-fetched over the user's own entries
+  let mine = fresh;
+  mine = { ...mine, page: setCell(mine.page, 'rou', 2, 999, n) };          // a line Yahoo never fills, in a reported year
+  mine = { ...mine, page: setCell(mine.page, 'rev', 'c', 123, n) };        // a YTD cell
+  const again = mergeFetch(mine, { raw: aapl, rates: {} }, company, { n });
+  ok(again.page.lines.rou.fy[2] === null, 'a reported year is taken whole: a figure kept there would double-count the balancing “other” line');
+  ok(pg(again).v.check.slice(0, n).every((x) => x === 0), 'so the balance sheet still balances after the re-fetch');
+  ok(again.page.lines.rev.c === 123, 'the YTD columns (Yahoo fills none) keep what the user typed');
+
+  // years the fetch does not report keep the user's values (n = 6: AAPL has 4 or 5 fiscal years)
+  const wide = 6;
+  const f6 = mergeFetch(blankPeer(), { raw: aapl, rates: {} }, company, { n: wide });
+  const pad = wide - f6._fetched.fyDates.length;
+  ok(pad > 0, `AAPL leaves ${pad} earlier year(s) blank at 6 years`);
+  const typed = { ...f6, page: setCell(f6.page, 'rev', 0, 777, wide) };
+  const again6 = mergeFetch(typed, { raw: aapl, rates: {} }, company, { n: wide });
+  ok(again6.page.lines.rev.fy[0] === 777, 'an earlier year Yahoo does not report keeps the typed figure');
 }
 
 console.log(`\n${checks - failures}/${checks} checks passed`);

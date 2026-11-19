@@ -6,9 +6,12 @@
  * and the headline multiple offered to Combined.
  */
 import { statBlock, statsSettings, DEFAULT_STATS } from '../src/lib/engine/templateStats.js';
-import { blankPage, fyValues, setCell, computePage, MAX_YEARS } from '../src/lib/engine/companyPage.js';
-import { computeComps, clampYears, periodLabels, blankPeer, isBlankPeer } from '../src/lib/engine/comps.js';
-import { blankDeal, isBlankDeal } from '../src/lib/engine/precedent.js';
+import { blankPage, fyValues, setCell, computePage, MAX_YEARS, mergeFetchedPage } from '../src/lib/engine/companyPage.js';
+import { computeComps, clampYears, periodLabels, blankPeer, isBlankPeer, tierNameOf, COMPS_MULTIPLES } from '../src/lib/engine/comps.js';
+import { blankDeal, isBlankDeal, controlPremium, computePrecedent, PREC_METHODS } from '../src/lib/engine/precedent.js';
+import { fitOLS, predictOLS } from '../src/lib/engine/mlr.js';
+import { observations, runRegression } from '../src/lib/engine/regressionModel.js';
+import { importJsx } from './helpers/bundleJsx.mjs';
 import { migrate } from '../src/store/store.js';
 import { blankMethodData, blankMethodState } from '../src/store/methodModel.js';
 import { methodFigures } from '../src/methods/figures.js';
@@ -127,6 +130,90 @@ console.log('\n=== headline multiple → Combined ===');
   const dataP = { ...blankMethodData('precedent'), precedent: samplePrecedentData() };
   const p = methodFigures('precedent', company, { data: dataP, skipped: {} });
   ok(p.length === 1 && p[0].key === 'prec_evEbitda', 'precedent headline');
+}
+
+/* ------------------------------------------------- fixes from the bug hunt */
+console.log('\n=== regression: degenerate designs ===');
+{
+  const mk = (rows) => rows.map((v, i) => ({ id: `p${i}`, name: `P${i}`, values: v }));
+  // money-sized regressor and an exact linear copy of it: X'X entries ~1e12, the pivot left by round-off ~1e-4
+  const big = mk([[1e5, 12], [2.3e5, 14], [3.7e5, 9], [5.1e5, 20], [8.9e5, 11], [1.3e6, 15]].map(([a, y]) => ({ a, b: 3 * a + 7, y })));
+  const col = fitOLS(big, { yVar: 'y', xVars: [{ key: 'a' }, { key: 'b' }] });
+  ok(col && !col.ok && /singular/.test(col.reason), 'collinear money-sized regressors → not estimable (was a "fit" with zero standard errors)');
+  const cubic = fitOLS(big, { yVar: 'y', xVars: [{ key: 'a', degree: 3 }] });
+  ok(cubic.ok && cubic.k === 3 && cubic.se.every((s) => s > 0), 'a cubic in a money-sized regressor still fits');
+  const tiny = fitOLS(mk([1, 2.1, 2.9, 4.2, 5].map((y, i) => ({ a: (i + 1) * 1e-7, y }))), { yVar: 'y', xVars: [{ key: 'a' }] });
+  ok(tiny.ok && near(tiny.beta[1], 1.01e7, 1e-6), 'a tiny-scale regressor is not mistaken for a singular one');
+  const flat = fitOLS(mk([1, 2, 3, 4].map((y) => ({ a: 123456.7, y }))), { yVar: 'y', xVars: [{ key: 'a' }] });
+  ok(!flat.ok && /singular/.test(flat.reason), 'a regressor with no variation → not estimable');
+  const zero = fitOLS(mk([1, 2, 3, 4].map((y) => ({ a: 0, y }))), { yVar: 'y', xVars: [{ key: 'a' }] });
+  ok(!zero.ok && /singular/.test(zero.reason), 'a regressor that is 0 for every peer → not estimable');
+  // a textbook fit, by hand: x̄ = 3, ȳ = 7.02, Sxy = 19.9, Sxx = 10 → b = 1.99, a = 1.05; SSE = 0.107, MSE = 0.107 / 3
+  const ref = fitOLS(mk([[1, 3.1], [2, 4.9], [3, 7.2], [4, 8.8], [5, 11.1]].map(([a, y]) => ({ a, y }))), { yVar: 'y', xVars: [{ key: 'a' }] });
+  const mse = 0.107 / 3;
+  ok(near(ref.beta[0], 1.05, 1e-9) && near(ref.beta[1], 1.99, 1e-9) && near(ref.se[1], Math.sqrt(mse / 10), 1e-9), 'textbook fit: β and SE as hand-computed');
+  const p = predictOLS(ref, { a: 6 });
+  ok(near(p.yHat, 1.05 + 1.99 * 6, 1e-9) && near(p.sePred, Math.sqrt(mse * (1 / 5 + 9 / 10)), 1e-9), 'prediction and SE of the mean prediction as hand-computed');
+}
+
+console.log('\n=== regression: observations ===');
+{
+  const a = withModel();
+  a.comps.peerCount = 9;                                   // two empty slots, Include = 1
+  a.comps.peers[2] = { ...a.comps.peers[2], name: '' };    // an unnamed peer
+  a.regression = { yVar: 'revSize', xVars: [{ key: 'mcapSize' }], customVars: [], targetOverrides: {} };
+  const obs = observations(a);
+  ok(obs.length === 6 && !obs.some((o) => o.id.startsWith('slot')), 'empty slots are not observations (they read 0, a (0, 0) point in a size model)');
+  ok(obs.find((o) => o.id === 'p3')?.name === 'Peer 3', 'an unnamed peer reads "Peer k"');
+  const R = runRegression(a);
+  ok(R.fit.ok && R.fit.n === 6, `the size model fits the six real peers only (n = ${R.fit.n})`);
+  a.regression = { yVar: 'peLtm', xVars: [{ key: 'ebitdaMargin' }], customVars: [], targetOverrides: {} };
+  const F = runRegression(a).fit;
+  ok(F.ok && F.droppedIds.length === F.dropped.length && F.rows.every((r) => typeof r.id === 'string'), 'fit rows and dropped peers carry the peer id (the output matches them by id, not by name)');
+}
+
+console.log('\n=== tiers: names the workbook can match ===');
+{
+  const a = withModel();
+  a.comps.tiers = [{ id: 't1', name: 'Same' }, { id: 't2', name: 'same ' }, { id: 't3', name: 'Unassigned' }, { id: 't4', name: '' }];
+  const c = computeComps(a);
+  ok(c.tiers.map((t) => t.name).join('|') === 'Same|same (2)|Unassigned|Tier|Unassigned (2)', `distinct tier names (${c.tiers.map((t) => t.name).join(' | ')})`);
+  ok(c.peers.find((p) => p.id === 'p7').tier === 'Unassigned (2)' && c.peers.find((p) => p.id === 'p3').tier === 'same (2)', 'each peer carries its tier’s distinct name');
+  ok(tierNameOf({ tierId: null }, []) === '', 'no tiers → no tier name');
+}
+
+console.log('\n=== include flag and listed flag as the workbook reads them ===');
+{
+  const a = withModel();
+  a.comps.peers[0].include = null;
+  ok(computeComps(a).peers[0].include === 1, 'a peer with no include flag counts as 1 (the step shows 1, the workbook writes 1)');
+  ok(controlPremium({ listed: 'yes', offerPrice: 10, unaffectedPrice: 8 }) === 0.25 && controlPremium({ listed: 'No', offerPrice: 10, unaffectedPrice: 8 }) === '', 'Listed "yes" = "Yes" (Excel’s = ignores case)');
+  const b = withModel();
+  b.precedent.deals[0].include = undefined;
+  ok(computePrecedent(b).deals[0].include === 1, 'a deal with no include flag counts as 1');
+}
+
+console.log('\n=== a fetched page folded into a page ===');
+{
+  const own = setCell(setCell(setCell(blankPage(), 'rev', 0, 5, 3), 'rou', 2, 9, 3), 'rev', 'c', 4, 3);
+  const fetched = blankPage();
+  fetched.lines.rev = { fy: [null, 100, 110], p: null, c: null };
+  const m = mergeFetchedPage(own, fetched, 3, [false, true, true]);
+  ok(m.lines.rev.fy.join(',') === '5,100,110', 'a year the fetch does not cover keeps the user’s figure; covered years take the fetched ones');
+  ok(m.lines.rou.fy[2] === null, 'a covered year is taken whole: a line the fetch leaves blank is blank');
+  ok(m.lines.rev.c === 4, 'YTD cells are kept');
+}
+
+console.log('\n=== settings: the implied valuation needs a method ===');
+{
+  const S = await importJsx('src/methods/steps/templateSteps.jsx');
+  const none = Object.fromEntries(COMPS_MULTIPLES.map((m) => [m.key, false]));
+  const cs = S.compsSettingsStep();
+  ok(cs.validate({ comps: { settings: { multiples: none } } }).length === 1, 'comps: every multiple unticked → the Settings step does not pass');
+  ok(cs.validate({ comps: { settings: { multiples: { ...none, pb: true } } } }).length === 0 && cs.validate({ comps: { settings: {} } }).length === 0, 'comps: one multiple (or the template’s all) passes');
+  const ps = S.precSettingsStep();
+  const pnone = Object.fromEntries(PREC_METHODS.map((m) => [m.key, false]));
+  ok(ps.validate({ precedent: { settings: { multiples: pnone } } }).length === 1 && ps.validate({ precedent: { settings: { multiples: { ...pnone, premium: true } } } }).length === 0, 'precedent: likewise (the control premium counts)');
 }
 
 console.log(`\ntemplate: ${checks - failures}/${checks} checks passed`);
