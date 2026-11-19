@@ -32,7 +32,7 @@ function TsPage({ a, f, ts, showHistory }) {
   const last = n - 1;
   const labels = useMemo(() => periodLabels(a.settings, 'Y', n), [a.settings, n]);
   const maxCheck = Math.max(...ts.check.map((c) => (fin(c) ? Math.abs(c) : Infinity)));
-  const ties = maxCheck < 0.01;
+  const ties = ts.balanceOk;
   const shares = a.company.sharesOut;
   const growth = ops.growth;
   const effTax = ts.taxAmt.map((t, i) => (ts.ebt[i] > 0 ? (t / ts.ebt[i]) * 100 : NaN));

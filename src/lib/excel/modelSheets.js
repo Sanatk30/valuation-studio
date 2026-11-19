@@ -206,7 +206,8 @@ function writeForecastRatios(ws, a, F, R, P, T, r0, n) {
   const mktcap = `(${price}*${shares})`;
   const ev = (i) => `(${mktcap}+${nd(i)})`;
   const pe = (i) => `(${price}/${eps(i)})`;
-  const yoy = (fn) => (i) => (i >= 1 ? `${fn(i)}/${fn(i - 1)}-1` : null);
+  // Year 1 grows from the LTM figure in column B (revenue, EBITDA); net income has no Year 0
+  const yoy = (fn, base0) => (i) => (i >= 1 ? `${fn(i)}/${fn(i - 1)}-1` : base0 ? `${fn(0)}/${base0}-1` : null);
 
   const hasValuation = a.company.currentPrice > 0 && a.company.sharesOut > 0;
   const sections = [
@@ -266,9 +267,9 @@ function writeForecastRatios(ws, a, F, R, P, T, r0, n) {
       ['Cash-flow margin (CFO / rev.)', 'pct', (i) => `${cfo(i)}/${rev(i)}`],
     ]],
     ['Growth', [
-      ['Revenue growth (period/period)', 'pct', yoy(rev)],
-      ['Revenue growth (YoY)', 'pct', yoy(rev)],
-      ['EBITDA growth (YoY)', 'pct', yoy(ebitda)],
+      ['Revenue growth (period/period)', 'pct', yoy(rev, `B${T.rev}`)],
+      ['Revenue growth (YoY)', 'pct', yoy(rev, `B${T.rev}`)],
+      ['EBITDA growth (YoY)', 'pct', yoy(ebitda, `B${T.ebitda}`)],
       ['Net income growth (YoY)', 'pct', yoy(ni)],
       ['Sustainable growth (ROE × retention)', 'pct', (i) => `${roe(i)}*${retention(i)}`],
     ]],
