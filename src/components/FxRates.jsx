@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { NumBox } from '../wizard/Field.jsx';
-import { fetchLiveRates, validRate } from '../lib/fx.js';
+import { fetchLiveRates, validRate, rateShown } from '../lib/fx.js';
 
 /**
  * Live FX for a Yahoo pull: fetches a spot rate for every foreign currency
@@ -46,7 +46,7 @@ export function FxRateFields({ currencies, to, rates, setRate, loading }) {
         return (
           <div className={`fx-rate${ok ? '' : ' bad'}`} key={c}>
             <span className="fx-l">1 {c} =</span>
-            <NumBox small value={ok ? Number(r.rate) : null} suffix={to} onChange={(v) => setRate(c, v)} />
+            <NumBox small value={rateShown(r)} suffix={to} onChange={(v) => setRate(c, v)} />
             <span className={`fx-tag ${r.source || ''}`}>
               {loading && !r.source ? 'fetching…'
                 : r.source === 'live' ? `live · ${new Date(r.at).toLocaleString()}`

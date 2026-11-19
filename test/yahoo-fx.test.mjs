@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import {
   parseListing, mapListing, ltmPeriod, balanceSheetDate, templateFromListing, requiredCurrencies, parseSearch, UNIT_FACTOR, ebitdaSuspect,
 } from '../src/lib/yahoo.js';
-import { parseRateResponse, fetchLiveRate, fetchLiveRates, normalizeCurrency } from '../src/lib/fx.js';
+import { parseRateResponse, fetchLiveRate, fetchLiveRates, normalizeCurrency, rateShown, validRate } from '../src/lib/fx.js';
 import { convertCompanyRecord, rescaleUnit } from '../src/lib/currency.js';
 import { blankMethodState, METHOD_IDS } from '../src/store/methodModel.js';
 import { blankManualHistory } from '../src/lib/historyModel.js';
@@ -49,6 +49,9 @@ console.log('=== live FX ===');
   ok(failed, 'fetchLiveRate throws on a failed fetch (the user must type the rate)');
   const many = await fetchLiveRates(['USD', 'INR'], 'INR', { fetchImpl: fake(500, {}) });
   ok(!('INR' in many) && many.USD.rate === null && many.USD.source === 'failed', 'fetchLiveRates marks failures and skips the target currency');
+  // a rate box keeps a typed 0 (on the way to 0.012) instead of wiping it; it is still not a usable rate
+  ok(rateShown({ rate: 0, source: 'typed' }) === 0 && !validRate({ rate: 0 }), 'a typed 0 stays in the rate box but is not usable');
+  ok(rateShown({ rate: 83.2, source: 'live' }) === 83.2 && rateShown({ rate: null, source: 'failed' }) === null && rateShown(undefined) === null, 'the rate box shows the held number, blank when none');
 }
 
 /* ------------------------------------------------------------- search */

@@ -41,6 +41,16 @@ export const validRate = (r) => {
 };
 
 /**
+ * What a rate box shows: the number held, valid or not. A typed 0 stays in
+ * the box (the user may be on the way to 0.012) — validRate alone decides
+ * whether the rate can be used. Blank only when no number is held.
+ */
+export const rateShown = (r) => {
+  const v = typeof r === 'object' && r !== null ? r.rate : r;
+  return typeof v === 'number' && !Number.isNaN(v) ? v : null;
+};
+
+/**
  * Parse a Yahoo chart response for an FX pair. Throws when the response does
  * not carry a positive rate quoted in `to` — a wrong-currency quote is never
  * silently used.
