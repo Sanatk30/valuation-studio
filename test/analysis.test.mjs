@@ -7,6 +7,7 @@
  */
 import { SAMPLE_MODEL as A, withModel } from './fixtures/model.mjs';
 import { computeThreeStatement } from '../src/lib/engine/threeStatement.js';
+import { projectOperations } from '../src/lib/engine/drivers.js';
 import { computeForecastRatios, computeHistoryRatios } from '../src/lib/engine/ratios.js';
 import { computeIpo } from '../src/lib/engine/ipo.js';
 import { blankManualHistory, validFyEnd } from '../src/lib/historyModel.js';
@@ -103,6 +104,15 @@ const data = (patch = {}) => ({ company: clone(A.company), drivers: clone(A.driv
   ok(gridErrors(grid({ da: [4, -1, 4] })).some((e) => /D&A must be at least 0/.test(e)), 'grid: negative D&A % refused');
   ok(gridErrors(grid({ capexMode: 'abs', capex: [50, -5, 50] })).some((e) => /Capex must be at least 0/.test(e)), 'grid: negative absolute capex refused');
   ok(gridErrors(grid({ revenue: [10, null, 6] })).some((e) => /1 year missing/.test(e)), 'grid: a blank year is reported missing');
+}
+
+/* ---- drivers: the fade mode never reads a hidden grid ---- */
+{
+  const grid = { revenueMode: 'abs', revenue: [9000, 9100, 9200, 9300, 9400], ebitdaMode: 'margin', ebitda: [1, 1, 1, 1, 1], daMode: 'pct', da: [1, 1, 1, 1, 1], capexMode: 'pct', capex: [1, 1, 1, 1, 1], nwcMode: 'pct', nwc: [1, 1, 1, 1, 1] };
+  const fade = projectOperations(withModel({ drivers: { ...A.drivers, mode: 'fade', perYear: grid } }));
+  ok(close(fade.revenue[0], 5000 * 1.12), 'drivers: mode "fade" ignores a leftover per-year grid');
+  const g = projectOperations(withModel({ drivers: { ...A.drivers, mode: 'grid', perYear: grid } }));
+  ok(close(g.revenue[0], 9000), 'drivers: mode "grid" uses the grid');
 }
 
 /* ---- manual history: a cleared date never throws ---- */

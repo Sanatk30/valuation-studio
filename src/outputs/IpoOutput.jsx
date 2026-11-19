@@ -60,7 +60,7 @@ function IpoPage({ a, f, ipo }) {
           !fin(ipo.postShares) && ipo.greenshoeShares > 0 && 'Choose whether the greenshoe shares are new (primary) or existing holders’ (secondary) in the Offer structure step.',
         ]}
         kpis={[
-          { label: 'Post-money market cap', value: ipo.mktCapAtOffer, fmt: (v) => f.money(v), hero: true, sub: `${f.shares(ipo.postShares)} shares after the offer` },
+          { label: 'Post-money market cap', value: ipo.mktCapAtOffer, fmt: (v) => f.money(v), hero: true, sub: `${f.shares(ipo.postShares)} ${f.unit} shares after the offer` },
           { label: 'Net primary proceeds', value: ipo.netPrimary, fmt: (v) => f.money(v), sub: `gross ${f.money(ipo.grossPrimary)} − fees ${f.money(ipo.fees)}` },
           { label: 'Fair-value uplift at listing', value: ipo.uplift, fmt: (v) => f.pct(v), tone: tone(ipo.uplift), sub: `to ${f.price(ipo.fairPricePost)} when the discount unwinds` },
           { label: `Pro-forma ${y1} EPS change`, value: ipo.epsDilution, fmt: (v) => f.pct(v), tone: tone(ipo.epsDilution), sub: `${f.price(ipo.epsPre)} → ${f.price(ipo.epsPost)}` },

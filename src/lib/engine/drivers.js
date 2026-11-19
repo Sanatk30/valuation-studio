@@ -63,7 +63,9 @@ const openingNwc = (d) => (d.nwc0 === undefined ? (d.nwcPct / 100) * d.revenue0 
 export function projectOperations(a) {
   const d = a.drivers;
   const n = d.years;
-  const py = d.perYear;
+  // a grid left behind with "Start → end fade" chosen (e.g. a pasted JSON) is not used: the
+  // forecast is what the step shows. No mode (fixtures, old saves) keeps the grid.
+  const py = d.mode === 'fade' ? null : d.perYear;
   const growthIn = getGrowthArray(d);
   const marginIn = getMarginArray(d);
 
