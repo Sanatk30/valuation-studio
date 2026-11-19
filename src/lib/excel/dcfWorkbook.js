@@ -162,9 +162,10 @@ export function buildDcfWorkbook(a) {
     if (tv === 'gordon') row(IN.tv, 'Terminal (perpetual) growth rate', pc(s.growth), NF.pct, 'e.g. 5.0% – should not exceed long-run nominal GDP growth');
     else row(IN.tv, `Exit ${multN} multiple`, num(s.exitMultiple), NF.x, `e.g. ${cf === 'fcff' ? '12.0x' : '20.0x'} – can take median from your CCA / Precedent workbooks`);
     w(ws, `A${IN.sensHead}`, 'Sensitivity table', { bold: true });
-    row(IN.rateStep, 'Discount rate step', pc(s.rateStep), NF.pct, 'e.g. 0.5%');
-    if (tv === 'gordon') row(IN.tvStep, 'Terminal growth step', pc(s.gStep), NF.pct, 'e.g. 0.5%');
-    else row(IN.tvStep, 'Exit multiple step', num(s.multStep), NF.x, 'e.g. 1.0x');
+    // the steps the engine's grid uses (a blank step falls back to the template's example, as in the engine)
+    row(IN.rateStep, 'Discount rate step', r.sens.rateStep, NF.pct, 'e.g. 0.5%');
+    if (tv === 'gordon') row(IN.tvStep, 'Terminal growth step', r.sens.tvStep, NF.pct, 'e.g. 0.5%');
+    else row(IN.tvStep, 'Exit multiple step', r.sens.tvStep, NF.x, 'e.g. 1.0x');
   }
 
   const label = (k) => inRef(k < n ? IN.hist(k) : IN.fcst(k - n));

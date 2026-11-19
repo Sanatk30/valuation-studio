@@ -70,6 +70,9 @@ run('loss-making forecast', checkDcfWorkbook(model({}, (d) => { d.drivers.materi
 run('custom sensitivity steps', checkDcfWorkbook(model({ rateStep: 1, gStep: 0.25 })));
 run('exit multiple steps', checkDcfWorkbook(model({ tv: 'exit', multStep: 2.5 })));
 run('USD Mn', checkDcfWorkbook(model({}, null, { currency: 'USD', unit: 'Mn' })));
+// a blank step (an old save or a pasted JSON) falls back to the template example in the engine — the sheet must use the same step
+run('blank sensitivity steps (Gordon)', checkDcfWorkbook(model({ rateStep: null, gStep: null })));
+run('blank sensitivity step (exit)', checkDcfWorkbook(model({ tv: 'exit', multStep: null })));
 run('negative build-up premium', checkDcfWorkbook(model({ coe: 'buildup' }, (d) => { d.buildup.industry = -1; })));
 
 console.log(`\n${checks - failures}/${checks} checks passed`);
