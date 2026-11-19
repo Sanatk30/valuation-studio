@@ -52,15 +52,26 @@ export default {
     }
     if (!allowed) return new Response('Forbidden', { status: 403 });
 
-    // Live prices change; statements do not. Cache accordingly at Cloudflare's edge.
+    // Live prices change; statements do not. Cache successful answers accordingly at
+    // Cloudflare's edge and in the browser — never an error: a 429 or 5xx kept for
+    // hours would outlive Yahoo's hiccup, and a cached 404 would hide a fixed symbol.
     const ttl = url.pathname.startsWith('/ws/') ? 6 * 3600 : 300;
     let res;
-    for (const host of HOSTS) {
-      res = await fetch(host + url.pathname + url.search, {
-        headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
-        cf: { cacheTtl: ttl, cacheEverything: true },
+    try {
+      for (const host of HOSTS) {
+        if (res) res.body?.cancel();
+        res = await fetch(host + url.pathname + url.search, {
+          headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
+          cf: { cacheEverything: true, cacheTtlByStatus: { '200-299': ttl, '300-599': 0 } },
+        });
+        if (res.status !== 429 && res.status < 500) break; // rate-limited or down → try the other host
+      }
+    } catch {
+      // Yahoo unreachable: answer with CORS so the app can show its own message
+      return new Response(JSON.stringify({ error: 'Yahoo Finance could not be reached' }), {
+        status: 502,
+        headers: { ...cors, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
       });
-      if (res.status !== 429 && res.status < 500) break; // rate-limited or down → try the other host
     }
 
     return new Response(res.body, {
@@ -68,7 +79,7 @@ export default {
       headers: {
         ...cors,
         'Content-Type': res.headers.get('Content-Type') || 'application/json',
-        'Cache-Control': `public, max-age=${ttl}`,
+        'Cache-Control': res.ok ? `public, max-age=${ttl}` : 'no-store',
       },
     });
   },
