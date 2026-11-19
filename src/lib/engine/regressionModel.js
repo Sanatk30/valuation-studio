@@ -40,13 +40,17 @@ export function allVars(a, comps = computeComps(a)) {
   return [...builtInVars(comps.labels), ...custom];
 }
 
-/** Included peers → { id, name, values } with every variable (custom ones typed on the peer object). */
+/**
+ * Included peers → { id, name, values } with every variable (custom ones typed
+ * on the peer object). An empty slot (nothing typed or fetched) is not a peer:
+ * its blank page reads 0, which would enter a size-only model as a (0, 0) point.
+ */
 export function observations(a, comps = computeComps(a)) {
   const vars = allVars(a, comps);
   const peerObj = Object.fromEntries(peerSlots(a.comps).map((p) => [p.id, p]));
-  return comps.peers.filter((r) => r.include === 1).map((r) => ({
+  return comps.peers.filter((r) => r.include === 1 && !r.empty).map((r) => ({
     id: r.id,
-    name: r.name,
+    name: r.name || r.role,          // an unnamed peer reads "Peer k", as on the Comps Summary
     values: Object.fromEntries(vars.map((v) => [v.key, v.custom ? num(peerObj[r.id]?.[v.key]) : v.get(r)])),
   }));
 }
