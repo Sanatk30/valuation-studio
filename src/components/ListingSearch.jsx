@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { searchSymbols, fetchListing, mapListing, requiredCurrencies } from '../lib/yahoo.js';
+import { searchSymbols, fetchListing, mapListing, requiredCurrencies, yahooBusy } from '../lib/yahoo.js';
 import { useLiveRates, rateNumbers, FxRateFields } from './FxRates.jsx';
 import { fmtNum, fmtPct, CURRENCIES, UNITS } from '../lib/format.js';
 import { YF_HINT } from '../lib/yfBase.js';
@@ -53,7 +53,8 @@ export default function ListingSearch({ company, onApply }) {
       if (!r.length) setErr('No listed company found — try the exact ticker (e.g. RELIANCE.NS, AAPL).');
       else setResults(r.slice(0, 8));
     } catch (e) {
-      setErr(`Yahoo search failed (${e.message}). ${YF_HINT[0].toUpperCase() + YF_HINT.slice(1)}.`);
+      // the relay / proxy hint only when it can be the cause — not when Yahoo refused the query itself (e.g. 400)
+      setErr(yahooBusy(e) ? `Yahoo search failed (${e.message}). ${YF_HINT[0].toUpperCase() + YF_HINT.slice(1)}.` : `Yahoo could not search for that (${e.message}). Try a company name or ticker in Latin letters.`);
     } finally {
       setBusy('');
     }

@@ -9,7 +9,7 @@
  */
 import fs from 'node:fs';
 import {
-  parseListing, mapListing, fetchListing, timeseriesWindow, ltmPeriod, balanceSheetDate, templateFromListing, requiredCurrencies, parseSearch, UNIT_FACTOR, ebitdaSuspect,
+  parseListing, mapListing, fetchListing, timeseriesWindow, searchSymbols, yahooBusy, ltmPeriod, balanceSheetDate, templateFromListing, requiredCurrencies, parseSearch, UNIT_FACTOR, ebitdaSuspect,
 } from '../src/lib/yahoo.js';
 import { parseRateResponse, fetchLiveRate, fetchLiveRates, normalizeCurrency, rateShown, validRate } from '../src/lib/fx.js';
 import { convertCompanyRecord, rescaleUnit } from '../src/lib/currency.js';
@@ -80,6 +80,15 @@ console.log('=== live FX ===');
   const w = timeseriesWindow(t1);
   ok(w.until * 1000 > t1 && w.until * 1000 - t1 <= 86400e3 && w.until % 86400 === 0, 'the statement window ends at the end of the current UTC day');
   ok(r0.symbol === 'AAPL' && r0.annual.TotalRevenue?.length > 0, 'fetchListing parses what it fetched');
+}
+
+/* ------------------------------------------------------ fetch errors */
+{
+  const fail = (status) => async () => ({ ok: false, status, json: async () => ({}) });
+  const errOf = async (status) => { try { await searchSymbols('x', { base: 'B', fetchImpl: fail(status) }); } catch (e) { return e; } return null; };
+  const e400 = await errOf(400), e429 = await errOf(429), e503 = await errOf(503);
+  ok(e400?.status === 400 && !yahooBusy(e400), 'a refused query (400) is not blamed on the relay / proxy');
+  ok(yahooBusy(e429) && yahooBusy(e503) && yahooBusy(new TypeError('Failed to fetch')), 'rate limits, server errors and network failures are');
 }
 
 /* ------------------------------------------------------------- search */

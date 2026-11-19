@@ -34,8 +34,14 @@ const DEFAULT_BASE = YF_BASE;
 
 async function getJson(url, fetchImpl = globalThis.fetch) {
   const res = await fetchImpl(url, { headers: { Accept: 'application/json' } });
-  if (!res.ok) throw new Error(`Yahoo returned ${res.status} — try again or check the symbol`);
+  if (!res.ok) throw Object.assign(new Error(`Yahoo returned ${res.status} — try again or check the symbol`), { status: res.status });
   return res.json();
+}
+
+/** Is a failed Yahoo call worth retrying (network / relay down, rate limit, server error) rather than a refused request? */
+export function yahooBusy(e) {
+  const st = e?.status;
+  return !st || st === 429 || st >= 500;
 }
 
 export async function searchSymbols(q, opts = {}) {
