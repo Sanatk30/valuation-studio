@@ -3,6 +3,8 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
+  // GitHub Pages serves the site under /<repo-name>/; the deploy workflow sets BASE_PATH.
+  base: process.env.BASE_PATH || '/',
   // only the app is an entry — not the design-system mockups or the deposit copies in the repo
   optimizeDeps: { entries: ['index.html'] },
   server: {
