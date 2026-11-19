@@ -107,7 +107,9 @@ function LboPage({ a, f, r }) {
         sub={`Entry at ${t(r.entry.multiple, 'x')} ${r.labels.hist[n - 1]} EBITDA (EV ${f.money(r.entry.ev)}), ${m}-year hold, exit at ${t(w.multiple, 'x')} ${hold[m - 1]} EBITDA (EV ${f.money(w.ev)}). ${kind.note}`}
         warnings={[
           blankYears.length ? `Blank operating drivers in ${blankYears.join(', ')} count as 0, as in the template — fill them on the Assumptions step.` : null,
-          shortYears.length ? `Cash goes negative in ${shortYears.join(', ')} — mandatory repayments exceed the cash available; the structure would need a revolver or lower leverage.` : null,
+          shortYears.length ? `Cash goes negative in ${shortYears.join(', ')} — ${r.repay === 'sweep'
+            ? 'free cash flow is negative and larger than the cash on hand (there are no mandatory repayments)'
+            : 'mandatory repayments exceed the cash available (opening cash plus free cash flow)'}; the structure would need a revolver or lower leverage.` : null,
           su.sponsor < 0 ? 'Sponsor equity is negative — the structure is over-levered.' : null,
           r.entry.cashWarn ? 'The existing cash used exceeds the existing cash on the balance sheet.' : null,
           su.check !== 0 ? `Sources − uses = ${t(su.check)} (must be 0).` : null,
