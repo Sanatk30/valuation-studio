@@ -35,7 +35,8 @@ Every push to `main` builds the app and publishes it to
 https://sanatk30.github.io/valuation-studio/ (`.github/workflows/pages.yml`).
 Company search there goes through the Yahoo relay in `relay/yahoo-relay.js`, a
 Cloudflare Worker that forwards only the four Yahoo endpoints the app uses and
-only answers this site. Its URL is `VITE_YF_BASE` in `.env.production`; deploy it
+only answers this site. It runs at https://yahoorelay.parasyadav0003.workers.dev
+(`VITE_YF_BASE` in `.env.production`); redeploy it
 from the Cloudflare dashboard (Workers & Pages → Create → Worker → paste the file
 → Deploy).
 
