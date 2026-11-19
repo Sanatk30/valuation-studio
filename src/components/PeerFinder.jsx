@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { findPeers, WEIGHTS, times } from '../lib/peerFinder.js';
 import { UNIT_FACTOR } from '../lib/yahoo.js';
 import { fmtMoney, fmtPct } from '../lib/format.js';
+import { YF_HINT } from '../lib/yfBase.js';
 
 const SIGNAL_LABEL = { industry: 'Industry', market: 'Market', size: 'Size', margin: 'EBITDA margin', growth: 'Growth' };
 const FROM_LABEL = { inputs: 'your inputs', seed: 'the seed listing' };
@@ -41,7 +42,7 @@ export default function PeerFinder({ company, inputs, defaultSeed = '', exclude 
       setRes(out);
       if (!out.candidates.length) setErr('Every co-watched name is already in the set, or none is a listed company.');
     } catch (e) {
-      setErr(`${e?.message || 'Peer search failed'}${/Yahoo returned|fetch/i.test(e?.message || '') ? ' — the Yahoo proxy needs the dev server (npm run dev).' : ''}`);
+      setErr(`${e?.message || 'Peer search failed'}${/Yahoo returned|fetch/i.test(e?.message || '') ? ` — ${YF_HINT}.` : ''}`);
     } finally {
       setRunning(false); setProgress('');
     }

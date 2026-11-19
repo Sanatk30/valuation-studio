@@ -1,4 +1,5 @@
 import { fieldErrors, anyFilled } from './fields.js';
+import { blankMethodData } from '../store/methodModel.js';
 
 /**
  * Step validity and method progress — computed from the data every time, never
@@ -37,9 +38,12 @@ export function methodProgress(def, mstate, ctx) {
   const firstOpen = states.findIndex((st) => st === 'invalid');
   const reachable = firstOpen === -1 ? def.steps.length : firstOpen;
   const complete = firstOpen === -1;
+  // pre-filled defaults (the DCF / LBO sensitivity steps) don't make a method "started"
+  let blank = null;
+  try { blank = def.id ? blankMethodData(def.id) : null; } catch { blank = null; }
   const started = def.steps.some((s) => {
     const specs = s.fields ? s.fields(data, ctx) : [];
-    return anyFilled(specs, data);
+    return anyFilled(specs, data, blank);
   }) || def.startedWhen?.(data) || false;
   return { states, reachable, complete, started, skippedIds: Object.keys(skipped).filter((k) => skipped[k]) };
 }

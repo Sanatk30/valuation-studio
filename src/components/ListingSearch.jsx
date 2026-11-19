@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { searchSymbols, fetchListing, mapListing, requiredCurrencies } from '../lib/yahoo.js';
 import { useLiveRates, rateNumbers, FxRateFields } from './FxRates.jsx';
 import { fmtNum, fmtPct, CURRENCIES, UNITS } from '../lib/format.js';
+import { YF_HINT } from '../lib/yfBase.js';
 
 /** Where each mapped field lands, in words (for the "stays NA" list). */
 const FIELD_LABEL = {
@@ -52,7 +53,7 @@ export default function ListingSearch({ company, onApply }) {
       if (!r.length) setErr('No listed company found — try the exact ticker (e.g. RELIANCE.NS, AAPL).');
       else setResults(r.slice(0, 8));
     } catch (e) {
-      setErr(`Yahoo search failed (${e.message}). The search needs the dev server (npm run dev), which proxies Yahoo.`);
+      setErr(`Yahoo search failed (${e.message}). ${YF_HINT[0].toUpperCase() + YF_HINT.slice(1)}.`);
     } finally {
       setBusy('');
     }

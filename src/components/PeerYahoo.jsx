@@ -5,6 +5,7 @@ import {
 import { fyValues } from '../lib/engine/companyPage.js';
 import { useLiveRates, rateNumbers, FxRateFields } from './FxRates.jsx';
 import PeerFinder from './PeerFinder.jsx';
+import { YF_HINT } from '../lib/yfBase.js';
 
 /**
  * Yahoo fills for the template pages (comps target and peers, precedent
@@ -155,7 +156,7 @@ export function PeerBatchAdd({ company, existingNames = [], onAddMany, finder = 
       if (raws.some((r) => requiredCurrencies(r, company.currency).length)) setPending(raws);
       else add(raws, {});
     } catch (e) {
-      setErr(`Batch fetch failed (${e?.message || 'error'}) — the Yahoo proxy needs the dev server (npm run dev).`);
+      setErr(`Batch fetch failed (${e?.message || 'error'}) — ${YF_HINT}.`);
     } finally {
       setBusy('');
     }
@@ -227,7 +228,7 @@ export function YahooSearch({ company, onPick, placeholder = 'Name or ticker (RE
       if (!r.length) setErr('No listed companies found — try the exact ticker.');
       else setResults(r.slice(0, 6));
     } catch (e) {
-      setErr(`Yahoo search failed (${e.message}) — the proxy needs the dev server (npm run dev).`);
+      setErr(`Yahoo search failed (${e.message}) — ${YF_HINT}.`);
     } finally {
       setBusy(false);
     }

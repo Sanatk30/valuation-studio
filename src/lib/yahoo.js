@@ -1,6 +1,6 @@
 /**
  * Yahoo Finance fetch (no API key) and the mapping of a listing onto the
- * model. Calls go through the Vite dev-server proxy (`/yf` →
+ * model. Calls go through YF_BASE (lib/yfBase.js: the dev-server proxy `/yf` →
  * query1.finance.yahoo.com, see vite.config.js) because Yahoo doesn't send
  * CORS headers. Endpoints used are the crumbless ones:
  *   /v1/finance/search                      — name → listed symbols
@@ -24,12 +24,13 @@
 import { normalizeCurrency, fxPairSymbol } from './fx.js';
 import { HISTORY_LINES, HISTORY_MAX_YEARS } from './historyModel.js';
 import { blankPage } from './engine/companyPage.js';
+import { YF_BASE } from './yfBase.js';
 
 export const UNIT_FACTOR = { Cr: 1e7, Lakh: 1e5, Mn: 1e6, Bn: 1e9, K: 1e3 };
 
 /* ------------------------------------------------------------ fetch layer */
 
-const DEFAULT_BASE = '/yf';
+const DEFAULT_BASE = YF_BASE;
 
 async function getJson(url, fetchImpl = globalThis.fetch) {
   const res = await fetchImpl(url, { headers: { Accept: 'application/json' } });
@@ -764,7 +765,12 @@ export function templateFromListing(raw, company, rates = {}, { n = 3, before = 
   const page = blankPage();
   const pad = Array(Math.max(0, n - dates.length)).fill(null);
   for (const key of Object.keys(page.lines)) page.lines[key] = { fy: [...pad, ...cols.map((c) => c[key] ?? null)], p: null, c: null };
-  page.labels = { fy: [...pad.map((_, i) => `FY -${n - 1 - i}`), ...dates.map((d) => `FY${String(d).slice(2, 4)}`)], p: null, c: null, ltm: null };
+  // blank earlier columns carry the fiscal years before the first reported one (FY20, FY21 before FY22)
+  const fyLabel = (year) => `FY${String(((year % 100) + 100) % 100).padStart(2, '0')}`;
+  const firstYear = dates.length ? Number(String(dates[0]).slice(0, 4)) : null;
+  // (no year at all → the template's generic labels: … FY -2, FY -1, Latest FY)
+  const padLabel = (i) => (firstYear !== null ? fyLabel(firstYear - (pad.length - i)) : i === n - 1 ? 'Latest FY' : `FY -${n - 1 - i}`);
+  page.labels = { fy: [...pad.map((_, i) => padLabel(i)), ...dates.map((d) => fyLabel(Number(String(d).slice(0, 4))))], p: null, c: null, ltm: null };
 
   if (!dates.length) warnings.push(before ? `Yahoo has no fiscal year ending before ${before} for ${raw.symbol} — it keeps about four years of annual statements.` : `Yahoo returned no annual statements for ${raw.symbol}.`);
   else if (dates.length < n) warnings.push(`Yahoo has ${dates.length} fiscal year${dates.length === 1 ? '' : 's'}${before ? ` before ${before}` : ''}; the earlier column${n - dates.length === 1 ? ' is' : 's are'} left blank.`);

@@ -31,6 +31,7 @@
  */
 import { searchSymbols, fetchRecommendations, parseListing, ltmPeriod, ebitdaSuspect, chartUrl, UNIT_FACTOR } from './yahoo.js';
 import { fetchLiveRates } from './fx.js';
+import { YF_BASE } from './yfBase.js';
 
 export const WEIGHTS = { industry: 30, market: 15, size: 25, margin: 15, growth: 15 };
 const SIZE_SPAN = 1;        // log10 distance at which size scores 0 (10×)
@@ -49,7 +50,7 @@ export const SNAPSHOT_TYPES = [
   'quarterlyOrdinarySharesNumber',
 ];
 
-export function snapshotUrl(symbol, period1, period2, base = '/yf') {
+export function snapshotUrl(symbol, period1, period2, base = YF_BASE) {
   return `${base}/ws/fundamentals-timeseries/v1/finance/timeseries/${encodeURIComponent(symbol)}`
     + `?type=${SNAPSHOT_TYPES.join(',')}&period1=${period1}&period2=${period2}`;
 }
@@ -277,7 +278,7 @@ async function profileOf(symbol, opts) {
 }
 
 async function snapshotOf(symbol, opts) {
-  const base = opts.base ?? '/yf';
+  const base = opts.base ?? YF_BASE;
   const now = Math.floor(Date.now() / 1000);
   const from = now - 4 * 366 * 86400;
   try {

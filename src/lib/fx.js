@@ -1,11 +1,13 @@
 /**
  * Live FX — the only source of exchange rates in the app. There is no static
  * FX table: every conversion runs at a spot rate fetched from Yahoo Finance
- * (`{FROM}{TO}=X` chart symbol, through the dev-server proxy — see
- * vite.config.js) and confirmed (or typed) by the user.
+ * (`{FROM}{TO}=X` chart symbol, through YF_BASE — see
+ * lib/yfBase.js) and confirmed (or typed) by the user.
  *
  * A rate is always "units of `to` per 1 `from`", so value_to = value_from × rate.
  */
+
+import { YF_BASE } from './yfBase.js';
 
 /** The valuation currencies a company can be modelled in. */
 export const SUPPORTED_CURRENCIES = ['INR', 'USD', 'EUR', 'GBP'];
@@ -71,7 +73,7 @@ export function parseRateResponse(json, from, to) {
 export async function fetchLiveRate(from, to, opts = {}) {
   if (!from || !to) throw new Error('Both currencies are needed for an FX rate');
   if (from === to) return { rate: 1, at: new Date().toISOString(), source: 'same', pair: '' };
-  const base = opts.base ?? '/yf';
+  const base = opts.base ?? YF_BASE;
   const fetchImpl = opts.fetchImpl || globalThis.fetch;
   const url = `${base}/v8/finance/chart/${encodeURIComponent(fxPairSymbol(from, to))}?range=1d&interval=1d`;
   const res = await fetchImpl(url, { headers: { Accept: 'application/json' } });

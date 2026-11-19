@@ -64,9 +64,17 @@ export function fieldErrors(specs, data) {
   return out;
 }
 
-/** True when any listed field holds a value (used for "not started" detection). */
-export function anyFilled(specs, data) {
-  return specs.some((s) => s.kind !== 'text' && s.kind !== 'date' && !isBlank(getPath(data, s.path)));
+/**
+ * True when any listed field holds a value (used for "not started" detection).
+ * With `blank` (the method's blank data), a value still equal to its blank
+ * default (e.g. a pre-filled sensitivity step) does not count.
+ */
+export function anyFilled(specs, data, blank = null) {
+  return specs.some((s) => {
+    if (s.kind === 'text' || s.kind === 'date') return false;
+    const v = getPath(data, s.path);
+    return !isBlank(v) && !(blank && v === getPath(blank, s.path));
+  });
 }
 
 /** Suffix shown inside an input for a field kind. */

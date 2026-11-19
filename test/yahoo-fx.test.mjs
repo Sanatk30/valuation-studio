@@ -131,6 +131,13 @@ for (const [sym, company, pairs] of [
   ok(dil ? near(tp.shares, dil.value / uf) : tp.shares === null, `${sym}: diluted shares = latest diluted weighted-average shares`);
   const before = templateFromListing(raw, company, rates, { n: 3, before: fyd[fyd.length - 1] });
   ok(before.fyDates.every((d) => d < fyd[fyd.length - 1]), `${sym}: a deal date keeps only fiscal years ending before it`);
+  // fewer reported years than columns: the blank earlier columns are the years before the first reported one
+  const wide = templateFromListing(raw, company, rates, { n: 10 });
+  const y0 = Number(wide.fyDates[0].slice(0, 4));
+  const expect = Array.from({ length: 10 }, (_, i) => `FY${String((y0 - (10 - wide.fyDates.length) + i) % 100).padStart(2, '0')}`);
+  ok(wide.page.labels.fy.join() === expect.join(), `${sym}: blank earlier columns continue the fiscal years (${wide.page.labels.fy.slice(0, 3).join(', ')}, …)`);
+  const none = templateFromListing(raw, company, rates, { n: 3, before: '1990-01-01' });
+  ok(none.page.labels.fy.join() === 'FY -2,FY -1,Latest FY', `${sym}: no fiscal year at all → the template's generic labels`);
 }
 
 /* ---- a negative reported tax rate is left blank ---- */
