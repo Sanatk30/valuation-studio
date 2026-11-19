@@ -51,16 +51,34 @@ export const rateShown = (r) => {
 };
 
 /**
+ * Yahoo's meta.regularMarketPrice is rounded to `priceHint` decimals (4 for
+ * FX): KRW→USD reads 0.0008 for 0.00075035 (6.6 % off), INR→USD 0.0107 for
+ * 0.010720 (0.2 % off). The same response's latest close carries the
+ * unrounded quote; it is used when it rounds to the quoted price (so it is
+ * the same quote, not an older bar), kept to 7 significant figures (Yahoo
+ * stores some closes as 32-bit floats: 1332.7099609375 for 1332.71).
+ */
+export function unroundedRate(quoted, priceHint, closes) {
+  const last = Array.isArray(closes) ? [...closes].reverse().find((v) => typeof v === 'number' && Number.isFinite(v) && v > 0) : undefined;
+  if (last === undefined) return quoted;
+  const dp = Number.isInteger(priceHint) && priceHint >= 0 ? priceHint : 4;
+  const sameQuote = Math.abs(last - quoted) <= 0.5 * 10 ** -dp * (1 + 1e-9) + 1e-12;
+  return sameQuote ? Number(last.toPrecision(7)) : quoted;
+}
+
+/**
  * Parse a Yahoo chart response for an FX pair. Throws when the response does
  * not carry a positive rate quoted in `to` — a wrong-currency quote is never
  * silently used.
  */
 export function parseRateResponse(json, from, to) {
-  const meta = json?.chart?.result?.[0]?.meta;
+  const res = json?.chart?.result?.[0];
+  const meta = res?.meta;
   const pair = fxPairSymbol(from, to);
   if (!meta) throw new Error(`No FX quote for ${pair}`);
-  const rate = Number(meta.regularMarketPrice);
-  if (!(Number.isFinite(rate) && rate > 0)) throw new Error(`Yahoo returned no usable rate for ${pair}`);
+  const quoted = Number(meta.regularMarketPrice);
+  if (!(Number.isFinite(quoted) && quoted > 0)) throw new Error(`Yahoo returned no usable rate for ${pair}`);
+  const rate = unroundedRate(quoted, meta.priceHint, res?.indicators?.quote?.[0]?.close);
   if (meta.currency && String(meta.currency).toUpperCase() !== String(to).toUpperCase()) {
     throw new Error(`${pair} is quoted in ${meta.currency}, not ${to}`);
   }

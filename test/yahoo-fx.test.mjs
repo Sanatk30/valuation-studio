@@ -49,6 +49,14 @@ console.log('=== live FX ===');
   ok(failed, 'fetchLiveRate throws on a failed fetch (the user must type the rate)');
   const many = await fetchLiveRates(['USD', 'INR'], 'INR', { fetchImpl: fake(500, {}) });
   ok(!('INR' in many) && many.USD.rate === null && many.USD.source === 'failed', 'fetchLiveRates marks failures and skips the target currency');
+  // Yahoo rounds meta.regularMarketPrice to 4 decimals; the latest close of the same quote is unrounded
+  const chart = (rmp, close, hint = 4, ccy = 'USD') => ({ chart: { result: [{ meta: { currency: ccy, regularMarketPrice: rmp, priceHint: hint, regularMarketTime: 1795108694 }, indicators: { quote: [{ close }] } }] } });
+  ok(near(parseRateResponse(chart(0.0008, [0.0007503508240915835]), 'KRW', 'USD').rate, 0.0007503508, 1e-7), 'KRW→USD uses the unrounded quote (0.00075035), not 0.0008 (6.6 % off)');
+  ok(near(parseRateResponse(chart(0.0107, [null, 0.010720412246882915]), 'INR', 'USD').rate, 0.01072041, 1e-7), 'INR→USD 0.0107204, not 0.0107 (the last non-null close)');
+  ok(parseRateResponse(chart(1332.71, [1332.7099609375], 4, 'KRW'), 'USD', 'KRW').rate === 1332.71, 'a 32-bit close (1332.7099609375) reads as the quoted 1332.71');
+  ok(parseRateResponse(chart(0.0107, [0.0101]), 'INR', 'USD').rate === 0.0107, 'a close that is not the same quote (an older bar) is ignored');
+  ok(parseRateResponse(chart(0.0107, undefined), 'INR', 'USD').rate === 0.0107, 'no close → the quoted price');
+
   // a rate box keeps a typed 0 (on the way to 0.012) instead of wiping it; it is still not a usable rate
   ok(rateShown({ rate: 0, source: 'typed' }) === 0 && !validRate({ rate: 0 }), 'a typed 0 stays in the rate box but is not usable');
   ok(rateShown({ rate: 83.2, source: 'live' }) === 83.2 && rateShown({ rate: null, source: 'failed' }) === null && rateShown(undefined) === null, 'the rate box shows the held number, blank when none');
