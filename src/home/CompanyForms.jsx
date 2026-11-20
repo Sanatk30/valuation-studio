@@ -41,6 +41,35 @@ export const FY_OPTIONS = [
   { value: 6, label: 'July – June' },
   { value: 9, label: 'October – September' },
 ];
+/**
+ * After a Yahoo fill of the company being valued: when the listing's fiscal
+ * year ends in another month than the company's setting (Kaynes reports to
+ * March, the company is set to Jan – Dec), offer to switch the company's year
+ * end — and Year 1 with it, to the year after the latest completed one — so the
+ * FY labels name the company's own fiscal years. The figures then need a
+ * fresh fill, since each column is filled by the year its label names.
+ *   fyEnd — the listing's latest fiscal year-end date (YYYY-MM-DD)
+ */
+export function YearEndSwitch({ company, fyEnd }) {
+  const m = Number(String(fyEnd || '').slice(5, 7));
+  if (!company?.id || !(m >= 1 && m <= 12) || m === company.fyEndMonth) return null;
+  const opt = FY_OPTIONS.find((o) => o.value === m);
+  const cur = FY_OPTIONS.find((o) => o.value === company.fyEndMonth);
+  if (!opt) {
+    return <div className="readout warn">This listing's fiscal year ends in {MON[m - 1]}, which is not one of the app's year ends — its FY columns are its own fiscal years ending in {MON[m - 1]}.</div>;
+  }
+  const y1 = impliedYear1(m);
+  return (
+    <div className="readout warn">
+      This listing's fiscal year ends in <b>{MON[m - 1]}</b>, but the company is set to <b>{cur ? cur.label : `a ${MON[company.fyEndMonth - 1]} year end`}</b>, so its FY labels don't match the company's own years.{' '}
+      <button type="button" className="btn sm" onClick={() => updateCompany(company.id, { fyEndMonth: m, startYear: y1 })}>
+        Set fiscal year to {opt.label}
+      </button>
+      {' '}(Year 1 becomes {y1}: latest actual FY{String(y1 - 1).slice(-2)}, the year to {MON[m - 1]} {y1 - 1}). Then fill again from Yahoo so each column takes the right year.
+    </div>
+  );
+}
+
 const UNIT_OPTIONS = Object.entries(UNITS).map(([k, v]) => ({ value: k, label: k === 'K' ? "Thousands ('000)" : { Cr: 'Crore (Cr)', Lakh: 'Lakh', Mn: 'Million (Mn)', Bn: 'Billion (Bn)' }[k] || v }));
 
 /* ------------------------------------------------------------ new company */

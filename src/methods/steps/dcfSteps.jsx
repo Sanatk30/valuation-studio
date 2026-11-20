@@ -142,7 +142,7 @@ function CompanyExtra({ data, setData, company }) {
       <div className="tool-card">
         <div className="tool-h">Fill from Yahoo Finance <span className="fld-opt">optional</span></div>
         <YahooSearch company={company} action="Fill the historicals" onPick={(m) => setCo((cur) => mergeFetch(cur, m, company, { n, alignTo: lab.hist }))} />
-        {c._fetched && <FetchNote f={c._fetched} />}
+        {c._fetched && <FetchNote f={c._fetched} company={company} />}
       </div>
       <div className="tool-card">
         <div className="tool-h">{company.name} — historical financials</div>

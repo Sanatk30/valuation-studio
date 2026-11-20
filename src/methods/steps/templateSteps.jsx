@@ -13,7 +13,7 @@ import { STAT_KEYS, STAT_LABELS, statsSettings } from '../../lib/engine/template
 import { runRegression, allVars, observations, targetValues, unpricedPeers } from '../../lib/engine/regressionModel.js';
 import { toEngineInput } from '../../store/methodModel.js';
 import { fmtX, fmtPct, fmtNum, fmtTpl, fmtDate, CURRENCIES } from '../../lib/format.js';
-import { YearCheck } from '../../home/CompanyForms.jsx';
+import { YearCheck, YearEndSwitch } from '../../home/CompanyForms.jsx';
 import { updateCompany } from '../../store/store.js';
 import { latestYearErrors } from './dcfSteps.jsx';
 
@@ -213,7 +213,7 @@ function CompsTargetExtra({ data, setData, company }) {
         <div className="tool-h">Fill from Yahoo Finance <span className="fld-opt">optional</span></div>
         <YahooSearch company={company} action="Fill the page"
           onPick={(m) => setTarget((cur) => mergeFetch(cur, m, company, { n, alignTo: compsLabels(data, company).fy, basic: true }))} />
-        {t._fetched && <FetchNote f={t._fetched} />}
+        {t._fetched && <FetchNote f={t._fetched} company={company} />}
       </div>
       <div className="tool-card">
         <div className="tool-h">{company.name} — company page</div>
@@ -227,7 +227,7 @@ function CompsTargetExtra({ data, setData, company }) {
   );
 }
 
-export function FetchNote({ f: fx }) {
+export function FetchNote({ f: fx, company = null }) {
   return (
     <div className="fld-h" style={{ marginTop: 6 }}>
       Filled from <b>{fx.symbol}</b> ({fx.financialCurrency}{fx.fyDates?.length ? `, ${fx.fyDates[0]} → ${fx.fyDates[fx.fyDates.length - 1]}` : ''}).
@@ -236,6 +236,7 @@ export function FetchNote({ f: fx }) {
       and the “Other” balance-sheet and cash-flow lines take the difference to Yahoo’s totals. YTD columns are left for you.
       {fx.shareBasis === 'basic' && ' Shares = basic shares outstanding at the latest balance sheet; add options / convertibles for the treasury stock method.'}
       {(fx.warnings || []).map((w) => <div key={w} className="fld-e">{w}</div>)}
+      {company && <YearEndSwitch company={company} fyEnd={fx.lastFyEnd} />}
     </div>
   );
 }
@@ -663,7 +664,7 @@ function PrecCompanyExtra({ data, setData, company }) {
         <div className="tool-h">Fill from Yahoo Finance <span className="fld-opt">optional — listed companies</span></div>
         <YahooSearch company={company} action="Fill the page"
           onPick={(m) => setCo((cur) => mergeFetch(cur, m, company, { n, labels: true }))} />
-        {c._fetched && <FetchNote f={c._fetched} />}
+        {c._fetched && <FetchNote f={c._fetched} company={company} />}
       </div>
       <div className="tool-card">
         <div className="tool-h">Company Being Valued: {company.name}</div>
