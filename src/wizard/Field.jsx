@@ -93,7 +93,7 @@ export function Field({ spec, data, onSet, company, reveal = false }) {
 
 /**
  * Numeric text box. Keeps the raw text while typing ("12.", "-") and commits a
- * number, or null when cleared. Accepts pasted "1,234.5" and "(1,234)".
+ * number, or null when cleared. Accepts pasted "1,234.5", "1.234,5" and "(1,234)".
  */
 export function NumBox({ value, onChange, onBlur, suffix, placeholder, small }) {
   const fmt = (v) => (v === null || v === undefined || Number.isNaN(v) ? '' : String(v));
@@ -123,7 +123,7 @@ export function NumBox({ value, onChange, onBlur, suffix, placeholder, small }) 
   );
 }
 
-/** "" → null; "1,234.5" → 1234.5; "(12)" / "−12" → −12; junk → NaN (see lib/format.js parseInputNumber). */
+/** "" → null; "1,234.5" / "1.234,5" → 1234.5; "12,5" → 12.5; "(12)" / "−12" → −12; junk → NaN (see lib/format.js parseInputNumber). */
 export const parseNum = parseInputNumber;
 
 /** A labelled group of fields in a two-column grid. */

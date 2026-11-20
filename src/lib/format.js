@@ -66,19 +66,87 @@ export function fmtTpl(v, fmt = 'n1', locale = 'en-IN') {
   return x < 0 ? `(${body}${suf})` : `${body}${suf}`;
 }
 
+/* ------------------------------------------------------- number separators */
+
+/** Digits grouped by `sep`: 1,234,567 (threes) or 12,34,567 (Indian lakh / crore). */
+const grouped = (sep) => {
+  const e = sep === '.' ? '\\.' : ',';
+  return new RegExp(`^(\\d{1,3}(${e}\\d{3})*|\\d{1,2}(${e}\\d{2})+${e}\\d{3})$`);
+};
+const GROUPED = { '.': grouped('.'), ',': grouped(',') };
+
 /**
- * What a number box holds once typed: "" → null; "1,234.5" / "1,23,456" →
- * the number; "(12)" and "−12" (the minus sign the app's own figures use, so
- * a value copied off a page pastes back) → −12; anything else → NaN — only
- * plain decimals, never "0x10" or "Infinity".
+ * The one rule for the separators in a typed or pasted number, shared by every
+ * number box and paste (`parseInputNumber` here, `parseNum` in
+ * lib/templatePaste.js). `core` is the number with its sign, brackets, % and
+ * currency already taken off and its spaces removed. Returns plain digits with
+ * one "." decimal point (ready for Number), or null when the separators do not
+ * make a number.
+ *
+ *   both "." and ","   the LAST one is the decimal point, the other groups
+ *                      thousands: 1.234,5 · 1,234.5 · 1.234.567,89
+ *   several of one     thousands, in threes or Indian lakh / crore groups:
+ *                      1.234.567 · 1,234,567 · 12,34,567 (but 1,2,3 → null)
+ *   one ","            thousands when exactly three digits follow and one to
+ *                      three digits (not a lone 0) lead: 1,234 → 1234; else
+ *                      the decimal comma: 12,5 · 0,25 · 0,250 · 1234,567
+ *   one "."            the decimal point: 1.234 → 1.234
+ *
+ * An exponent (1.5e3) is kept as typed.
+ */
+export function unSeparate(core) {
+  const m = /^([\d.,]*)(e[-+]?\d+)?$/i.exec(String(core ?? ''));
+  if (!m) return null;
+  const s = m[1];
+  const dot = s.lastIndexOf('.'), comma = s.lastIndexOf(',');
+  let dec = null, group = null;
+  if (dot >= 0 && comma >= 0) {
+    dec = dot > comma ? '.' : ',';
+    group = dec === '.' ? ',' : '.';
+  } else if (dot >= 0 || comma >= 0) {
+    const sep = dot >= 0 ? '.' : ',';
+    const parts = s.split(sep);
+    if (parts.length > 2) group = sep;
+    else if (sep === ',' && parts[1].length === 3 && /^[1-9]\d{0,2}$/.test(parts[0])) group = ',';
+    else dec = sep;
+  }
+  let int = s, frac = null;
+  if (dec) {
+    const at = s.lastIndexOf(dec);
+    if (s.indexOf(dec) !== at) return null;            // two decimal points
+    int = s.slice(0, at);
+    frac = s.slice(at + 1);
+  }
+  if (group) {
+    if (!GROUPED[group].test(int)) return null;        // separators in the wrong places
+    int = int.split(group).join('');
+  }
+  const plain = frac === null ? int : `${int}.${frac}`;
+  if (!/^(\d+\.?\d*|\.\d+)$/.test(plain)) return null; // no digits, or a stray separator
+  return plain + (m[2] || '');
+}
+
+/** A leading minus: "-", or the typographic minus / en dash the app's figures, PDFs and annual reports print. */
+const MINUS = /^[-−–]/;
+
+/**
+ * What a number box holds once typed: "" → null; "1,234.5" / "1,23,456" /
+ * "1.234,5" / "12,5" → the number (separators per `unSeparate`); "(12)" and
+ * "−12" (the minus sign the app's own figures use, so a value copied off a
+ * page pastes back) → −12; spaces, non-breaking ones too, are ignored;
+ * anything else → NaN — only plain decimals, never "0x10" or "Infinity".
  */
 export function parseInputNumber(s) {
   const t = String(s ?? '').trim();
   if (!t) return null;
-  const neg = /^\(.*\)$/.test(t);
   // a trailing % (a %-formatted Excel cell pasted into a % box) is dropped: the boxes hold percent
-  const clean = t.replace(/[(),\s]/g, '').replace(/%$/, '').replace(/^[\u2212\u2013]/, '-');
-  if (!/^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(clean)) return NaN;
-  const v = Number(clean);
+  let body = t.replace(/\s/g, '').replace(/%$/, '');
+  let neg = false;
+  if (/^\(.*\)$/.test(body)) { neg = true; body = body.slice(1, -1).replace(/%$/, ''); }
+  let sign = '';
+  if (MINUS.test(body)) { sign = '-'; body = body.slice(1); } else if (body[0] === '+') body = body.slice(1);
+  const plain = unSeparate(body);
+  if (plain === null) return NaN;
+  const v = Number(sign + plain);
   return Number.isFinite(v) ? (neg ? -v : v) : NaN;
 }

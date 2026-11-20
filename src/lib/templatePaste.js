@@ -20,13 +20,16 @@
  * Both return a preview; nothing is applied until the user confirms.
  */
 import { IS_LINES, BS_LINES, CF_LINES, setCell } from './engine/companyPage.js';
+import { unSeparate } from './format.js';
 
 /* -------------------------------------------------------------- numbers */
 
 /**
- * Spreadsheet number → { ok, value }. Handles thousands separators, currency
- * symbols, percent signs, a leading minus, accounting negatives "(1,234)" and
- * the usual empty markers.
+ * Spreadsheet number → { ok, value }. Handles thousands separators and the
+ * decimal comma (one rule for both, `unSeparate` in lib/format.js: "1.234,5",
+ * "1,234.5", "12,34,567", "12,5"), spaces, currency symbols, a trailing
+ * percent sign, a leading minus, accounting negatives "(1,234)" and the usual
+ * empty markers.
  */
 export function parseNum(raw) {
   if (raw == null) return { ok: false, value: 0 };
@@ -34,12 +37,14 @@ export function parseNum(raw) {
   if (!s || /^(na|n\/a|n\.a\.|nm|nmf|-|–|—|\.\.\.)$/i.test(s)) return { ok: false, value: 0 };
   let neg = false;
   if (/^\(.*\)$/.test(s)) { neg = true; s = s.slice(1, -1); }
-  const pct = /%\s*$/.test(s);
-  s = s.replace(/[%\s]/g, '').replace(/[$₹€£]/g, '').replace(/,/g, '');
+  s = s.replace(/\s/g, '').replace(/[$₹€£]/g, '');
+  const pct = /%$/.test(s);
+  if (pct) s = s.slice(0, -1);
   // a leading minus: "-", or the typographic minus / en dash PDFs and annual reports print (−1,234 · –1,234)
   if (/^[-−–]/.test(s)) { neg = !neg; s = s.slice(1); }
-  if (!/^\d*\.?\d+(e[+-]?\d+)?$/i.test(s)) return { ok: false, value: 0 };
-  let v = parseFloat(s);
+  const plain = unSeparate(s);
+  if (plain === null) return { ok: false, value: 0 };
+  let v = Number(plain);
   if (!Number.isFinite(v)) return { ok: false, value: 0 };
   if (pct) v /= 100;
   return { ok: true, value: neg ? -v : v };
@@ -47,20 +52,25 @@ export function parseNum(raw) {
 
 /**
  * Split a pasted block into a matrix. Tabs win when any line has one (a title
- * line copied above the table carries none); otherwise commas, where a quoted
- * cell keeps its own commas ("1,234").
+ * line copied above the table carries none) — Excel and Sheets copy cells
+ * tab-separated, so the "." / "," inside "1.234,5" never splits a cell.
+ * Otherwise CSV: semicolons when a line has one outside quotes (the CSV of a
+ * decimal-comma locale, "Revenue;1.234,5;2.345,6"), else commas, where a
+ * quoted cell keeps its own commas ("1,234").
  */
 export function splitBlock(text) {
   const lines = String(text || '').replace(/\r\n?/g, '\n').split('\n').filter((l) => l.trim() !== '');
   if (!lines.length) return [];
   const unquote = (c) => c.trim().replace(/^"(.*)"$/, '$1');
   if (lines.some((l) => l.includes('\t'))) return lines.map((l) => l.split('\t').map(unquote));
+  const semi = lines.some((l) => l.replace(/"[^"]*"/g, '').includes(';'));
+  const sep = semi ? ';' : ',';
   const csv = (l) => {
     const cells = [];
     let cur = '', quoted = false;
     for (const ch of l) {
       if (ch === '"') quoted = !quoted;
-      if (ch === ',' && !quoted) { cells.push(cur); cur = ''; } else cur += ch;
+      if (ch === sep && !quoted) { cells.push(cur); cur = ''; } else cur += ch;
     }
     cells.push(cur);
     return cells.map(unquote);
