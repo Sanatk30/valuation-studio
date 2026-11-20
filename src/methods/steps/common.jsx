@@ -8,7 +8,7 @@ import {
   HISTORY_LINES, HISTORY_GROUPS, HISTORY_MAX_YEARS, blankManualHistory, hasHistory, historyReference, fyLabel, validFyEnd,
 } from '../../lib/historyModel.js';
 import { fmtPct, fmtNum, CURRENCIES } from '../../lib/format.js';
-import { GRID_ROWS, gridErrors, resize } from './fieldSteps.js';
+import { GRID_ROWS, gridErrors, resize, fitKeep } from './fieldSteps.js';
 
 /* ======================================================================
    Company & balance sheet
@@ -314,16 +314,16 @@ function ForecastExtras({ data, setData, company, ctx }) {
           <YearGrid
             heads={Array.from({ length: n }, (_, i) => `Y${i + 1} · ${company.startYear + i}`)}
             rows={GRID_ROWS.map((r) => ({ key: r.key, label: r.label, modes: r.modes, mode: (d.perYear || emptyGrid(n))[r.modeKey], values: resize((d.perYear || emptyGrid(n))[r.key], n) }))}
-            onCell={(key, c, v) => setGrid((g) => ({ ...g, [key]: resize(g[key], n).map((x, i) => (i === c ? v : x)) }))}
+            onCell={(key, c, v) => setGrid((g) => ({ ...g, [key]: fitKeep(g[key], n).map((x, i) => (i === c ? v : x)) }))}
             onMode={(key, mode) => setGrid((g) => ({ ...g, [GRID_ROWS.find((r) => r.key === key).modeKey]: mode }))}
             onPasteBlock={(r0, c0, block) => setGrid((g) => {
               const next = { ...g };
               block.forEach((cells, i) => {
                 const row = GRID_ROWS[r0 + i];
                 if (!row) return;
-                next[row.key] = resize(next[row.key], n).map((x, c) => {
+                next[row.key] = fitKeep(next[row.key], n).map((x, c) => {
                   const v = cells[c - c0];
-                  return c >= c0 && v !== undefined && v !== null && Number.isFinite(v) ? v : x;
+                  return c >= c0 && c < n && v !== undefined && v !== null && Number.isFinite(v) ? v : x;
                 });
               });
               return next;
@@ -360,7 +360,10 @@ function HistoryReference({ ref_: ref, company }) {
   );
 }
 
-/** Keep per-year arrays the length of the horizon when years change. */
+/**
+ * Pad per-year arrays to the horizon when years change; years beyond a lowered
+ * horizon are kept (hidden, unused), so raising it again brings them back.
+ */
 export function onForecastSet(data, path, value) {
   if (path === 'drivers.years') {
     const n = value;
@@ -370,7 +373,7 @@ export function onForecastSet(data, path, value) {
       ...data,
       drivers: {
         ...d, years: value,
-        perYear: d.perYear && ok ? Object.fromEntries(Object.entries(d.perYear).map(([k, v]) => [k, Array.isArray(v) ? resize(v, n) : v])) : d.perYear,
+        perYear: d.perYear && ok ? Object.fromEntries(Object.entries(d.perYear).map(([k, v]) => [k, Array.isArray(v) ? fitKeep(v, n) : v])) : d.perYear,
       },
     };
   }
