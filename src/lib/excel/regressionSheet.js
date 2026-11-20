@@ -186,6 +186,7 @@ export function writeRegressionSheet(ws, a, F, links) {
   rr++;
 
   /* ---- model statistics ---- */
+  // a perfect fit (SSE = 0) or a constant y (SST = 0) divides by zero: those cells read NA, as the engine's NaN
   sectionHeader(ws, rr++, 'MODEL STATISTICS', 4);
   const S = {};
   const sVal = (key, label, formula, fmt, note = '') => {
@@ -200,11 +201,11 @@ export function writeRegressionSheet(ws, a, F, links) {
   sVal('df', 'Degrees of freedom', `B${S.n}-B${S.k}-1`, F.int);
   sVal('sse', 'SSE (residual sum of squares)', `SUMPRODUCT(${residRange},${residRange})`, F.num3);
   sVal('sst', 'SST (total sum of squares)', `SUMPRODUCT(${yRange}-AVERAGE(${yRange}),${yRange}-AVERAGE(${yRange}))`, F.num3);
-  sVal('r2', 'R²', `1-B${S.sse}/B${S.sst}`, F.pct2);
-  sVal('adjr2', 'Adjusted R²', `1-(B${S.sse}/B${S.df})/(B${S.sst}/(B${S.n}-1))`, F.pct2);
+  sVal('r2', 'R²', na(`1-B${S.sse}/B${S.sst}`), F.pct2);
+  sVal('adjr2', 'Adjusted R²', na(`1-(B${S.sse}/B${S.df})/(B${S.sst}/(B${S.n}-1))`), F.pct2);
   sVal('mse', 'MSE (SSE / df)', `B${S.sse}/B${S.df}`, F.num3);
   sVal('se', 'SE of regression', `SQRT(B${S.mse})`, F.num3, regRun.spec.yLog ? 'in ln(y) units' : '');
-  sVal('f', 'F-statistic', `((B${S.sst}-B${S.sse})/B${S.k})/B${S.mse}`, F.num);
+  sVal('f', 'F-statistic', na(`((B${S.sst}-B${S.sse})/B${S.k})/B${S.mse}`), F.num);
   rr++;
 
   /* ---- coefficient table ---- */
@@ -215,9 +216,9 @@ export function writeRegressionSheet(ws, a, F, links) {
   for (let i = 0; i < dim; i++) {
     put(ws, `A${rr}`, i === 0 ? 'Intercept' : terms[i - 1].label, { bold: i === 0 });
     put(ws, `B${rr}`, { formula: betaCell(i) }, { fmt: F.num3, align: 'center', bold: true });
-    put(ws, `C${rr}`, { formula: `SQRT(B${S.mse}*${invCell(i, i)})` }, { fmt: F.num3, align: 'center' });
-    put(ws, `D${rr}`, { formula: `B${rr}/C${rr}` }, { fmt: F.num, align: 'center' });
-    put(ws, `E${rr}`, { formula: `TDIST(ABS(D${rr}),B${S.df},2)` }, { fmt: '0.0000', align: 'center' });
+    put(ws, `C${rr}`, { formula: na(`SQRT(B${S.mse}*${invCell(i, i)})`) }, { fmt: F.num3, align: 'center' });
+    put(ws, `D${rr}`, { formula: na(`B${rr}/C${rr}`) }, { fmt: F.num, align: 'center' });
+    put(ws, `E${rr}`, { formula: na(`TDIST(ABS(D${rr}),B${S.df},2)`) }, { fmt: '0.0000', align: 'center' });
     rr++;
   }
   rr++;

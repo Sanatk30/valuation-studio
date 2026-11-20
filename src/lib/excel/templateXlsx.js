@@ -267,9 +267,14 @@ export function writeCompanySheet(ws, o) {
 
 /* -------------------------------------------------------------- statistics */
 
-/** The worksheet formula of one statistic over a helper range (template: IF(COUNT()=0,"NM",…)). */
+/**
+ * The worksheet formula of one statistic over a helper range (template: IF(COUNT()=0,"NM",…)).
+ * QUARTILE.EXC came after the 2007 file format: a saved file must spell it _xlfn.QUARTILE.EXC
+ * (Excel shows QUARTILE.EXC); without the prefix real Excel reads an unknown name, #NAME?, and
+ * the IFERROR turned every exclusive quartile into NM.
+ */
 export function statFormula(key, range, method) {
-  const q = (k) => (method === 'exc' ? `IFERROR(QUARTILE.EXC(${range},${k}),"NM")` : `QUARTILE(${range},${k})`);
+  const q = (k) => (method === 'exc' ? `IFERROR(_xlfn.QUARTILE.EXC(${range},${k}),"NM")` : `QUARTILE(${range},${k})`);
   const body = { max: `MAX(${range})`, q3: q(3), mean: `AVERAGE(${range})`, median: `MEDIAN(${range})`, q1: q(1), min: `MIN(${range})` }[key];
   return `IF(COUNT(${range})=0,"NM",${body})`;
 }
