@@ -28,6 +28,15 @@ export function migrate(state) {
       const d = rec.methods?.[id]?.data;
       if (d && !d[id]?.settings) rec.methods[id] = blankMethodState(id);
     }
+    // The DCF beta method used to start as 'direct'; it now starts blank (round 4). A saved
+    // 'direct' with no beta typed is that old default, not a choice the user made: it goes
+    // back to blank, so an untouched DCF reads "not started" and the user picks the method.
+    // A typed beta keeps 'direct'.
+    const ms = rec.methods?.dcf;
+    const capm = ms?.data?.dcf?.capm;
+    if (isObj(capm) && capm.betaMode === 'direct' && !Number.isFinite(capm.beta)) {
+      rec.methods.dcf = { ...ms, data: { ...ms.data, dcf: { ...ms.data.dcf, capm: { ...capm, betaMode: null } } } };
+    }
   }
   return state;
 }
