@@ -47,8 +47,25 @@ export function methodProgress(def, mstate, ctx) {
   try { blank = def.id ? blankMethodData(def.id) : null; } catch { blank = null; }
   const started = def.steps.some((s) => {
     try { return anyFilled(s.fields ? s.fields(data, ctx) : [], data, blank); } catch { return true; }
-  }) || (() => { try { return !!def.startedWhen?.(data); } catch { return true; } })();
+  }) || [def, ...def.steps].some((s) => {
+    // a step with no fields of its own (Combined's picker) says when it holds input
+    try { return !!s.startedWhen?.(data); } catch { return true; }
+  });
   return { states, reachable, complete, started, skippedIds: Object.keys(skipped).filter((k) => skipped[k]) };
+}
+
+/**
+ * The view a method page shows: its saved step, never beyond the first unfinished
+ * step (states.length = the output). `resync` is true when the saved step lies
+ * beyond the step shown (an old save that a newer rule makes invalid, a method
+ * Combined uses going incomplete): the page then saves the step it shows, so
+ * making that step valid does not jump ahead on its own — to the output,
+ * mid-typing; Continue moves on.
+ */
+export function wizardView(mstate, prog) {
+  const stored = Number.isInteger(mstate?.step) ? mstate.step : 0;
+  const view = Math.min(Math.max(0, stored), prog.reachable);
+  return { view, resync: view < prog.states.length && stored !== view };
 }
 
 /** `skipped` flags in the shape the output pages expect ({ fcfe: true, … }). */
