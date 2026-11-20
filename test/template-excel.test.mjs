@@ -12,7 +12,7 @@ import { withModel } from './fixtures/model.mjs';
 import { checkCompsWorkbook, checkPrecedentWorkbook } from './helpers/templateChecks.mjs';
 import { blankPeer, computeComps } from '../src/lib/engine/comps.js';
 import { runRegression } from '../src/lib/engine/regressionModel.js';
-import { blankDeal } from '../src/lib/engine/precedent.js';
+import { blankDeal, computePrecedent } from '../src/lib/engine/precedent.js';
 
 let checks = 0, failures = 0;
 const ok = (cond, msg) => { checks++; if (!cond) { failures++; console.error('FAIL:', msg); } };
@@ -85,7 +85,22 @@ run('exclusive, min / median / max', checkPrecedentWorkbook(prec((p) => { p.sett
 run('control premium off, P/B off', checkPrecedentWorkbook(prec((p) => { p.settings.multiples = { premium: false, pb: false }; }), {}));
 run('unlisted company (no price)', checkPrecedentWorkbook(prec((p) => { p.company.price = null; }), {}));
 run('no deals', checkPrecedentWorkbook(prec((p) => { p.dealCount = 0; }), {}));
-run('blank deal rows', checkPrecedentWorkbook(prec((p) => { p.dealCount = 7; p.deals.push(blankDeal({ id: 'x1' })); }), {}));
+{
+  // empty deal slots are Include = 0 and out of every statistic: the template's 10 slots with 5 filled
+  // recalculate to exactly the statistics and implied values of the 5 deals alone
+  const five = computePrecedent(withModel());
+  const res = run('blank deal rows: 10 slots, 5 filled (one empty slot stored at Include = 1)', checkPrecedentWorkbook(prec((p) => {
+    p.dealCount = 10; p.deals.push(blankDeal({ id: 'x1', include: 1 }));
+  }), { expect: five }));
+  const inc = Array.from({ length: 10 }, (_, k) => res.X.get('Inputs', `O${18 + k}`)).join('');
+  ok(inc === '1110100000', `Include column: filled deals keep their flag (deal 4 = 0), empty slots 0 (${inc})`);
+  const S = 'Transaction Summary';
+  const med = res.X.rows(S, 'Median')[0], min = res.X.rows(S, 'Minimum')[0];
+  ok(Math.abs(res.X.get(S, `H${med}`) - five.stats1.equity.median) < 1e-6 && res.X.get(S, `H${min}`) === 11800 && Math.abs(res.X.get(S, `J${med}`) - five.stats1.ev.median) < 1e-6,
+    `equity median ${res.X.get(S, `H${med}`)}, minimum ${res.X.get(S, `H${min}`)}, EV median ${res.X.get(S, `J${med}`)} = the 5 deals alone`);
+}
+run('blank deal rows: 7 slots, exclusive percentiles', checkPrecedentWorkbook(prec((p) => { p.dealCount = 7; p.settings.stats = { method: 'exc' }; }), { expect: computePrecedent(prec((p) => { p.settings.stats = { method: 'exc' }; })) }));
+run('every deal excluded but the empty slots', checkPrecedentWorkbook(prec((p) => { p.dealCount = 8; p.deals.forEach((d) => { d.include = 0; }); }), {}));
 run('stake and consideration blank', checkPrecedentWorkbook(prec((p) => { p.deals[1].stakePct = null; p.deals[1].consideration = null; }), {}));
 run('lease off', checkPrecedentWorkbook(prec((p) => { p.settings.lease = 0; }), {}));
 
