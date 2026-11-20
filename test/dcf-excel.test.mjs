@@ -40,11 +40,11 @@ console.log('\n=== structure & look ===');
   const wb = res.wb;
   const inp = wb.getWorksheet('Inputs');
   ok(inp.getCell('B9').fill?.fgColor?.argb === 'FFFFF2CC' && inp.getCell('B9').font?.color?.argb === 'FF0000FF', 'inputs: blue on cream');
-  ok(inp.getCell('A23').value === 'Terminal (perpetual) growth rate' && inp.getCell('B23').numFmt === '0.0%;(0.0%);-', 'Inputs row 23 = terminal growth, as the template');
+  ok(inp.getCell('A26').value === 'Terminal (perpetual) growth rate' && inp.getCell('B26').numFmt === '0.0%;(0.0%);-', 'Inputs row 26 = terminal growth, as the revised template');
   const v = wb.getWorksheet('FCFF - Gordon Growth');
-  ok(v.getCell('B32').value?.formula === 'IF(AND(ISNUMBER(B30),B31>0),B30/B31,"NM")', 'value per share at B32 with the template formula');
-  ok(v.getCell('E43').fill?.fgColor?.argb === 'FFEAF1DD' && v.getCell('E43').font?.bold, 'sensitivity centre cell shaded');
-  ok(v.views?.[0]?.state === 'frozen' && v.views[0].ySplit === 6, 'valuation sheet frozen at B7');
+  ok(v.getCell('B40').value?.formula === 'IF(AND(ISNUMBER(B38),B39>0),B38/B39,"NM")', 'value per share at B40 with the revised template formula');
+  ok(v.getCell('E53').fill?.fgColor?.argb === 'FFEAF1DD' && v.getCell('E53').font?.bold, 'sensitivity centre cell shaded');
+  ok(v.views?.[0]?.state === 'frozen' && v.views[0].ySplit === 7, 'valuation sheet frozen at B8, as the revised template');
   const f = wb.getWorksheet('Forecast');
   ok(f.getCell('E7').value?.formula === 'D7*(1+Assumptions!E7)' && f.getCell('E18').value?.formula === 'E38*E41', 'forecast formulas as the template');
   ok(f.getCell('E19').fill?.fgColor?.argb === 'FFE7E6E6' && f.getCell('B44').fill?.fgColor?.argb === 'FFE7E6E6', 'not-applicable cells greyed');
@@ -61,6 +61,18 @@ for (const [h, f] of [[1, 1], [1, 10], [10, 1], [10, 10], [5, 3], [2, 7]]) {
 console.log('\n=== choices and edge cases ===');
 run('Hamada beta + peer list', checkDcfWorkbook(model({}, (d) => { d.capm.betaMode = 'hamada'; d.capm.peers.push({ id: 'x', name: 'Blank peer', beta: null, de: 10, taxRate: 25 }); })));
 run('lease toggle off', checkDcfWorkbook(model({ lease: 0 })));
+// the revised templates: a stub from the valuation date, the mid-year and normalise switches, the bridge overrides
+for (const cf of ['fcff', 'fcfe', 'ddm']) for (const tv of ['gordon', 'exit']) {
+  run(`${cf} ${tv}: stub (valued 20-Nov-2026, FY end 31-Mar-2026)`, checkDcfWorkbook(model({ cf, tv, valDate: '2026-11-20', fyEnd: '2026-03-31' })));
+  run(`${cf} ${tv}: end-of-year, not normalised`, checkDcfWorkbook(model({ cf, tv, midYear: 0, normalise: 0 })));
+  run(`${cf} ${tv}: mid-year forced on, stub`, checkDcfWorkbook(model({ cf, tv, midYear: 1, valDate: '2026-06-30', fyEnd: '2026-03-31' })));
+}
+run('valued after a 29-Feb year end', checkDcfWorkbook(model({ valDate: '2024-09-15', fyEnd: '2024-02-29' })));
+run('valued before the year end (stub capped at 1)', checkDcfWorkbook(model({ valDate: '2025-12-31', fyEnd: '2026-03-31' })));
+run('valued after Year 1 (stub 0)', checkDcfWorkbook(model({ valDate: '2027-06-30', fyEnd: '2026-03-31' })));
+run('bridge overrides', checkDcfWorkbook(model({}, (d) => { d.wacc.nonOpOverride = 750; d.wacc.netDebtOverride = -120; })));
+run('DDM with zero book equity (ROE 0 → sustainable payout 0)', checkDcfWorkbook(model({ cf: 'ddm' }, (d) => { d.company.page.lines.shareCap = { fy: [null, null, null] }; d.company.page.lines.otherEquity = { fy: [null, null, null] }; })));
+run('more than eight beta peers', checkDcfWorkbook(model({}, (d) => { for (let i = 0; i < 7; i++) d.capm.peers.push({ id: `p${i}`, name: `Peer ${i}`, beta: 1 + i / 10, de: 20, taxRate: 25 }); })));
 run('rate ≤ g → NM', checkDcfWorkbook(model({ growth: 25 })));
 run('rate ≤ g, FCFE', checkDcfWorkbook(model({ cf: 'fcfe', growth: 25 })));
 run('no diluted shares → NM', checkDcfWorkbook(model({}, (d) => { d.company.shares = null; })));

@@ -77,10 +77,16 @@ export const DRIVERS = [
   { key: 'oca', row: 20, label: 'Other current assets (% of revenue)', fmt: 'pct', example: '3.2%' },
   { key: 'ocl', row: 21, label: 'Other current liabilities (% of revenue)', fmt: 'pct', example: '7.7%' },
   { section: 'FINANCING & DIVIDENDS', row: 23 },
-  { key: 'netBorrow', row: 24, label: 'Net borrowing / (repayment)', fmt: 'money', example: '(100.0)', note: 'Negative = repayment; include lease principal repaid' },
+  { key: 'netBorrow', row: 24, label: 'Net borrowing / (repayment)', fmt: 'money', example: '(100.0)', note: 'Negative = repayment. Borrowings only – exclude lease principal (leases have their own rows below).' },
   { key: 'intRate', row: 25, label: 'Interest rate on opening debt', fmt: 'pct', example: '8.5%', note: 'Historical = finance costs / prior-year closing borrowings' },
   { key: 'payout', row: 26, label: 'Dividend payout (% of PAT)', fmt: 'pct', example: '12.0%', note: 'Drives DDM' },
+  // the FCFF / FCFE templates only (the DDM has no lease rows)
+  { section: 'LEASES (Ind AS 116)', row: 28, cfs: ['fcff', 'fcfe'] },
+  { key: 'leasePay', row: 29, label: 'Lease cash payments (% of revenue)', fmt: 'pct', example: '0.6%', note: 'Principal + interest, from the cash flow "Lease Payments" line', cfs: ['fcff', 'fcfe'] },
+  { key: 'leaseAdd', row: 30, label: 'New leases / ROU additions (% of revenue)', fmt: 'pct', example: '0.8%', note: '≈ change in lease liabilities + lease payments (overstates slightly by lease interest). Used by FCFF when leases = debt.', cfs: ['fcff', 'fcfe'] },
 ];
+/** The driver rows a cash flow's template carries (the DDM has no lease rows). */
+export const dcfDriverDefs = (cf) => DRIVERS.filter((d) => !d.cfs || d.cfs.includes(cf || 'fcff'));
 export const DRIVER_KEYS = DRIVERS.filter((d) => d.key).map((d) => d.key);
 
 /* ------------------------------------------------------------ blanks */
@@ -97,8 +103,11 @@ export const blankDcfSettings = () => ({
   histYears: null,                        // 1–10, template 3
   fcstYears: null,                        // 1–10, template 5
   labels: null,                           // { hist: [], fcst: [] }
-  valDate: '',
-  lease: null,                            // include lease liabilities in net debt (1 / 0; template 1)
+  valDate: '',                            // the date the value is struck (blank = value at the fiscal year end)
+  fyEnd: '',                              // latest fiscal year end (balance sheet date of the latest actual year)
+  lease: null,                            // leases are debt (1 / 0; template 1)
+  midYear: null,                          // mid-year discounting (1 / 0; blank = the template's default: 1 FCFF / FCFE, 0 DDM)
+  normalise: null,                        // normalise the terminal year (1 / 0; blank = the template's default 1)
   growth: null,                           // terminal growth, %
   exitMultiple: null,                     // x
   rateStep: DEFAULT_STEPS.rateStep,       // sensitivity steps: discount rate (% pts),
@@ -112,12 +121,39 @@ export const blankDcfT = () => ({
   drivers: Object.fromEntries(DRIVER_KEYS.map((k) => [k, []])),   // per forecast year, first year first
   capm: { rf: null, beta: null, erp: null, betaMode: null, peerBeta: null, targetDe: null, taxRate: null, peers: [] },
   buildup: { rf: null, erp: null, size: null, industry: null, specific: null, country: null },
-  wacc: { kd: null, taxRate: null, targetWd: null },
+  wacc: { kd: null, taxRate: null, targetWd: null, nonOpOverride: null, netDebtOverride: null },
 });
 
 /* ------------------------------------------------------------ helpers */
 
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
+/** 'YYYY-MM-DD' → days since the epoch (UTC), or null. */
+const dayOf = (iso) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
+  if (!m) return null;
+  const t = Date.UTC(+m[1], +m[2] - 1, +m[3]);
+  return Number.isNaN(t) ? null : t / 86400000;
+};
+/** Excel's EDATE(date, 12): the same day a year later, clamped to the month end (29 Feb → 28 Feb). */
+const plusYear = (iso) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
+  if (!m) return null;
+  const y = +m[1] + 1, mo = +m[2] - 1;
+  const last = new Date(Date.UTC(y, mo + 1, 0)).getUTCDate();
+  return Date.UTC(y, mo, Math.min(+m[3], last)) / 86400000;
+};
+/**
+ * The template's stub: the share of forecast Year 1 still to come after the
+ * valuation date, MAX(0, MIN(1, (EDATE(fyEnd, 12) − valDate) ÷ (EDATE(fyEnd, 12) − fyEnd))).
+ * 1 when either date is blank (valuing at the fiscal year end).
+ */
+export function stubOf(valDate, fyEnd) {
+  const v = dayOf(valDate), f = dayOf(fyEnd), e = plusYear(fyEnd);
+  if (v === null || f === null || e === null || e === f) return 1;
+  return Math.max(0, Math.min(1, (e - v) / (e - f)));
+}
+/** The template default of the mid-year switch: on for FCFF / FCFE, off for the DDM. */
+export const midYearDefault = (cf) => (cf === 'ddm' ? 0 : 1);
 const z = (v) => (isNum(v) ? v : 0);
 const pc = (v) => z(v) / 100;
 export const clampN = (n, def) => Math.min(MAX_YEARS, Math.max(MIN_YEARS, Number.isInteger(n) ? n : def));
@@ -232,6 +268,13 @@ export function computeDcfT(a) {
     return isNum(x) ? x : '';
   });
   ref.payout = r1((i) => q(-z(h('divPaid', i)), h('patOwners', i)));
+  const leaseLiab = (i) => z(h('leaseNc', i)) + z(h('leaseCur', i));
+  ref.leasePay = r1((i) => q(-z(h('leasePay', i)), h('rev', i)));
+  ref.leaseAdd = Array.from({ length: n }, (_, i) => {
+    if (i === 0) return 'n.a.';
+    const x = q(leaseLiab(i) - leaseLiab(i - 1) - z(h('leasePay', i)), h('rev', i));
+    return isNum(x) ? x : '';
+  });
 
   /* ---- drivers (fractions / days / money) ---- */
   const D = {};
@@ -284,6 +327,18 @@ export function computeDcfT(a) {
   F.nwc = F.inv.map((x, i) => x + F.rec[i] + F.oca[i] - F.pay[i] - F.ocl[i]);
   F.dNwc = F.nwc.map((x, i) => (i === 0 ? 'n.a.' : x - F.nwc[i - 1]));
   F.capex = col((i) => -z(h('capex', i)), (j, i) => F.rev[i] * D.capex[j]);
+  /* leases (FCFF / FCFE): payments and ROU additions as % of revenue; the cost FCFF deducts follows the toggle */
+  F.leasePay = col((i) => -z(h('leasePay', i)), (j, i) => F.rev[i] * D.leasePay[j]);
+  F.leaseAdd = col(() => null, (j, i) => F.rev[i] * D.leaseAdd[j]);
+  F.leaseCost = col(() => null, (j, i) => (toggle === 1 ? F.leaseAdd[i] : F.leasePay[i]));
+  /* book equity roll-forward (the DDM's sustainable-growth check): opening + PAT − dividends, no buybacks or issues */
+  F.eqClose = new Array(T); F.eqOpen = new Array(T); F.roe = new Array(T);
+  for (let i = 0; i < T; i++) {
+    if (i < n) { F.eqClose[i] = z(h('eqOwners', i)); F.eqOpen[i] = null; F.roe[i] = null; continue; }
+    F.eqOpen[i] = F.eqClose[i - 1];
+    F.roe[i] = F.eqOpen[i] === 0 ? 0 : F.pat[i] / F.eqOpen[i];        // IFERROR(PAT / opening, 0)
+    F.eqClose[i] = F.eqOpen[i] + F.pat[i] - F.dividends[i];
+  }
 
   /* ---- cash flows (forecast years) ---- */
   const fi = (j) => n + j;
@@ -296,19 +351,23 @@ export function computeDcfT(a) {
     flows.da = years.map((j) => F.da[fi(j)]);
     flows.capex = years.map((j) => F.capex[fi(j)]);
     flows.dNwc = years.map((j) => F.dNwc[fi(j)]);
-    flows.cash = years.map((j) => flows.nopat[j] + flows.da[j] - flows.capex[j] - flows.dNwc[j]);
+    flows.lease = years.map((j) => F.leaseCost[fi(j)]);
+    flows.cash = years.map((j) => flows.nopat[j] + flows.da[j] - flows.capex[j] - flows.dNwc[j] - flows.lease[j]);
   } else if (cf === 'fcfe') {
     flows.pat = years.map((j) => F.pat[fi(j)]);
     flows.da = years.map((j) => F.da[fi(j)]);
     flows.capex = years.map((j) => F.capex[fi(j)]);
     flows.dNwc = years.map((j) => F.dNwc[fi(j)]);
     flows.netBorrow = years.map((j) => F.netBorrow[fi(j)]);
-    flows.cash = years.map((j) => flows.pat[j] + flows.da[j] - flows.capex[j] - flows.dNwc[j] + flows.netBorrow[j]);
+    flows.lease = years.map((j) => F.leasePay[fi(j)]);
+    flows.cash = years.map((j) => flows.pat[j] + flows.da[j] - flows.capex[j] - flows.dNwc[j] + flows.netBorrow[j] - flows.lease[j]);
   } else {
     flows.pat = years.map((j) => F.pat[fi(j)]);
     flows.payout = years.map((j) => D.payout[j]);
     flows.cash = years.map((j) => F.dividends[fi(j)]);
     flows.dps = years.map((j) => F.dps[fi(j)]);
+    flows.roe = years.map((j) => F.roe[fi(j)]);
+    flows.eqClose = years.map((j) => F.eqClose[fi(j)]);
   }
 
   /* ---- cost of equity ---- */
@@ -326,11 +385,17 @@ export function computeDcfT(a) {
   const borrowings = z(h('ltBorrow', L)) + z(h('stBorrow', L));
   const leases = (z(h('leaseNc', L)) + z(h('leaseCur', L))) * toggle;
   const cashLike = z(h('cash', L)) + z(h('otherBank', L)) + z(h('curInvest', L));
+  const w0 = d.wacc || {};
   const bridge = { borrowings, leases, cash: cashLike, netDebt: borrowings + leases - cashLike, nci: z(h('nci', L)) };
+  // the overrides (WACC sheet): non-operating investments at fair value, net debt at the valuation date
+  bridge.nonOpBook = z(h('ncInvest', L));
+  bridge.nonOpOverride = isNum(w0.nonOpOverride) ? w0.nonOpOverride : null;
+  bridge.nonOp = bridge.nonOpOverride ?? bridge.nonOpBook;
+  bridge.netDebtOverride = isNum(w0.netDebtOverride) ? w0.netDebtOverride : null;
+  bridge.netDebtUsed = bridge.netDebtOverride ?? bridge.netDebt;
   let wacc = null;
   if (cf === 'fcff') {
-    const w = d.wacc || {};
-    const kd = pc(w.kd), t = pc(w.taxRate), wd = pc(w.targetWd);
+    const kd = pc(w0.kd), t = pc(w0.taxRate), wd = pc(w0.targetWd);
     const mve = z(price) * z(shares);
     const debtRef = borrowings + leases;
     wacc = {
@@ -342,30 +407,62 @@ export function computeDcfT(a) {
   }
   const rate = cf === 'fcff' ? wacc.wacc : coe.ke;
 
+  /* ---- timing: stub from the valuation date, mid-year switch ---- */
+  const mid = s.midYear === 0 || s.midYear === 1 ? s.midYear : midYearDefault(cf);
+  const normalise = s.normalise === 0 ? 0 : 1;
+  const stub = stubOf(s.valDate, s.fyEnd);
+  const share = years.map((j) => (j === 0 ? stub : 1));
+  const period = years.map((j) => (j === 0 ? (mid ? stub / 2 : stub) : stub + j - (mid ? 0.5 : 0)));
+  const endPeriod = stub + m - 1;                                 // the end of the final forecast year
+
   /* ---- valuation ---- */
-  const df = years.map((j) => 1 / (1 + rate) ** (j + 1));
-  const pv = years.map((j) => flows.cash[j] * df[j]);
+  const counted = years.map((j) => flows.cash[j] * share[j]);
+  const df = years.map((j) => 1 / (1 + rate) ** period[j]);
+  const pv = years.map((j) => counted[j] * df[j]);
   const sumPv = pv.reduce((x, y) => x + y, 0);
   const lastCash = flows.cash[m - 1];
   const g = pc(s.growth);
   const mult = z(s.exitMultiple);
-  const lastEbitda = F.ebitda[T - 1], lastPat = F.pat[T - 1];
-  const v = { rate, df, pv, sumPv, lastCash };
+  const N = T - 1;
+  const lastEbitda = F.ebitda[N], lastPat = F.pat[N];
+  const v = { rate, df, pv, sumPv, lastCash, stub, mid, normalise, share, period, counted, endPeriod };
+  // the final year's cash flow before the items the normalised terminal year rebuilds, and what grows at g
+  if (cf === 'fcff') {
+    v.baseCash = F.ebit[N] - Math.max(0, F.ebit[N]) * D.tax[m - 1] + F.da[N] - F.capex[N] - F.leaseCost[N];   // NOPAT + D&A − capex − lease cost
+    v.growBase = F.nwc[N];                                                                                  // final-year NWC
+  } else if (cf === 'fcfe') {
+    v.baseCash = F.pat[N] + F.da[N] - F.capex[N] - F.leasePay[N];                                           // PAT + D&A − capex − lease payments
+    v.growBase = F.nwc[N] - F.closeDebt[N];                                                                 // NWC less closing debt
+  } else {
+    v.finalPat = F.pat[N];
+    v.finalRoe = F.roe[N];
+    v.payoutSust = v.finalRoe === 0 ? 0 : Math.max(0, 1 - g / v.finalRoe);                                 // IFERROR(MAX(0, 1 − g ÷ ROE), 0)
+    v.sustGrowth = F.roe[N] * (1 - D.payout[m - 1]);                                                        // final-year ROE × retention
+  }
+  /** Year N+1 cash flow at growth c (the normalised build when the toggle is on). */
+  const nextCash = (c) => {
+    if (!normalise) return lastCash * (1 + c);
+    if (cf === 'ddm') return v.finalPat * (1 + c) * (v.finalRoe === 0 ? NaN : Math.max(0, 1 - c / v.finalRoe));
+    return v.baseCash * (1 + c) - v.growBase * c;
+  };
   if (tv === 'gordon') {
     v.g = g;
-    v.nextCash = lastCash * (1 + g);
+    v.nextCash = cf === 'ddm' && normalise ? v.finalPat * (1 + g) * v.payoutSust : nextCash(g);
     v.tv = rate <= g ? 'NM' : v.nextCash / (rate - g);
+    v.tvPeriod = period[m - 1];                                  // Gordon TV uses the final year's discount period
   } else {
     v.metric = cf === 'fcff' ? lastEbitda : lastPat;
     v.multiple = mult;
     v.tv = v.metric * mult;
+    v.tvPeriod = endPeriod;                                      // exit value is realised at the end of the final year
   }
-  v.pvTv = isNum(v.tv) ? v.tv * df[m - 1] : 'NM';
+  v.pvTv = isNum(v.tv) ? v.tv / (1 + rate) ** v.tvPeriod : 'NM';
   if (cf === 'fcff') {
     v.ev = isNum(v.pvTv) ? sumPv + v.pvTv : 'NM';
-    v.netDebt = bridge.netDebt;
+    v.netDebt = bridge.netDebtUsed;
     v.nci = bridge.nci;
-    v.equity = isNum(v.ev) ? v.ev - v.netDebt - v.nci : 'NM';
+    v.nonOp = bridge.nonOp;
+    v.equity = isNum(v.ev) ? v.ev - v.netDebt - v.nci + v.nonOp : 'NM';
   } else {
     v.equity = isNum(v.pvTv) ? sumPv + v.pvTv : 'NM';
   }
@@ -374,11 +471,20 @@ export function computeDcfT(a) {
   v.price = price ?? null;
   v.upside = isNum(v.perShare) && z(price) > 0 ? v.perShare / price - 1 : 'NM';
   v.tvShare = isNum(v.pvTv) && sumPv + v.pvTv !== 0 ? v.pvTv / (sumPv + v.pvTv) : 'NM';
+  const ok = (x) => (isNum(x) ? x : 'NM');
   if (tv === 'gordon') {
+    // TV restated to the end of the final year ÷ final-year EBITDA (FCFF) or PAT (FCFE, DDM)
     const base = cf === 'fcff' ? lastEbitda : lastPat;
-    v.implied = isNum(v.tv) && base !== 0 ? v.tv / base : 'NM';          // implied exit EV/EBITDA or P/E
+    v.implied = isNum(v.tv) && base !== 0 ? v.tv * (1 + rate) ** (endPeriod - v.tvPeriod) / base : 'NM';
+    if (cf === 'fcff') {
+      const nopatNext = (F.ebit[N] - Math.max(0, F.ebit[N]) * D.tax[m - 1]) * (1 + g);
+      v.reinvestRate = nopatNext !== 0 ? 1 - v.nextCash / nopatNext : 'NM';
+      v.ronic = isNum(v.reinvestRate) ? (v.reinvestRate > 0 ? g / v.reinvestRate : 'NM') : 'NM';
+    }
   } else {
-    v.implied = v.tv + lastCash !== 0 ? (v.tv * rate - lastCash) / (v.tv + lastCash) : 'NM';   // implied perpetual growth
+    const tvm = v.tv / (1 + rate) ** (0.5 * mid);
+    if (cf !== 'ddm' && normalise) v.implied = ok((tvm * rate - v.baseCash) / (tvm + v.baseCash - v.growBase));
+    else v.implied = ok((tvm * rate - lastCash) / (tvm + lastCash));
   }
 
   /* ---- sensitivity: value per share, rate (rows) × g or multiple (columns) ---- */
@@ -387,13 +493,13 @@ export function computeDcfT(a) {
   const ks = [-2, -1, 0, 1, 2];
   const rows = ks.map((k) => rate + k * rateStep);
   const cols = ks.map((k) => (tv === 'gordon' ? g : mult) + k * tvStep);
-  const less = cf === 'fcff' ? bridge.netDebt + bridge.nci : 0;
+  const less = cf === 'fcff' ? bridge.netDebtUsed + bridge.nci - bridge.nonOp : 0;
   const grid = rows.map((r) => cols.map((c) => {
     if (z(shares) <= 0) return 'NM';
     if (tv === 'gordon' && r <= c) return 'NM';
-    const sp = years.reduce((acc, j) => acc + flows.cash[j] / (1 + r) ** (j + 1), 0);
-    const tvv = tv === 'gordon' ? (lastCash * (1 + c)) / (r - c) : (cf === 'fcff' ? lastEbitda : lastPat) * c;
-    const out = (sp + tvv / (1 + r) ** m - less) / shares;
+    const sp = years.reduce((acc, j) => acc + counted[j] / (1 + r) ** period[j], 0);
+    const tvv = tv === 'gordon' ? nextCash(c) / (r - c) : (cf === 'fcff' ? lastEbitda : lastPat) * c;
+    const out = (sp + tvv / (1 + r) ** v.tvPeriod - less) / shares;
     return isNum(out) ? out : 'NM';
   }));
 

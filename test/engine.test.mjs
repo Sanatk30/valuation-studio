@@ -1,6 +1,6 @@
 import { SAMPLE_MODEL as A, withModel } from './fixtures/model.mjs';
 import { projectOperations, buildPerYearGrid } from '../src/lib/engine/drivers.js';
-import { computeDcfT, betaPeers, unlever } from '../src/lib/engine/dcfTemplate.js';
+import { computeDcfT, betaPeers, unlever, stubOf } from '../src/lib/engine/dcfTemplate.js';
 import { computeThreeStatement } from '../src/lib/engine/threeStatement.js';
 import { computeLboT } from '../src/lib/engine/lboTemplate.js';
 import { sampleLboData } from './fixtures/lboSample.mjs';
@@ -74,27 +74,67 @@ ok(close(ops.deltaNwc[0], ops.nwcBalance[0] - ops.nwc0), 'drivers: deltaNWC cons
   ok(close(r.F.materials[3], r.F.rev[3] * 0.58) && close(r.F.inv[3], r.F.materials[3] * 90 / 365), 'dcf: costs % of revenue, inventory days on cost of materials');
   ok(close(r.F.openDebt[3], 300 + 200) && close(r.F.finance[3], 500 * 0.085) && close(r.F.closeDebt[3], 400), 'dcf: interest = opening debt × rate; closing = opening + net borrowing');
   ok(close(r.F.tax[3], Math.max(0, r.F.pbt[3]) * 0.252) && r.F.exceptional[3] === null, 'dcf: tax = max(0, PBT) × rate; exceptional items not forecast');
-  ok(r.flows.cash.every((c, j) => close(c, r.flows.nopat[j] + r.flows.da[j] - r.flows.capex[j] - r.flows.dNwc[j])), 'dcf: FCFF = NOPAT + D&A − capex − ΔNWC (every year)');
+  ok(r.flows.cash.every((c, j) => close(c, r.flows.nopat[j] + r.flows.da[j] - r.flows.capex[j] - r.flows.dNwc[j] - r.flows.lease[j])), 'dcf: FCFF = NOPAT + D&A − capex − ΔNWC − lease cost (every year)');
   ok(r.flows.taxEbit.every((x, j) => close(x, Math.max(0, r.flows.ebit[j]) * 0.252)), 'dcf: taxes on EBIT at the effective rate, never negative');
   ok(close(r.coe.ke, 0.065 + 1.05 * 0.07), 'dcf: CAPM Ke = rf + β × ERP');
   ok(close(r.wacc.wacc, 0.85 * r.coe.ke + 0.15 * 0.085 * (1 - 0.252)), 'dcf: WACC = E/V × Ke + D/V × Kd × (1 − t)');
   ok(close(r.bridge.netDebt, 300 + 200 + (105 + 30) - (310 + 80 + 260)) && close(r.bridge.nci, 86), 'dcf: net debt bridge on the latest balance sheet (leases per toggle)');
-  ok(close(v.tv, r.flows.cash[4] * 1.05 / (v.rate - 0.05)) && close(v.pvTv, v.tv / (1 + v.rate) ** 5), 'dcf: Gordon TV and its PV (end-of-year, 5 years)');
-  ok(close(v.equity, v.sumPv + v.pvTv - v.netDebt - v.nci) && close(v.perShare, v.equity / 20), 'dcf: equity = EV − net debt − NCI; value per share on diluted shares');
+  // revised template: no dates → stub 1; mid-year on (FCFF default); terminal year normalised (default)
+  ok(v.stub === 1 && v.mid === 1 && v.normalise === 1, 'dcf: template defaults — stub 1 without dates, mid-year on for FCFF, normalised terminal year');
+  ok(v.period.join() === '0.5,1.5,2.5,3.5,4.5' && v.share.join() === '1,1,1,1,1', 'dcf: mid-year discount periods 0.5 … 4.5');
+  const N = 7;
+  const base = r.F.ebit[N] - Math.max(0, r.F.ebit[N]) * 0.252 + r.F.da[N] - r.F.capex[N] - r.F.leaseCost[N];
+  ok(close(v.nextCash, base * 1.05 - r.F.nwc[N] * 0.05), 'dcf: normalised Year N+1 FCFF = (NOPAT + D&A − capex − lease cost) × (1+g) − g × NWC');
+  ok(close(v.tv, v.nextCash / (v.rate - 0.05)) && close(v.pvTv, v.tv / (1 + v.rate) ** 4.5), 'dcf: Gordon TV discounted over the final year’s period (4.5)');
+  ok(close(v.equity, v.sumPv + v.pvTv - v.netDebt - v.nci + v.nonOp) && close(v.perShare, v.equity / 20), 'dcf: equity = EV − net debt − NCI + non-operating investments; per share on diluted shares');
   ok(close(r.sens.grid[2][2], v.perShare), 'dcf: sensitivity centre = base case');
   ok(r.sens.grid[0][2] > r.sens.grid[4][2] && r.sens.grid[2][4] > r.sens.grid[2][0], 'dcf: lower rate / higher g → higher value');
-  ok(close(v.implied, v.tv / r.F.ebitda[7]), 'dcf: Gordon cross-check = implied exit EV/EBITDA');
+  ok(close(v.implied, v.tv * (1 + v.rate) ** 0.5 / r.F.ebitda[7]), 'dcf: Gordon cross-check = TV restated to the end of the final year ÷ EBITDA');
+  ok(close(v.reinvestRate, 1 - v.nextCash / ((r.F.ebit[N] - Math.max(0, r.F.ebit[N]) * 0.252) * 1.05)) && close(v.ronic, 0.05 / v.reinvestRate), 'dcf: reinvestment rate and implied return on new capital');
+  // the old convention back: end-of-year, not normalised → the pre-revision values
+  const old = computeDcfT(dcfA({ midYear: 0, normalise: 0 }));
+  ok(old.valuation.period.join() === '1,2,3,4,5' && close(old.valuation.tv, old.flows.cash[4] * 1.05 / (old.valuation.rate - 0.05)) && close(old.valuation.pvTv, old.valuation.tv / (1 + old.valuation.rate) ** 5), 'dcf: end-of-year and not normalised → year t at t, TV = final cash × (1+g) ÷ (r − g)');
+  // stub: valued 20 Nov 2026, FY ended 31 Mar 2026 → 131 of 365 days of Year 1 left
+  const st = computeDcfT(dcfA({ valDate: '2026-11-20', fyEnd: '2026-03-31' }));
+  ok(close(st.valuation.stub, 131 / 365) && close(st.valuation.period[0], 131 / 365 / 2) && close(st.valuation.period[1], 131 / 365 + 0.5), 'dcf: stub = (EDATE(fyEnd, 12) − valuation date) ÷ 365; Year 1 at stub ÷ 2, Year 2 at stub + 0.5');
+  ok(close(st.valuation.counted[0], st.flows.cash[0] * 131 / 365) && close(st.valuation.counted[1], st.flows.cash[1]), 'dcf: only the stub share of Year 1 is counted');
+  ok(stubOf('2027-06-01', '2026-03-31') === 0 && stubOf('2025-01-01', '2026-03-31') === 1 && stubOf('', '2026-03-31') === 1, 'dcf: stub clamped to 0–1; blank date → 1');
+  // leases: toggle 1 → FCFF deducts ROU additions; toggle 0 → lease payments
+  const ls = computeDcfT(dcfA({}, (d) => { d.drivers.leasePay = [1, 1, 1, 1, 1]; d.drivers.leaseAdd = [2, 2, 2, 2, 2]; }));
+  ok(close(ls.flows.lease[0], ls.F.rev[3] * 0.02) && close(ls.flows.cash[0], ls.flows.nopat[0] + ls.flows.da[0] - ls.flows.capex[0] - ls.flows.dNwc[0] - ls.F.rev[3] * 0.02), 'dcf: leases = debt → FCFF deducts new lease additions');
+  const ls0 = computeDcfT(dcfA({ lease: 0 }, (d) => { d.drivers.leasePay = [1, 1, 1, 1, 1]; d.drivers.leaseAdd = [2, 2, 2, 2, 2]; }));
+  ok(close(ls0.flows.lease[0], ls0.F.rev[3] * 0.01) && close(ls0.bridge.leases, 0), 'dcf: leases = operating cost → FCFF deducts lease payments, no lease debt');
+  // equity bridge overrides
+  const ov = computeDcfT(dcfA({}, (d) => { d.wacc.nonOpOverride = 500; d.wacc.netDebtOverride = -100; }));
+  ok(ov.valuation.nonOp === 500 && ov.valuation.netDebt === -100 && close(ov.valuation.equity, ov.valuation.ev + 100 - ov.valuation.nci + 500), 'dcf: overrides replace non-operating investments and net debt in the bridge');
 
   const ex = computeDcfT(dcfA({ tv: 'exit' }));
   ok(close(ex.valuation.tv, ex.F.ebitda[7] * 12), 'dcf exit: FCFF TV = final-year EBITDA × EV/EBITDA');
-  ok(close(ex.valuation.implied, (ex.valuation.tv * ex.valuation.rate - ex.flows.cash[4]) / (ex.valuation.tv + ex.flows.cash[4])), 'dcf exit: implied perpetual growth');
+  {
+    const xv = ex.valuation, tvm = xv.tv / (1 + xv.rate) ** 0.5;
+    ok(close(xv.tvPeriod, 5) && close(xv.pvTv, xv.tv / (1 + xv.rate) ** 5), 'dcf exit: TV discounted from the end of the final year');
+    ok(close(xv.implied, (tvm * xv.rate - xv.baseCash) / (tvm + xv.baseCash - xv.growBase)), 'dcf exit: implied perpetual growth (normalised, mid-year basis)');
+  }
   const fe = computeDcfT(dcfA({ cf: 'fcfe', tv: 'exit' }));
-  ok(fe.flows.cash.every((c, j) => close(c, fe.flows.pat[j] + fe.flows.da[j] - fe.flows.capex[j] - fe.flows.dNwc[j] + fe.flows.netBorrow[j])), 'dcf FCFE = PAT + D&A − capex − ΔNWC + net borrowing');
+  ok(fe.flows.cash.every((c, j) => close(c, fe.flows.pat[j] + fe.flows.da[j] - fe.flows.capex[j] - fe.flows.dNwc[j] + fe.flows.netBorrow[j] - fe.flows.lease[j])), 'dcf FCFE = PAT + D&A − capex − ΔNWC + net borrowing − lease payments');
   ok(close(fe.valuation.tv, fe.F.pat[7] * 12) && close(fe.valuation.rate, fe.coe.ke) && fe.wacc === null, 'dcf FCFE: exit P/E on final-year PAT, discounted at Ke, no WACC');
   ok(close(fe.valuation.equity, fe.valuation.sumPv + fe.valuation.pvTv), 'dcf FCFE: equity value directly (no cash added, as the template)');
   const dd = computeDcfT(dcfA({ cf: 'ddm', coe: 'buildup' }));
   ok(dd.flows.cash.every((c, j) => close(c, Math.max(0, dd.F.pat[3 + j]) * dd.drivers.payout[j])), 'dcf DDM: dividends = max(0, PAT) × payout');
   ok(close(dd.coe.ke, 0.065 + 0.07 + 0.02 + 0.01 + 0.015), 'dcf build-up: Ke = rf + ERP + premia');
+  {
+    const dv = dd.valuation, N = 7;
+    ok(dv.mid === 0 && dv.period.join() === '1,2,3,4,5', 'dcf DDM: mid-year off by default (dividends are lump sums)');
+    ok(close(dd.F.eqOpen[N], dd.F.eqClose[N - 1]) && close(dd.F.eqClose[N], dd.F.eqOpen[N] + dd.F.pat[N] - dd.F.dividends[N]) && close(dd.F.roe[N], dd.F.pat[N] / dd.F.eqOpen[N]), 'dcf DDM: book equity rolls forward (opening + PAT − dividends); ROE on opening equity');
+    ok(close(dv.payoutSust, Math.max(0, 1 - 0.05 / dd.F.roe[N])) && close(dv.nextCash, dd.F.pat[N] * 1.05 * dv.payoutSust), 'dcf DDM: normalised terminal dividend = PAT × (1+g) × (1 − g ÷ ROE)');
+    ok(close(dv.sustGrowth, dd.F.roe[N] * (1 - dd.drivers.payout[4])), 'dcf DDM: final-year sustainable growth = ROE × retention');
+  }
+  {
+    const fl = computeDcfT(dcfA({ cf: 'fcfe' }, (d) => { d.drivers.leasePay = [1, 1, 1, 1, 1]; }));
+    const N = 7, fv = fl.valuation;
+    ok(close(fl.flows.lease[0], fl.F.rev[3] * 0.01) && close(fv.baseCash, fl.F.pat[N] + fl.F.da[N] - fl.F.capex[N] - fl.F.leasePay[N]) && close(fv.growBase, fl.F.nwc[N] - fl.F.closeDebt[N]), 'dcf FCFE: lease payments deducted; normalised base and NWC less debt');
+    ok(close(fv.nextCash, fv.baseCash * 1.05 - fv.growBase * 0.05), 'dcf FCFE: Year N+1 grows at g, invests g × NWC, borrows g × debt');
+  }
   const nm = computeDcfT(dcfA({ growth: 30 }));
   ok(nm.valuation.tv === 'NM' && nm.valuation.perShare === 'NM' && nm.sens.grid[2][2] === 'NM', 'dcf: rate ≤ g → terminal value, value and grid centre NM');
   const noSh = computeDcfT(dcfA({}, (d) => { d.company.shares = null; }));
@@ -107,7 +147,7 @@ ok(close(ops.deltaNwc[0], ops.nwcBalance[0] - ops.nwc0), 'drivers: deltaNWC cons
   ok(one.n === 1 && one.m === 1 && close(one.F.rev[1], 5300 * 1.12) && one.ref.gRev[0] === 'n.a.', 'dcf: 1 historical + 1 forecast year');
   const ten = computeDcfT(dcfA({ histYears: 10, fcstYears: 10, labels: null }));
   ok(ten.labels.hist.length === 10 && ten.labels.fcst[9] === 'FY36E' && ten.F.rev[6] === 0 && close(ten.F.rev[9], 5300), 'dcf: 10 + 10 years — older years blank, labels continue');
-  ok(ten.flows.cash.length === 10 && close(ten.valuation.df[9], 1 / (1 + ten.valuation.rate) ** 10), 'dcf: 10 forecast years discounted 1…10');
+  ok(ten.flows.cash.length === 10 && close(ten.valuation.df[9], 1 / (1 + ten.valuation.rate) ** 9.5), 'dcf: 10 forecast years discounted 0.5…9.5 (mid-year)');
   ok(close(r.ref.intRate[1], 55 / (450 + 250)) && r.ref.intRate[0] === 'n.a.' && close(r.ref.payout[2], 60 / 523), 'dcf: historical reference ratios (interest on prior debt, payout)');
 }
 

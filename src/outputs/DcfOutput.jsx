@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import Heatmap from '../components/Heatmap.jsx';
 import Waterfall from '../components/Waterfall.jsx';
-import { computeDcfT, CF_KINDS, DRIVERS, exitMultipleName } from '../lib/engine/dcfTemplate.js';
+import { computeDcfT, CF_KINDS, dcfDriverDefs, exitMultipleName } from '../lib/engine/dcfTemplate.js';
 import { fmtTpl, fmtDate } from '../lib/format.js';
 import Headline from './parts/Headline.jsx';
 import Collapsible, { Sections } from './parts/Collapsible.jsx';
@@ -60,7 +60,7 @@ function DcfPage({ a, f, r }) {
     { label: 'PV forecast', value: v.sumPv },
     { label: 'PV terminal', value: num(v.pvTv) },
     ...(r.cf === 'fcff'
-      ? [{ label: 'EV', value: num(v.ev), total: true }, { label: '− Net debt', value: -v.netDebt }, { label: '− NCI', value: -v.nci }]
+      ? [{ label: 'EV', value: num(v.ev), total: true }, { label: '− Net debt', value: -v.netDebt }, { label: '− NCI', value: -v.nci }, ...(v.nonOp ? [{ label: '+ Investments', value: v.nonOp }] : [])]
       : []),
     { label: 'Equity', value: num(v.equity), total: true },
   ];
@@ -68,19 +68,27 @@ function DcfPage({ a, f, r }) {
 
   /* ---------------- valuation sheet ---------------- */
   const flowRows = r.cf === 'fcff'
-    ? [['EBIT', r.flows.ebit], ['(−) Taxes on EBIT', r.flows.taxEbit], ['NOPAT', r.flows.nopat, true], ['(+) Depreciation & Amortisation', r.flows.da], ['(−) Capex', r.flows.capex], ['(−) Increase in NWC', r.flows.dNwc]]
+    ? [['EBIT', r.flows.ebit], ['(−) Taxes on EBIT', r.flows.taxEbit], ['NOPAT', r.flows.nopat, true], ['(+) Depreciation & Amortisation', r.flows.da], ['(−) Capex', r.flows.capex], ['(−) Increase in NWC', r.flows.dNwc], ['(−) Lease cost (Ind AS 116)', r.flows.lease]]
     : r.cf === 'fcfe'
-      ? [['PAT', r.flows.pat], ['(+) Depreciation & Amortisation', r.flows.da], ['(−) Capex', r.flows.capex], ['(−) Increase in NWC', r.flows.dNwc], ['(+) Net Borrowing / (Repayment)', r.flows.netBorrow]]
+      ? [['PAT', r.flows.pat], ['(+) Depreciation & Amortisation', r.flows.da], ['(−) Capex', r.flows.capex], ['(−) Increase in NWC', r.flows.dNwc], ['(+) Net Borrowing / (Repayment)', r.flows.netBorrow], ['(−) Lease payments', r.flows.lease]]
       : [['PAT', r.flows.pat], ['Dividend payout (% of PAT)', r.flows.payout, false, 'pct']];
   const valRows = [
     ['Sum of PV of forecast cash flows', t(v.sumPv)],
     ...(r.tv === 'gordon'
-      ? [['Final-year cash flow', t(v.lastCash)], ['Terminal growth rate (g)', t(v.g, 'pct')], ['Cash flow in year after forecast', t(v.nextCash)]]
+      ? [
+        ['Terminal growth rate (g)', t(v.g, 'pct')],
+        ['Final-year cash flow (as forecast)', t(v.lastCash)],
+        ...(r.cf === 'fcff' ? [['Final-year cash flow before ΔNWC', t(v.baseCash)], ['Final-year net working capital (grows at g)', t(v.growBase)]] : []),
+        ...(r.cf === 'fcfe' ? [['Final-year cash flow before ΔNWC and borrowing', t(v.baseCash)], ['Final-year NWC less closing debt (both grow at g)', t(v.growBase)]] : []),
+        ...(r.cf === 'ddm' ? [['Final-year PAT', t(v.finalPat)], ['Final-year ROE (on opening equity)', t(v.finalRoe, 'pct')], ['Sustainable payout = 1 − g ÷ ROE', t(v.payoutSust, 'pct')]] : []),
+        [`Terminal-year cash flow (Year N+1)${v.normalise ? ' — normalised' : ''}`, t(v.nextCash)],
+      ]
       : [[`Final-year ${r.cf === 'fcff' ? 'EBITDA' : 'PAT'}`, t(v.metric)], [`Exit ${multName} multiple`, t(v.multiple, 'x')]]),
     ['Terminal value', t(v.tv), true],
+    ['Terminal value discount period (years)', t(v.tvPeriod, 'n2')],
     ['PV of terminal value', t(v.pvTv)],
     ...(r.cf === 'fcff'
-      ? [['Enterprise Value', t(v.ev), true], ['(−) Net debt / (net cash)', t(v.netDebt)], ['(−) Non-controlling interest', t(v.nci)]]
+      ? [['Enterprise Value', t(v.ev), true], ['(−) Net debt / (net cash)', t(v.netDebt)], ['(−) Non-controlling interest', t(v.nci)], ['(+) Non-operating investments', t(v.nonOp)]]
       : []),
     ['Equity Value', t(v.equity), true],
     [`Diluted shares outstanding (${f.unit})`, t(v.shares, 'n2')],
@@ -88,8 +96,16 @@ function DcfPage({ a, f, r }) {
     [`Current share price (${f.sym})`, t(v.price, 'n2')],
     ['Upside / (Downside)', t(v.upside, 'pct')],
     ['Terminal value as % of total value', t(v.tvShare, 'pct')],
-    r.tv === 'gordon' ? [`Implied exit ${multName}`, t(v.implied, 'x')] : ['Implied perpetual growth rate', t(v.implied, 'pct')],
+    ...(r.tv === 'gordon'
+      ? [
+        [r.cf === 'fcff' ? 'Implied terminal EV / EBITDA (TV ÷ final-year EBITDA)' : 'Implied terminal P / E (TV ÷ final-year PAT)', t(v.implied, 'x')],
+        ...(r.cf === 'fcff' ? [['Terminal reinvestment rate', t(v.reinvestRate, 'pct')], ['Implied return on new invested capital (g ÷ reinvestment rate)', t(v.ronic, 'pct')]] : []),
+        ...(r.cf === 'ddm' ? [['Final-year sustainable growth (ROE × retention)', t(fin(v.sustGrowth) ? v.sustGrowth : 'NM', 'pct')]] : []),
+      ]
+      : [['Implied perpetual growth rate', t(v.implied, 'pct')]]),
   ];
+  const stubText = v.stub < 1 ? `a stub of ${v.stub.toFixed(2)} of Year 1` : 'the full first year';
+  const timing = `${v.mid ? 'mid-year' : 'end-of-year'} discounting from ${r.settings.valDate ? fmtDate(r.settings.valDate) : 'the latest fiscal year end'} (${stubText})`;
 
   /* ---------------- forecast sheet ---------------- */
   const FROWS = [
@@ -107,6 +123,9 @@ function DcfPage({ a, f, r }) {
     ['CAPEX & DEBT SCHEDULE'],
     ['Capex', F.capex], ['Opening Debt', F.openDebt], ['Net Borrowing / (Repayment)', F.netBorrow], ['Closing Debt (Borrowings)', F.closeDebt, 'n1', true],
     ['  Interest rate on opening debt', F.intRate, 'pct'],
+    ...(r.cf === 'fcff' ? [['LEASES (Ind AS 116)'], ['Lease cash payments', F.leasePay], ['New leases / ROU additions (lease capex)', F.leaseAdd], ['Lease cost used in FCFF (per the toggle)', F.leaseCost, 'n1', true]]
+      : r.cf === 'fcfe' ? [['LEASES (Ind AS 116)'], ['Lease cash payments', F.leasePay]]
+        : [['BOOK EQUITY ROLL-FORWARD'], ['Opening equity attributable to owners', F.eqOpen], ['Return on opening equity (ROE)', F.roe, 'pct'], ['Closing equity (opening + PAT − dividends)', F.eqClose, 'n1', true]]),
   ];
 
   const w = r.wacc;
@@ -116,7 +135,7 @@ function DcfPage({ a, f, r }) {
     <div className="qo">
       <Headline
         eyebrow={`DCF — ${cfK.label} · ${r.tv === 'exit' ? `Exit ${multName}` : 'Gordon Growth'} · ${r.coeKind === 'capm' ? 'CAPM' : 'Build-Up'} (template ${r.template})`}
-        sub={`${cfK.long} over ${m} forecast year${m === 1 ? '' : 's'} (${m === 1 ? fc[0] : `${fc[0]}–${fc[m - 1]}`}), discounted at ${r.cf === 'fcff' ? 'the WACC' : 'the cost of equity'} ${t(v.rate, 'pct')} with end-of-year discounting${r.settings.valDate ? ` from ${fmtDate(r.settings.valDate)}` : ''}; terminal value by ${tvName}.`}
+        sub={`${cfK.long} over ${m} forecast year${m === 1 ? '' : 's'} (${m === 1 ? fc[0] : `${fc[0]}–${fc[m - 1]}`}), discounted at ${r.cf === 'fcff' ? 'the WACC' : 'the cost of equity'} ${t(v.rate, 'pct')} with ${timing}; terminal value by ${tvName}.`}
         warnings={[
           r.blankYears.length ? `Blank drivers in ${r.blankYears.map((j) => fc[j]).join(', ')} count as 0, as in the template — fill them on the Assumptions step.` : null,
           r.tv === 'gordon' && !(v.rate > v.g) ? `The discount rate (${t(v.rate, 'pct')}) is not above the terminal growth (${t(v.g, 'pct')}) — the terminal value is NM, as in the template.` : null,
@@ -145,13 +164,17 @@ function DcfPage({ a, f, r }) {
             <table className="fin compact tpl-val">
               <thead><tr><th>{f.unitLabel}</th>{fc.map((l) => <th key={l}>{l}</th>)}</tr></thead>
               <tbody>
-                <tr className="sub"><td>Discount period (years)</td>{fc.map((_, j) => <td key={j}>{j + 1}</td>)}</tr>
+                <tr className="sub"><td>Share of year&apos;s cash flow counted</td>{v.share.map((x, j) => <td key={j}>{t(x, 'n2')}</td>)}</tr>
+                <tr className="sub"><td>Discount period (years from valuation date)</td>{v.period.map((x, j) => <td key={j}>{t(x, 'n2')}</td>)}</tr>
                 {flowRows.map(([lab, vals, bold, fmt]) => (
                   <tr key={lab} className={bold ? 'bold' : ''}><td>{lab}</td>{vals.map((x, j) => <td key={j}>{t(x, fmt || 'n1')}</td>)}</tr>
                 ))}
                 {r.cf === 'ddm' && <tr><td>Dividends</td>{r.flows.cash.map((x, j) => <td key={j}>{t(x)}</td>)}</tr>}
                 {r.cf === 'ddm' && <tr><td>Dividend per share ({f.sym})</td>{r.flows.dps.map((x, j) => <td key={j}>{t(x, 'n2')}</td>)}</tr>}
+                {r.cf === 'ddm' && <tr><td>Return on opening equity (ROE)</td>{r.flows.roe.map((x, j) => <td key={j}>{t(x, 'pct')}</td>)}</tr>}
+                {r.cf === 'ddm' && <tr><td>Closing book equity (owners)</td>{r.flows.eqClose.map((x, j) => <td key={j}>{t(x)}</td>)}</tr>}
                 {r.cf !== 'ddm' && <tr className="bold tp-sub"><td>{cashLabel}</td>{r.flows.cash.map((x, j) => <td key={j}>{t(x)}</td>)}</tr>}
+                <tr><td>Cash flow counted (× share of year)</td>{v.counted.map((x, j) => <td key={j}>{t(x)}</td>)}</tr>
                 <tr><td>Discount factor</td>{v.df.map((x, j) => <td key={j}>{fin(x) ? x.toFixed(4) : ''}</td>)}</tr>
                 <tr className="bold"><td>Present value</td>{v.pv.map((x, j) => <td key={j}>{t(x)}</td>)}</tr>
               </tbody>
@@ -165,7 +188,7 @@ function DcfPage({ a, f, r }) {
               </tbody>
             </table>
           </div>
-          <div className="qo-note">End-of-year convention: forecast year t is discounted t years, so the value is as at the end of the last historical year.{r.cf !== 'fcff' ? ' Equity cash flows are discounted at the cost of equity straight to equity value.' : ''}</div>
+          <div className="qo-note">The valuation date and the latest fiscal year end set the stub — only the part of Year 1 still to come is counted. {v.mid ? 'Mid-year convention: each cash flow is discounted from the middle of its period.' : 'End-of-year convention.'} A Gordon terminal value uses the final year&apos;s discount period; an exit-multiple terminal value is discounted from the end of the final year.{r.cf !== 'fcff' ? ' Equity cash flows are discounted at the cost of equity straight to equity value.' : ''}</div>
         </Collapsible>
 
         <Collapsible title={`Sensitivity — value per share (${f.sym}): ${rateName} (rows) × ${r.tv === 'exit' ? `exit ${multName}` : 'terminal growth'} (columns)`} tag="SENS" defaultOpen>
@@ -199,7 +222,7 @@ function DcfPage({ a, f, r }) {
             <table className="fin compact">
               <thead><tr><th>Driver</th>{allLabels.map((l, i) => <th key={i} className={i < n ? 'dg-hist' : ''}>{l}</th>)}</tr></thead>
               <tbody>
-                {DRIVERS.map((d) => (d.section
+                {dcfDriverDefs(r.cf).map((d) => (d.section
                   ? <tr key={d.section} className="tp-sec dg-sec"><td colSpan={n + m + 1}>{d.section}</td></tr>
                   : (
                     <tr key={d.key}>
@@ -259,6 +282,11 @@ function DcfPage({ a, f, r }) {
                     <tr><td>(−) Cash, bank balances & current investments</td><td>{t(r.bridge.cash)}</td></tr>
                     <tr className="bold tp-sub"><td>Net Debt / (Net Cash)</td><td>{t(r.bridge.netDebt)}</td></tr>
                     <tr><td>Non-controlling interest</td><td>{t(r.bridge.nci)}</td></tr>
+                    <tr><td>Non-current investments per balance sheet</td><td>{t(r.bridge.nonOpBook)}</td></tr>
+                    <tr><td>Override: non-operating investments to add</td><td>{r.bridge.nonOpOverride === null ? '—' : t(r.bridge.nonOpOverride)}</td></tr>
+                    <tr className="bold"><td>Non-operating investments added to equity</td><td>{t(r.bridge.nonOp)}</td></tr>
+                    <tr><td>Override: net debt at valuation date</td><td>{r.bridge.netDebtOverride === null ? '—' : t(r.bridge.netDebtOverride)}</td></tr>
+                    <tr className="bold tp-sub"><td>Net debt used in valuation</td><td>{t(r.bridge.netDebtUsed)}</td></tr>
                   </tbody>
                 </table>
               </div>

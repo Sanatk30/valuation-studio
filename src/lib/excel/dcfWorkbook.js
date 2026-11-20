@@ -13,7 +13,7 @@
  * equity.
  */
 import ExcelJS from 'exceljs';
-import { computeDcfT, DRIVERS, exitMultipleName } from '../engine/dcfTemplate.js';
+import { computeDcfT, dcfDriverDefs, exitMultipleName } from '../engine/dcfTemplate.js';
 import { IS_LINES, BS_LINES, CF_LINES, fyValues } from '../engine/companyPage.js';
 import { CURRENCIES, UNITS } from '../format.js';
 import { colL } from './xlsxUtil.js';
@@ -77,10 +77,10 @@ export function buildDcfWorkbook(a) {
 
   /* ---------------- Inputs rows ---------------- */
   const IN = {
-    name: 5, ticker: 6, date: 7, price: 8, shares: 9, lease: 10,
-    hist: (i) => 13 + i, fcst: (j) => 13 + n + j,
+    name: 5, ticker: 6, date: 7, price: 8, shares: 9, lease: 10, fyEnd: 11, mid: 12, norm: 13,
+    hist: (i) => 16 + i, fcst: (j) => 16 + n + j,
   };
-  IN.tvHead = 13 + n + m + 1;
+  IN.tvHead = 16 + n + m + 1;
   IN.tv = IN.tvHead + 1;
   IN.sensHead = IN.tv + 2;
   IN.rateStep = IN.sensHead + 1;
@@ -128,12 +128,22 @@ export function buildDcfWorkbook(a) {
     row++;
     w(ws, `B${row++}`, 'Conventions & simplifications', { bold: true });
     [
-      ['Discounting', `End-of-year: Year 1 to Year ${m} cash flows are discounted 1 to ${m} years. The valuation is therefore as at the end of the last historical year.`],
+      ['Discounting', 'Valuation date + latest fiscal year end (Inputs) create a stub: only the part of Year 1 still to come is counted. Mid-year convention (default on for FCFF/FCFE, off for DDM) discounts each cash flow from the middle of its period. Gordon TV uses the final-year discount period; exit-multiple TV is discounted from the end of the final year.'],
       ['Sign convention', 'Historicals: expenses positive in P&L, outflows negative in cash flow. Assumptions: capex and costs as positive % of revenue.'],
       ['Interest', 'Forecast interest = Opening Debt × Interest Rate (avoids circular references).'],
-      ['Leases', "Lease liabilities are added to net debt if the toggle on Inputs = 1. For FCFE, include lease principal repayments in 'Net Borrowing / (Repayment)'."],
+      ['Leases', cf === 'fcff'
+        ? 'Toggle 1 (default, Ind AS 116 / bank standard): lease liabilities are debt (net debt and WACC) and FCFF deducts new lease additions (ROU capex). Toggle 0: FCFF deducts lease cash payments and lease liabilities are excluded.'
+        : cf === 'fcfe'
+          ? 'FCFE deducts lease cash payments (Assumptions row 29). Do not include lease principal in Net Borrowing.'
+          : 'Not relevant to dividends – lease cash is already reflected in the payout capacity you assume.'],
       ['Forecast PAT', 'Forecast does not model associates or non-controlling interest; PAT is treated as attributable to owners.'],
       ['Exceptional items', 'Included in historical PBT but not forecast.'],
+      ['Terminal year', cf === 'fcff'
+        ? 'Normalise toggle (Inputs): Year N+1 FCFF = (NOPAT + D&A − capex − lease cost) × (1+g) − g × final-year NWC. Check the implied exit multiple and implied return on new capital.'
+        : cf === 'fcfe'
+          ? 'Normalise toggle (Inputs): Year N+1 FCFE grows at g, invests g × NWC and borrows g × debt (constant leverage).'
+          : 'Normalise toggle (Inputs): terminal payout = 1 − g ÷ ROE (sustainable growth). The DDM sheet shows final-year sustainable growth for comparison.'],
+      ...(cf === 'fcff' ? [['Equity bridge', 'Equity = EV − net debt − NCI + non-operating investments (WACC sheet rows 27–34, with optional overrides for investment value and net debt at the valuation date).']] : []),
     ].forEach(pair);
   }
 
@@ -151,11 +161,22 @@ export function buildDcfWorkbook(a) {
     };
     row(IN.name, 'Company name', a.company?.name || null, undefined, 'e.g. ABC Industries Ltd');
     row(IN.ticker, 'NSE / BSE ticker', d.company?.ticker || null, undefined, 'e.g. ABCIND');
-    row(IN.date, 'Valuation date', date(s.valDate), NF.date, 'e.g. 31-Mar-2026 (end of last historical year – see Instructions)');
+    row(IN.date, 'Valuation date', date(s.valDate), NF.date, 'Date the value is struck (e.g. today). Cash flows are discounted from this date; leave blank to value at the fiscal year end below.');
     row(IN.price, `Current share price (${sym})`, num(r.price), NF.n2, 'e.g. 620.00 – source and date');
     row(IN.shares, `Diluted shares outstanding (${unit})`, num(r.shares), NF.n2, 'e.g. 20.00');
-    row(IN.lease, 'Include lease liabilities in net debt? (1/0)', r.toggle, undefined, '1 = Yes (Ind AS 116 puts rent below EBITDA)');
-    w(ws, 'A12', 'Period labels', { bold: true });
+    row(IN.lease, 'Include lease liabilities in net debt? (1/0)', r.toggle, undefined, cf === 'fcff'
+      ? '1 = leases are debt (Ind AS 116 puts rent below EBITDA): lease liabilities in net debt & WACC, FCFF deducts new lease additions. 0 = leases are an operating cost: FCFF deducts lease payments, liabilities excluded.'
+      : cf === 'fcfe'
+        ? 'FCFE always deducts lease cash payments. Toggle kept for consistency with the FCFF / CCA workbooks.'
+        : 'Not used by the DDM value; kept for consistency with the FCFF / CCA workbooks.');
+    row(IN.fyEnd, 'Latest fiscal year end (balance sheet date of latest actual year)', date(s.fyEnd), NF.date, `e.g. 31-Mar-2026 – the ${r.labels.hist[n - 1]} balance sheet date. Forecast Year 1 ends 12 months later.`);
+    row(IN.mid, 'Mid-year discounting convention? (1/0)', r.valuation.mid, undefined, '1 = cash flows arrive evenly through each year (bank standard for FCFF / FCFE). DDM default 0: dividends are paid as lump sums.');
+    row(IN.norm, 'Normalise terminal year? (1/0)', r.valuation.normalise, undefined, cf === 'fcff'
+      ? '1 = Year N+1 FCFF grows every line at g and invests g × NWC (removes final-year working-capital noise).'
+      : cf === 'fcfe'
+        ? '1 = Year N+1 FCFE grows at g, invests g × NWC and borrows g × debt (constant leverage) instead of repeating the final-year repayment.'
+        : '1 = terminal payout = 1 − g ÷ ROE (sustainable-growth formula) instead of the final-year payout.');
+    w(ws, 'A15', 'Period labels', { bold: true });
     r.labels.hist.forEach((l, i) => row(IN.hist(i), `Historical year ${i + 1}${i === n - 1 ? ' (latest actual)' : ''}`, l, undefined, i === 0 ? 'Labels only – edit freely' : ''));
     r.labels.fcst.forEach((l, j) => row(IN.fcst(j), `Forecast year ${j + 1}`, l, undefined, ''));
     w(ws, `A${IN.tvHead}`, 'Terminal value', { bold: true });
@@ -170,7 +191,7 @@ export function buildDcfWorkbook(a) {
 
   const label = (k) => inRef(k < n ? IN.hist(k) : IN.fcst(k - n));
   writeHistoricals(wb, { page: d.company?.page, n, label, unitLabel, unit, sym });
-  writeAssumptions(wb, { defs: DRIVERS, drivers: d.drivers, n, m, label, unitShort });
+  writeAssumptions(wb, { defs: dcfDriverDefs(cf), drivers: d.drivers, n, m, label, unitShort });
 
   /* ============================== Forecast ============================== */
   {
@@ -204,6 +225,11 @@ export function buildDcfWorkbook(a) {
         if (o.fcstNa) return w(ws, `${X}${rr}`, null, { size: 11, fill: T.na, fmt });
         return w(ws, `${X}${rr}`, fx(fcst(X, prev(X))), { fmt, ...st });
       });
+    };
+    /** A forecast-only row (the historical cells stay empty, as in the template). */
+    const leaseLine = (rr, label, fcst, o = {}) => {
+      w(ws, `A${rr}`, label);
+      for (let j = 0; j < m; j++) w(ws, `${Fc(j)}${rr}`, fx(fcst(Fc(j), j === 0 ? lastH : Fc(j - 1))), { fmt: o.fmt || NF.n1 });
     };
     const Hl = (row) => (X) => `Historicals!${X}${row}`;
     const A = (row) => (Y) => `Assumptions!${Y}${row}`;
@@ -257,15 +283,30 @@ export function buildDcfWorkbook(a) {
         block(47, '(+) Depreciation & Amortisation', (Y) => `${Y}15`);
         block(48, '(−) Capex', (Y) => `${Y}37`);
         block(49, '(−) Increase in NWC', (Y) => `${Y}34`);
-        block(50, 'Free Cash Flow to Firm', (Y) => `${Y}46+${Y}47-${Y}48-${Y}49`, { key: true });
+        block(50, '(−) Lease cost (additions if leases = debt, else payments)', (Y) => `${Y}56`);
+        block(51, 'Free Cash Flow to Firm', (Y) => `${Y}46+${Y}47-${Y}48-${Y}49-${Y}50`, { key: true });
+        sec(53, 'LEASES (Ind AS 116)');
+        line(54, 'Lease cash payments', (X) => `-Historicals!${X}82`, (Y) => `${Y}7*${A(29)(Y)}`, { histLink: true });
+        leaseLine(55, 'New leases / ROU additions (lease capex)', (Y) => `${Y}7*${A(30)(Y)}`);
+        leaseLine(56, 'Lease cost used in FCFF (per Inputs toggle)', (Y) => `IF(${inRef(IN.lease)}=1,${Y}55,${Y}54)`);
       } else {
         block(44, 'PAT', (Y) => `${Y}22`);
         block(45, '(+) Depreciation & Amortisation', (Y) => `${Y}15`);
         block(46, '(−) Capex', (Y) => `${Y}37`);
         block(47, '(−) Increase in NWC', (Y) => `${Y}34`);
         block(48, '(+) Net Borrowing / (Repayment)', (Y) => `${Y}39`);
-        block(49, 'Free Cash Flow to Equity', (Y) => `${Y}44+${Y}45-${Y}46-${Y}47+${Y}48`, { key: true });
+        block(49, '(−) Lease payments', (Y) => `${Y}53`);
+        block(50, 'Free Cash Flow to Equity', (Y) => `${Y}44+${Y}45-${Y}46-${Y}47+${Y}48-${Y}49`, { key: true });
+        sec(52, 'LEASES (Ind AS 116)');
+        line(53, 'Lease cash payments', (X) => `-Historicals!${X}82`, (Y) => `${Y}7*${A(29)(Y)}`, { histLink: true });
       }
+    } else {
+      // book equity roll-forward (the DDM's sustainable-growth check)
+      sec(43, 'BOOK EQUITY ROLL-FORWARD (for the DDM sustainable-growth check)');
+      leaseLine(44, 'Opening equity attributable to owners', (Y, P) => `${P}46`);
+      leaseLine(45, 'Return on opening equity (ROE)', (Y) => `IFERROR(${Y}22/${Y}44,0)`, { fmt: NF.pct });
+      line(46, 'Closing equity (opening + PAT − dividends)', (X) => `Historicals!${X}48`, (Y) => `${Y}44+${Y}22-${Y}24`, { sub: true, histLink: true });
+      note(ws, 'A47', 'Assumes no buybacks or new equity in the forecast.');
     }
   }
 
@@ -303,31 +344,31 @@ export function buildDcfWorkbook(a) {
       note(ws, 'C15', 'e.g. 25.2%');
       w(ws, 'A16', 'Re-levered beta', { bold: true }); w(ws, 'B16', fx('B13*(1+(1-B15)*B14)'), { bold: true, fmt: NFB });
       note(ws, 'C16', hamada ? 'Drives the levered beta in B6.' : 'Reference only – type your chosen beta into cell B6.');
-      /* the beta-peer list (Hamada), beside the helper */
+      /* the beta-peer table (Hamada), beside the helper: the template's eight rows, more when the app holds more peers */
       const peers = cp.peers || [];
-      if (peers.length) {
-        const c0 = 5;                                   // E…I
-        const cc = (k) => colL(c0 + k);
-        [26, 12, 12, 12, 14].forEach((wd, k) => { ws.getColumn(c0 + k).width = wd; });
-        w(ws, `${cc(0)}12`, 'Beta peers (Hamada) – reference', { bold: true });
-        ['Peer', 'Levered β', 'D / E', 'Tax rate', 'Unlevered β'].forEach((h, k) => hdr(ws, `${cc(k)}13`, h));
-        const r0 = 14;
-        peers.forEach((p, i) => {
-          const rr = r0 + i;
-          w(ws, `${cc(0)}${rr}`, p.name || `Peer ${i + 1}`, { input: true });
-          w(ws, `${cc(1)}${rr}`, num(p.beta), { input: true, fmt: NFB });
-          w(ws, `${cc(2)}${rr}`, pc(p.de), { input: true, fmt: NF.pct });
-          w(ws, `${cc(3)}${rr}`, pc(p.taxRate), { input: true, fmt: NF.pct });
-          w(ws, `${cc(4)}${rr}`, fx(`IF(AND(ISNUMBER(${cc(1)}${rr}),ISNUMBER(${cc(2)}${rr}),ISNUMBER(${cc(3)}${rr})),${cc(1)}${rr}/(1+(1-${cc(3)}${rr})*${cc(2)}${rr}),"")`), { fmt: NFB });
-        });
-        const r1 = r0 + peers.length - 1;
-        const range = `${cc(4)}${r0}:${cc(4)}${r1}`;
-        w(ws, `${cc(0)}${r1 + 1}`, 'Mean', { bold: true, fill: T.sub, top: true });
-        w(ws, `${cc(4)}${r1 + 1}`, fx(`IF(COUNT(${range})=0,"NM",AVERAGE(${range}))`), { bold: true, fill: T.sub, top: true, fmt: NFB });
-        w(ws, `${cc(0)}${r1 + 2}`, 'Median', { bold: true, fill: T.sub });
-        w(ws, `${cc(4)}${r1 + 2}`, fx(`IF(COUNT(${range})=0,"NM",MEDIAN(${range}))`), { bold: true, fill: T.sub, fmt: NFB });
-        note(ws, `${cc(0)}${r1 + 3}`, 'Each peer unlevered at its own D/E and tax rate. Copy the mean or median into B13 to re-lever it.');
+      const c0 = 5;                                   // E…I
+      const cc = (k) => colL(c0 + k);
+      [26, 12, 14, 16, 14].forEach((wd, k) => { ws.getColumn(c0 + k).width = wd; });
+      w(ws, `${cc(0)}12`, 'Beta peers (Hamada) – reference', { bold: true });
+      ['Peer', 'Levered β', 'D / E (market)', 'Marginal tax rate', 'Unlevered β'].forEach((h, k) => hdr(ws, `${cc(k)}13`, h));
+      const r0 = 14;
+      const nRows = Math.max(8, peers.length);
+      for (let i = 0; i < nRows; i++) {
+        const rr = r0 + i;
+        const p = peers[i] || {};
+        w(ws, `${cc(0)}${rr}`, peers[i] ? (p.name || `Peer ${i + 1}`) : null, { input: true });
+        w(ws, `${cc(1)}${rr}`, num(p.beta), { input: true, fmt: NFB });
+        w(ws, `${cc(2)}${rr}`, pc(p.de), { input: true, fmt: NF.pct });
+        w(ws, `${cc(3)}${rr}`, pc(p.taxRate), { input: true, fmt: NF.pct });
+        w(ws, `${cc(4)}${rr}`, fx(`IF(AND(ISNUMBER(${cc(1)}${rr}),ISNUMBER(${cc(2)}${rr}),ISNUMBER(${cc(3)}${rr})),${cc(1)}${rr}/(1+(1-${cc(3)}${rr})*${cc(2)}${rr}),"")`), { fmt: NFB });
       }
+      const r1 = r0 + nRows - 1;
+      const range = `${cc(4)}${r0}:${cc(4)}${r1}`;
+      w(ws, `${cc(0)}${r1 + 1}`, 'Mean', { bold: true, fill: T.sub, top: true });
+      w(ws, `${cc(4)}${r1 + 1}`, fx(`IF(COUNT(${range})=0,"NM",AVERAGE(${range}))`), { bold: true, fill: T.sub, top: true, fmt: NFB });
+      w(ws, `${cc(0)}${r1 + 2}`, 'Median', { bold: true, fill: T.sub });
+      w(ws, `${cc(4)}${r1 + 2}`, fx(`IF(COUNT(${range})=0,"NM",MEDIAN(${range}))`), { bold: true, fill: T.sub, fmt: NFB });
+      note(ws, `${cc(0)}${r1 + 3}`, 'Each peer unlevered at its own market D/E and marginal tax rate (Hamada). Copy the median into B13 to re-lever at the target capital structure.');
     } else {
       const b = d.buildup || {};
       title(ws, 'A1', 'Cost of Equity – Build-Up Method');
@@ -377,8 +418,15 @@ export function buildDcfWorkbook(a) {
     w(ws, 'A24', 'Total borrowings'); w(ws, 'B24', fx(`Historicals!${L}52+Historicals!${L}57`), { link: true, fmt: NF.n1 }); note(ws, 'C24', '');
     w(ws, 'A25', '(+) Lease liabilities (per toggle)'); w(ws, 'B25', fx(`(Historicals!${L}53+Historicals!${L}58)*${inRef(IN.lease)}`), { link: true, fmt: NF.n1 }); note(ws, 'C25', '');
     w(ws, 'A26', '(−) Cash, bank balances & current investments'); w(ws, 'B26', fx(`Historicals!${L}38+Historicals!${L}39+Historicals!${L}40`), { link: true, fmt: NF.n1 }); note(ws, 'C26', '');
-    w(ws, 'A27', 'Net Debt / (Net Cash)', KEYST); w(ws, 'B27', fx('B24+B25-B26'), { ...KEYST, fmt: NF.n1 }); note(ws, 'C27', 'Used in FCFF equity bridge');
+    w(ws, 'A27', 'Net Debt / (Net Cash)', KEYST); w(ws, 'B27', fx('B24+B25-B26'), { ...KEYST, fmt: NF.n1 }); note(ws, 'C27', 'Latest balance sheet');
     w(ws, 'A28', 'Non-controlling interest'); w(ws, 'B28', fx(`Historicals!${L}49`), { link: true, fmt: NF.n1 }); note(ws, 'C28', 'Deducted in FCFF equity bridge');
+    w(ws, 'A29', 'Non-current investments per balance sheet'); w(ws, 'B29', fx(`Historicals!${L}32`), { link: true, fmt: NF.n1 }); note(ws, 'C29', 'Associates, JVs, strategic & other non-operating investments');
+    w(ws, 'A30', 'Override: non-operating investments to add (optional)'); w(ws, 'B30', num(wc.nonOpOverride), { input: true, fmt: NF.n1 });
+    note(ws, 'C30', 'Leave blank to use the line above. Enter fair / market value if known; exclude any investment whose income is inside EBITDA.');
+    w(ws, 'A31', 'Non-operating investments added to equity', { bold: true }); w(ws, 'B31', fx('IF(ISNUMBER(B30),B30,B29)'), { bold: true, fmt: NF.n1 }); note(ws, 'C31', 'Added in the FCFF equity bridge (their income is excluded from FCFF)');
+    w(ws, 'A33', 'Override: net debt at valuation date (optional)'); w(ws, 'B33', num(wc.netDebtOverride), { input: true, fmt: NF.n1 });
+    note(ws, 'C33', 'Use when the valuation date is after the latest balance sheet (e.g. latest quarterly net debt)');
+    w(ws, 'A34', 'Net debt used in valuation', KEYST); w(ws, 'B34', fx('IF(ISNUMBER(B33),B33,B27)'), { ...KEYST, fmt: NF.n1 }); note(ws, 'C34', 'Used in the FCFF equity bridge');
   }
 
   /* ============================== Valuation sheet ============================== */
@@ -387,23 +435,30 @@ export function buildDcfWorkbook(a) {
     ws.getColumn(1).width = 48; ws.getColumn(2).width = 14;
     for (let j = 0; j < m; j++) ws.getColumn(3 + j).width = 13;
     ws.getColumn(vNote).width = 50;
-    ws.views = [{ state: 'frozen', xSplit: 1, ySplit: 6, topLeftCell: 'B7' }];
+    ws.views = [{ state: 'frozen', xSplit: 1, ySplit: 7, topLeftCell: 'B8' }];
     const S11 = { size: 11 };
     const KEYST = { bold: true, fill: KEY, top: true };
     const SUB = { bold: true, fill: T.sub, top: true };
+    const MID = inRef(IN.mid), NORM = inRef(IN.norm), SH = inRef(IN.shares);
     const heading = cf === 'fcff' ? 'Free Cash Flow to Firm' : cf === 'fcfe' ? 'Free Cash Flow to Equity' : 'Dividend Discount Model';
     title(ws, 'A1', `${heading} – Terminal Value: ${tv === 'exit' ? `Exit Multiple (${cf === 'fcff' ? 'EV/EBITDA' : 'P/E'})` : 'Gordon Growth'}`);
-    w(ws, 'A2', fx(`IF(Inputs!$B$5="","",Inputs!$B$5&" | ")&"${unitLabel} unless stated | End-of-year discounting"`), { italic: true, size: 9, color: T.grey });
+    w(ws, 'A2', fx(`IF(Inputs!$B$5="","",Inputs!$B$5&" | ")&"${unitLabel} unless stated | "&IF(${MID}=1,"Mid-year","End-of-year")&" discounting from "&IF(ISNUMBER(${inRef(IN.date)}),TEXT(${inRef(IN.date)},"dd-mmm-yyyy"),"the latest fiscal year end")`), { italic: true, size: 9, color: T.grey });
     w(ws, 'A4', cf === 'fcff' ? 'WACC' : 'Cost of Equity (Ke)', { bold: true });
     w(ws, 'B4', fx(cf === 'fcff' ? 'WACC!$B$20' : keRef), { bold: true, link: true, fmt: NF.pct });
-    hdr(ws, 'A6', unitLabel, { align: 'left', wrap: false });
-    hdr(ws, 'B6', null, { wrap: false });
-    for (let j = 0; j < m; j++) hdr(ws, `${V(j)}6`, fx(inRef(IN.fcst(j))), { wrap: false });
-    w(ws, 'A7', 'Discount period (years)');
-    for (let j = 0; j < m; j++) w(ws, `${V(j)}7`, j + 1, { fmt: '0' });
-    note(ws, `${vNote}7`, 'End-of-year convention');
+    w(ws, 'A5', 'Stub: share of forecast Year 1 still to come', { bold: true });
+    const VD = inRef(IN.date), FY = inRef(IN.fyEnd);
+    w(ws, 'B5', fx(`IF(OR(NOT(ISNUMBER(${VD})),NOT(ISNUMBER(${FY}))),1,MAX(0,MIN(1,(EDATE(${FY},12)-${VD})/(EDATE(${FY},12)-${FY}))))`), { bold: true, fmt: NFB });
+    note(ws, `${vNote}5`, '1.00 = valuing at the fiscal year end; 0.40 = 40% of Year 1 remains after the valuation date');
+    hdr(ws, 'A7', unitLabel, { align: 'left', wrap: false });
+    hdr(ws, 'B7', null, { wrap: false });
+    for (let j = 0; j < m; j++) hdr(ws, `${V(j)}7`, fx(inRef(IN.fcst(j))), { wrap: false });
+    w(ws, 'A8', "Share of year's cash flow counted");
+    for (let j = 0; j < m; j++) w(ws, `${V(j)}8`, j === 0 ? fx('$B$5') : 1, { fmt: NFB });
+    w(ws, 'A9', 'Discount period (years from valuation date)');
+    for (let j = 0; j < m; j++) w(ws, `${V(j)}9`, fx(j === 0 ? `IF(${MID}=1,$B$5/2,$B$5)` : `$B$5+${j}-IF(${MID}=1,0.5,0)`), { fmt: NFB });
+    w(ws, `${vNote}9`, fx(`IF(${MID}=1,"Mid-year: each cash flow at the middle of its (stub) period","End-of-year convention")`), { italic: true, size: 9, color: T.grey });
 
-    let rr = 9;
+    let rr = 11;
     const fr = (label, src, o = {}) => {
       const at = rr++;
       w(ws, `A${at}`, label, o.key ? { bold: true, fill: KEY } : o.bold ? { bold: true } : {});
@@ -418,27 +473,34 @@ export function buildDcfWorkbook(a) {
       fr('(+) Depreciation & Amortisation', (Y) => `Forecast!${Y}47`);
       fr('(−) Capex', (Y) => `Forecast!${Y}48`);
       fr('(−) Increase in NWC', (Y) => `Forecast!${Y}49`);
-      cashRow = fr('Free Cash Flow to Firm', (Y) => `Forecast!${Y}50`, { key: true });
+      fr('(−) Lease cost (Ind AS 116)', (Y) => `Forecast!${Y}50`);
+      cashRow = fr('Free Cash Flow to Firm', (Y) => `Forecast!${Y}51`, { key: true });
     } else if (cf === 'fcfe') {
       fr('PAT', (Y) => `Forecast!${Y}44`);
       fr('(+) Depreciation & Amortisation', (Y) => `Forecast!${Y}45`);
       fr('(−) Capex', (Y) => `Forecast!${Y}46`);
       fr('(−) Increase in NWC', (Y) => `Forecast!${Y}47`);
       fr('(+) Net Borrowing / (Repayment)', (Y) => `Forecast!${Y}48`);
-      cashRow = fr('Free Cash Flow to Equity', (Y) => `Forecast!${Y}49`, { key: true });
+      fr('(−) Lease payments', (Y) => `Forecast!${Y}49`);
+      cashRow = fr('Free Cash Flow to Equity', (Y) => `Forecast!${Y}50`, { key: true });
     } else {
       fr('PAT', (Y) => `Forecast!${Y}22`);
       fr('Dividend payout (% of PAT)', (Y) => `Assumptions!${Y}26`, { fmt: NF.pct });
       cashRow = fr('Dividends', (Y) => `Forecast!${Y}24`, { key: true });
       fr(`Dividend per share (${sym})`, (Y) => `Forecast!${Y}25`, { fmt: NF.n2 });
+      fr('Return on opening equity (ROE)', (Y) => `Forecast!${Y}45`, { fmt: NF.pct });
+      fr('Closing book equity (owners)', (Y) => `Forecast!${Y}46`);
     }
     rr++;
+    const cntRow = rr++;
+    w(ws, `A${cntRow}`, 'Cash flow counted (× share of year)');
+    for (let j = 0; j < m; j++) w(ws, `${V(j)}${cntRow}`, fx(`${V(j)}${cashRow}*${V(j)}$8`), { fmt: NF.n1 });
     const dfRow = rr++;
     w(ws, `A${dfRow}`, 'Discount factor');
-    for (let j = 0; j < m; j++) w(ws, `${V(j)}${dfRow}`, fx(`1/(1+$B$4)^${V(j)}$7`), { ...S11, fmt: NF4 });
+    for (let j = 0; j < m; j++) w(ws, `${V(j)}${dfRow}`, fx(`1/(1+$B$4)^${V(j)}$9`), { ...S11, fmt: NF4 });
     const pvRow = rr++;
     w(ws, `A${pvRow}`, 'Present value', { bold: true });
-    for (let j = 0; j < m; j++) w(ws, `${V(j)}${pvRow}`, fx(`${V(j)}${cashRow}*${V(j)}${dfRow}`), { bold: true, fmt: NF.n1 });
+    for (let j = 0; j < m; j++) w(ws, `${V(j)}${pvRow}`, fx(`${V(j)}${cntRow}*${V(j)}${dfRow}`), { bold: true, fmt: NF.n1 });
     rr++;
     hdr(ws, `A${rr}`, 'Valuation', { align: 'left', wrap: false });
     hdr(ws, `B${rr}`, unitShort, { wrap: false });
@@ -451,37 +513,78 @@ export function buildDcfWorkbook(a) {
       if (o.note) note(ws, `${vNote}${at}`, o.note);
       return at;
     };
+    const lastPer = `${lastV}$9`;
+    const endPer = `($B$5+${m - 1})`;
     const sumRow = val('Sum of PV of forecast cash flows', fx(`SUM(${V(0)}${pvRow}:${lastV}${pvRow})`));
-    let tvRow;
+    const metricRef = `Forecast!${lastF}${cf === 'fcff' ? 13 : 22}`;
+    let tvRow, tvPerRow, gRow, finRow, baseRow, growRow, patRow, roeRow, metricRow;
     if (tv === 'gordon') {
-      const fin = val('Final-year cash flow', fx(`${lastV}${cashRow}`));
-      const g = val('Terminal growth rate (g)', fx(inRef(IN.tv)), { link: true, fmt: NF.pct });
-      const nxt = val('Cash flow in year after forecast', fx(`B${fin}*(1+B${g})`));
-      tvRow = val('Terminal value', fx(`IF($B$4<=B${g},"NM",B${nxt}/($B$4-B${g}))`), { note: 'NM if discount rate ≤ g' });
+      gRow = val('Terminal growth rate (g)', fx(inRef(IN.tv)), { link: true, fmt: NF.pct, note: 'Should not exceed long-run nominal GDP growth' });
+      finRow = val('Final-year cash flow (as forecast)', fx(`${lastV}${cashRow}`));
+      let nextF;
+      if (cf === 'fcff') {
+        baseRow = val('Final-year cash flow before ΔNWC', fx(`Forecast!${lastF}46+Forecast!${lastF}47-Forecast!${lastF}48-Forecast!${lastF}50`), { note: 'NOPAT + D&A − capex − lease cost' });
+        growRow = val('Final-year net working capital (grows at g)', fx(`Forecast!${lastF}33`));
+        nextF = `IF(${NORM}=1,B${baseRow}*(1+B${gRow})-B${growRow}*B${gRow},B${finRow}*(1+B${gRow}))`;
+      } else if (cf === 'fcfe') {
+        baseRow = val('Final-year cash flow before ΔNWC and borrowing', fx(`Forecast!${lastF}44+Forecast!${lastF}45-Forecast!${lastF}46-Forecast!${lastF}49`), { note: 'PAT + D&A − capex − lease payments' });
+        growRow = val('Final-year NWC less closing debt (both grow at g)', fx(`Forecast!${lastF}33-Forecast!${lastF}40`), { note: 'Debt grows at g → net borrowing = g × debt (constant leverage)' });
+        nextF = `IF(${NORM}=1,B${baseRow}*(1+B${gRow})-B${growRow}*B${gRow},B${finRow}*(1+B${gRow}))`;
+      } else {
+        patRow = val('Final-year PAT', fx(`Forecast!${lastF}22`));
+        roeRow = val('Final-year ROE (on opening equity)', fx(`Forecast!${lastF}45`), { fmt: NF.pct });
+        const sp = val('Sustainable payout = 1 − g ÷ ROE', fx(`IFERROR(MAX(0,1-B${gRow}/B${roeRow}),0)`), { fmt: NF.pct, note: 'Compare with the final-year payout above' });
+        nextF = `IF(${NORM}=1,B${patRow}*(1+B${gRow})*B${sp},B${finRow}*(1+B${gRow}))`;
+      }
+      const nxt = val('Terminal-year cash flow (Year N+1)', fx(nextF), { note: 'Normalised when the Inputs toggle = 1' });
+      tvRow = val('Terminal value', fx(`IF($B$4<=B${gRow},"NM",B${nxt}/($B$4-B${gRow}))`), { note: 'NM if discount rate ≤ g' });
+      tvPerRow = val('Terminal value discount period (years)', fx(lastPer), { fmt: NFB, note: "Gordon TV uses the final year's discount period (consistent with mid-year flows)" });
     } else {
-      const metric = val(`Final-year ${cf === 'fcff' ? 'EBITDA' : 'PAT'}`, fx(`Forecast!${lastF}${cf === 'fcff' ? 13 : 22}`), { link: true });
+      metricRow = val(`Final-year ${cf === 'fcff' ? 'EBITDA' : 'PAT'}`, fx(metricRef), { link: true });
       const mult = val(`Exit ${multN} multiple`, fx(inRef(IN.tv)), { link: true, fmt: NF.x });
-      tvRow = val('Terminal value', fx(`B${metric}*B${mult}`));
+      tvRow = val('Terminal value', fx(`B${metricRow}*B${mult}`));
+      tvPerRow = val('Terminal value discount period (years)', fx(`$B$5+${m - 1}`), { fmt: NFB, note: 'Exit value is realised at the end of the final year' });
     }
-    const pvTvRow = val('PV of terminal value', fx(`IF(ISNUMBER(B${tvRow}),B${tvRow}*${lastV}${dfRow},"NM")`));
-    let eqRow;
+    const pvTvRow = val('PV of terminal value', fx(`IF(ISNUMBER(B${tvRow}),B${tvRow}/(1+$B$4)^B${tvPerRow},"NM")`));
+    let eqRow, ndRow, nciRow, noRow;
     if (cf === 'fcff') {
       const ev = val('Enterprise Value', fx(`IF(ISNUMBER(B${pvTvRow}),B${sumRow}+B${pvTvRow},"NM")`), { sub: true });
-      const nd = val('(−) Net debt / (net cash)', fx('WACC!$B$27'), { link: true });
-      const nci = val('(−) Non-controlling interest', fx('WACC!$B$28'), { link: true });
-      eqRow = val('Equity Value', fx(`IF(ISNUMBER(B${ev}),B${ev}-B${nd}-B${nci},"NM")`), { key: true });
+      ndRow = val('(−) Net debt / (net cash)', fx('WACC!$B$34'), { link: true });
+      nciRow = val('(−) Non-controlling interest', fx('WACC!$B$28'), { link: true });
+      noRow = val('(+) Non-operating investments', fx('WACC!$B$31'), { link: true });
+      eqRow = val('Equity Value', fx(`IF(ISNUMBER(B${ev}),B${ev}-B${ndRow}-B${nciRow}+B${noRow},"NM")`), { key: true });
     } else {
       eqRow = val('Equity Value', fx(`IF(ISNUMBER(B${pvTvRow}),B${sumRow}+B${pvTvRow},"NM")`), { key: true });
     }
-    const shRow = val(`Diluted shares outstanding (${unit})`, fx(inRef(IN.shares)), { link: true, fmt: NF.n2 });
+    const shRow = val(`Diluted shares outstanding (${unit})`, fx(SH), { link: true, fmt: NF.n2 });
     const vpsRow = val(`Value per Share (${sym})`, fx(`IF(AND(ISNUMBER(B${eqRow}),B${shRow}>0),B${eqRow}/B${shRow},"NM")`), { key: true, fmt: NF.n2 });
     const pxRow = val(`Current share price (${sym})`, fx(inRef(IN.price)), { link: true, fmt: NF.n2 });
     val('Upside / (Downside)', fx(`IF(AND(ISNUMBER(B${vpsRow}),B${pxRow}>0),B${vpsRow}/B${pxRow}-1,"NM")`), { fmt: NF.pct });
-    val('Terminal value as % of total value', fx(`IFERROR(B${pvTvRow}/(B${sumRow}+B${pvTvRow}),"NM")`), { fmt: NF.pct, note: 'Above ~75% means the value depends heavily on terminal assumptions' });
+    val('Terminal value as % of total value', fx(`IFERROR(B${pvTvRow}/(B${sumRow}+B${pvTvRow}),"NM")`), { fmt: NF.pct, note: 'Typically 60–80%; above ~80% the value rests on terminal assumptions' });
     if (tv === 'gordon') {
-      val(`Implied exit ${multN}`, fx(`IFERROR(B${tvRow}/Forecast!${lastF}${cf === 'fcff' ? 13 : 22},"NM")`), { fmt: NF.x, note: 'Compare with CCA / precedent multiples' });
+      val(cf === 'fcff' ? 'Implied terminal EV / EBITDA (TV ÷ final-year EBITDA)' : 'Implied terminal P / E (TV ÷ final-year PAT)',
+        fx(`IFERROR(B${tvRow}*(1+$B$4)^(${endPer}-B${tvPerRow})/${metricRef},"NM")`),
+        { fmt: NF.x, note: `TV restated to the end of the final year; compare with ${cf === 'fcff' ? 'trading / transaction multiples' : 'trading / transaction P/E'}` });
+      if (cf === 'fcff') {
+        const re = val('Terminal reinvestment rate', fx(`IFERROR(1-B${tvRow - 1}/(Forecast!${lastF}46*(1+B${gRow})),"NM")`), { fmt: NF.pct, note: 'Share of Year N+1 NOPAT reinvested (capex − D&A + ΔNWC + lease cost)' });
+        val('Implied return on new invested capital (g ÷ reinvestment rate)', fx(`IFERROR(IF(B${re}>0,B${gRow}/B${re},"NM"),"NM")`), { fmt: NF.pct, note: 'Should be ≥ WACC and not far above current ROIC; zero / negative reinvestment with g > 0 is not sustainable' });
+      }
+      if (cf === 'ddm') {
+        val('Final-year sustainable growth (ROE × retention)', fx(`IFERROR(Forecast!${lastF}45*(1-Assumptions!${lastF}26),"NM")`), { fmt: NF.pct, note: 'If far from g, the final-year payout is inconsistent with g' });
+      }
     } else {
-      val('Implied perpetual growth rate', fx(`IFERROR((B${tvRow}*$B$4-${lastV}${cashRow})/(B${tvRow}+${lastV}${cashRow}),"NM")`), { fmt: NF.pct, note: 'Should be below long-run nominal GDP growth' });
+      const tvm = `(B${tvRow}/(1+$B$4)^(0.5*${MID}))`;
+      let f;
+      if (cf === 'fcff') {
+        const cb = `(Forecast!${lastF}46+Forecast!${lastF}47-Forecast!${lastF}48-Forecast!${lastF}50)`;
+        f = `IFERROR(IF(${NORM}=1,(${tvm}*$B$4-${cb})/(${tvm}+${cb}-Forecast!${lastF}33),(${tvm}*$B$4-${lastV}${cashRow})/(${tvm}+${lastV}${cashRow})),"NM")`;
+      } else if (cf === 'fcfe') {
+        const cb = `(Forecast!${lastF}44+Forecast!${lastF}45-Forecast!${lastF}46-Forecast!${lastF}49)`;
+        f = `IFERROR(IF(${NORM}=1,(${tvm}*$B$4-${cb})/(${tvm}+${cb}-(Forecast!${lastF}33-Forecast!${lastF}40)),(${tvm}*$B$4-${lastV}${cashRow})/(${tvm}+${lastV}${cashRow})),"NM")`;
+      } else {
+        f = `IFERROR((${tvm}*$B$4-${lastV}${cashRow})/(${tvm}+${lastV}${cashRow}),"NM")`;
+      }
+      val('Implied perpetual growth rate', fx(f), { fmt: NF.pct, note: 'Should be below long-run nominal GDP growth (normalised Year N+1 basis when the toggle = 1)' });
     }
 
     /* sensitivity */
@@ -492,24 +595,31 @@ export function buildDcfWorkbook(a) {
     hdr(ws, `B${hr}`, tv === 'exit' ? 'Rate ↓ / Multiple →' : 'Rate ↓ / g →');
     const ks = [-2, -1, 0, 1, 2];
     ks.forEach((k, c) => hdr(ws, `${V(c)}${hr}`, fx(`${inRef(IN.tv)}+(${k})*${inRef(IN.tvStep)}`), { wrap: false, fmt: tv === 'exit' ? NF.x : NF.pct }));
-    const cashRange = `$${V(0)}$${cashRow}:$${lastV}$${cashRow}`;
-    const perRange = `$${V(0)}$7:$${lastV}$7`;
-    const less = cf === 'fcff' ? '-WACC!$B$27-WACC!$B$28' : '';
+    const cntRange = `$${V(0)}$${cntRow}:$${lastV}$${cntRow}`;
+    const perRange = `$${V(0)}$9:$${lastV}$9`;
+    const less = cf === 'fcff' ? `-$B$${ndRow}-$B$${nciRow}+$B$${noRow}` : '';
     ks.forEach((k, i) => {
       const row = hr + 1 + i;
       w(ws, `B${row}`, fx(`$B$4+(${k})*${inRef(IN.rateStep)}`), { bold: true, fill: T.sec, fmt: NF.pct, align: 'center' });
       ks.forEach((_, c) => {
         const C = V(c);
-        const pvs = `SUMPRODUCT(${cashRange}/(1+$B${row})^${perRange})`;
-        const disc = `(1+$B${row})^$${lastV}$7`;
-        const f = tv === 'gordon'
-          ? `IFERROR(IF(OR($B${row}<=${C}$${hr},${inRef(IN.shares)}<=0),"NM",(${pvs}+$${lastV}$${cashRow}*(1+${C}$${hr})/($B${row}-${C}$${hr})/${disc}${less})/${inRef(IN.shares)}),"NM")`
-          : `IFERROR(IF(${inRef(IN.shares)}<=0,"NM",(${pvs}+Forecast!$${lastF}$${cf === 'fcff' ? 13 : 22}*${C}$${hr}/${disc}${less})/${inRef(IN.shares)}),"NM")`;
+        const pvs = `SUMPRODUCT(${cntRange}/(1+$B${row})^${perRange})`;
+        const disc = `(1+$B${row})^$B$${tvPerRow}`;
+        let f;
+        if (tv === 'gordon') {
+          const g = `${C}$${hr}`;
+          const next = cf === 'ddm'
+            ? `IF(${NORM}=1,$B$${patRow}*(1+${g})*MAX(0,1-${g}/$B$${roeRow}),$B$${finRow}*(1+${g}))`
+            : `IF(${NORM}=1,$B$${baseRow}*(1+${g})-$B$${growRow}*${g},$B$${finRow}*(1+${g}))`;
+          f = `IFERROR(IF(OR($B${row}<=${g},${SH}<=0),"NM",(${pvs}+${next}/($B${row}-${g})/${disc}${less})/${SH}),"NM")`;
+        } else {
+          f = `IFERROR(IF(${SH}<=0,"NM",(${pvs}+$B$${metricRow}*${C}$${hr}/${disc}${less})/${SH}),"NM")`;
+        }
         const centre = i === 2 && c === 2;
         w(ws, `${C}${row}`, fx(f), { fmt: NF.n2, align: 'right', ...(centre ? { bold: true, fill: KEY } : S11) });
       });
     });
-    note(ws, `A${hr + 6}`, 'Centre cell (shaded) equals the base-case value per share. Step sizes are set on Inputs.');
+    note(ws, `A${hr + 7}`, 'Centre cell (shaded) equals the base-case value per share. Step sizes are set on Inputs.');
   }
 
   /* tab order, as the templates */
@@ -611,6 +721,7 @@ export function writeAssumptions(wb, { defs, drivers, n, m, label, unitShort }) 
     ocl: (X) => `IFERROR(${Hs(X, 60)}/${Hs(X, 7)},"")`,
     netBorrow: (X) => `IFERROR(${Hs(X, 79)},"")`,
     payout: (X) => `IFERROR(-${Hs(X, 81)}/${Hs(X, 23)},"")`,
+    leasePay: (X) => `IFERROR(-${Hs(X, 82)}/${Hs(X, 7)},"")`,
   };
   for (const dr of defs) {
     if (dr.section) {
@@ -622,10 +733,12 @@ export function writeAssumptions(wb, { defs, drivers, n, m, label, unitShort }) 
     w(ws, `A${dr.row}`, dr.fmt === 'money' ? `${dr.label} (${unitShort})` : dr.label);
     for (let i = 0; i < n; i++) {
       const X = H(i);
-      if (dr.key === 'gRev' || dr.key === 'intRate') {
+      if (dr.key === 'gRev' || dr.key === 'intRate' || dr.key === 'leaseAdd') {
         if (i === 0) { w(ws, `${X}${dr.row}`, 'n.a.', { italic: true, size: 9, color: T.grey, align: 'right', fmt }); continue; }
         const P = H(i - 1);
-        const f = dr.key === 'gRev' ? `IFERROR(${Hs(X, 7)}/${Hs(P, 7)}-1,"")` : `IFERROR(${Hs(X, 16)}/(${Hs(P, 52)}+${Hs(P, 57)}),"")`;
+        const f = dr.key === 'gRev' ? `IFERROR(${Hs(X, 7)}/${Hs(P, 7)}-1,"")`
+          : dr.key === 'leaseAdd' ? `IFERROR(((${Hs(X, 53)}+${Hs(X, 58)})-(${Hs(P, 53)}+${Hs(P, 58)})-${Hs(X, 82)})/${Hs(X, 7)},"")`
+            : `IFERROR(${Hs(X, 16)}/(${Hs(P, 52)}+${Hs(P, 57)}),"")`;
         w(ws, `${X}${dr.row}`, fx(f), { fmt });
       } else w(ws, `${X}${dr.row}`, fx(refF[dr.key](X)), { fmt });
     }

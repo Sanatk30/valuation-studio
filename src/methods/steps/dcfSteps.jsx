@@ -7,7 +7,7 @@ import { YahooSearch, mergeFetch } from '../../components/PeerYahoo.jsx';
 import { FetchNote } from './templateSteps.jsx';
 import { toEngineInput } from '../../store/methodModel.js';
 import {
-  CF_KINDS, TV_KINDS, COE_KINDS, exitMultipleName, templateName, computeDcfT, dcfLabels, clampN, betaPeers,
+  CF_KINDS, TV_KINDS, COE_KINDS, exitMultipleName, templateName, computeDcfT, dcfLabels, clampN, betaPeers, dcfDriverDefs, midYearDefault,
 } from '../../lib/engine/dcfTemplate.js';
 import { MIN_YEARS, MAX_YEARS } from '../../lib/engine/companyPage.js';
 import { fmtNum, fmtTpl, CURRENCIES, UNITS } from '../../lib/format.js';
@@ -85,10 +85,21 @@ export const dcfSettingsStep = () => ({
     f.choice('dcf.settings.coe', 'Cost of equity', COE_KINDS.map((k) => ({ value: k.value, label: k.label, hint: k.note }))),
     f.int('dcf.settings.histYears', 'Historical years', { min: MIN_YEARS, max: MAX_YEARS, hint: `${MIN_YEARS} to ${MAX_YEARS}. Template: 3.` }),
     f.int('dcf.settings.fcstYears', 'Forecast years', { min: MIN_YEARS, max: MAX_YEARS, hint: `${MIN_YEARS} to ${MAX_YEARS}. Template: 5.` }),
-    f.date('dcf.settings.valDate', 'Valuation date', { hint: 'End of the last historical year — cash flows are discounted from here (end-of-year convention: forecast year t at t years).' }),
+    f.date('dcf.settings.valDate', 'Valuation date', { hint: 'Date the value is struck (e.g. today). Cash flows are discounted from this date; leave blank to value at the fiscal year end below.' }),
+    f.date('dcf.settings.fyEnd', 'Latest fiscal year end', { hint: 'Balance sheet date of the latest actual year, e.g. 31-Mar-2026. Forecast Year 1 ends 12 months later; with the valuation date it sets the stub (the part of Year 1 still to come).' }),
     f.choice('dcf.settings.lease', 'Include lease liabilities in net debt?', [
-      { value: 1, label: 'Yes (1)' }, { value: 0, label: 'No (0)' },
-    ], { hint: 'Template: 1 — under Ind AS 116 rent sits below EBITDA, so lease liabilities are debt-like.' }),
+      { value: 1, label: 'Yes (1) — leases are debt' }, { value: 0, label: 'No (0) — leases are an operating cost' },
+    ], { hint: S(data).cf === 'ddm' ? 'Not used by the DDM value; kept for consistency with the FCFF / CCA workbooks.'
+      : S(data).cf === 'fcfe' ? 'FCFE always deducts lease cash payments. Toggle kept for consistency with the FCFF / CCA workbooks.'
+        : '1 = lease liabilities in net debt & WACC, FCFF deducts new lease additions. 0 = FCFF deducts lease payments, liabilities excluded. Template: 1.' }),
+    f.choice('dcf.settings.midYear', 'Mid-year discounting convention?', [
+      { value: 1, label: 'Yes (1) — cash flows arrive evenly through the year' }, { value: 0, label: 'No (0) — end of year' },
+    ], { required: false, hint: `Blank = the template's default: ${S(data).cf ? (midYearDefault(S(data).cf) ? 'on (1)' : 'off (0)') : 'on (1) for FCFF / FCFE, off (0) for the DDM'}. DDM default 0: dividends are paid as lump sums.` }),
+    f.choice('dcf.settings.normalise', 'Normalise the terminal year?', [
+      { value: 1, label: 'Yes (1)' }, { value: 0, label: 'No (0) — grow the final-year cash flow' },
+    ], { required: false, hint: S(data).cf === 'ddm' ? "Blank = the template's default (1): terminal payout = 1 − g ÷ ROE (sustainable growth)."
+      : S(data).cf === 'fcfe' ? "Blank = the template's default (1): Year N+1 FCFE grows at g, invests g × NWC and borrows g × debt."
+        : "Blank = the template's default (1): Year N+1 FCFF grows every line at g and invests g × NWC." }),
   ],
   Extra: DcfLabelsEditor,
   extraBelow: true,
@@ -152,7 +163,7 @@ function AssumptionsExtra({ data, setData, company }) {
     <div className="step-tools">
       <div className="tool-card">
         <div className="tool-h">Forecast drivers</div>
-        <DriversGrid drivers={data.dcf.drivers} onChange={setDrivers} m={m} labels={r.labels} refs={r.ref} locale={locale} unitLabel={unit} />
+        <DriversGrid drivers={data.dcf.drivers} onChange={setDrivers} m={m} labels={r.labels} refs={r.ref} locale={locale} unitLabel={unit} defs={dcfDriverDefs(r.cf)} />
       </div>
       <div className="tool-card">
         <div className="tool-h">What the drivers give <span className="fld-opt">{unit}</span></div>
@@ -284,6 +295,8 @@ export const dcfRateStep = () => ({
         f.pct('dcf.wacc.kd', 'Pre-tax cost of debt', { min: 0, hint: 'e.g. 8.5% – current borrowing rate / rating-based yield' }),
         f.pct('dcf.wacc.taxRate', 'Marginal tax rate', { min: 0, max: 100, hint: 'e.g. 25.2% (Sec 115BAA incl. surcharge & cess) – confirm for the company' }),
         f.pct('dcf.wacc.targetWd', 'Target D / (D + E)', { min: 0, lt: 100, hint: 'e.g. 15.0% – long-run target; peer median or the current weight are common choices' }),
+        f.money('dcf.wacc.nonOpOverride', 'Override: non-operating investments to add', { required: false, hint: 'Blank = the non-current investments on the latest balance sheet. Enter fair / market value if known; exclude any investment whose income is inside EBITDA.' }),
+        f.money('dcf.wacc.netDebtOverride', 'Override: net debt at the valuation date', { required: false, min: undefined, hint: 'Blank = net debt on the latest balance sheet. Use when the valuation date is after it (e.g. the latest quarterly net debt).' }),
       );
     }
     return out;

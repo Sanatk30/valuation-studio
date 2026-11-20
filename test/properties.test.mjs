@@ -84,18 +84,30 @@ for (let it = 0; it < RUNS; it++) {
   if (rnd() < 0.3) d.company.price = pick([0, null]);
   d.capm.betaMode = pick(['direct', 'hamada', null]);
   d.wacc.targetWd = pick([rv(0, 90), null]);
+  d.wacc.nonOpOverride = pick([null, null, rv(0, 500)]);
+  d.wacc.netDebtOverride = pick([null, null, rv(-300, 800)]);
+  d.settings.midYear = pick([0, 1, null]);
+  d.settings.normalise = pick([0, 1, null]);
+  d.settings.fyEnd = pick(['', '2026-03-31', '2024-02-29']);
+  d.settings.valDate = pick(['', '2026-11-20', '2026-03-31', '2027-06-30', '2025-01-01']);
   try {
     const r = computeDcfT(A);
     clean(r, 'dcf');
     const v = r.valuation;
-    if (r.cf === 'fcff' && isNum(v.ev) && !near(v.equity, v.ev - v.netDebt - v.nci)) flag('FCFF equity ≠ EV − net debt − NCI', it);
+    if (r.cf === 'fcff' && isNum(v.ev) && !near(v.equity, v.ev - v.netDebt - v.nci + v.nonOp)) flag('FCFF equity ≠ EV − net debt − NCI + non-operating investments', it);
+    if (!(v.stub >= 0 && v.stub <= 1)) flag('stub outside 0–1', v.stub);
     if (isNum(v.perShare) !== isNum(r.sens.grid[2][2]) || (isNum(v.perShare) && !near(r.sens.grid[2][2], v.perShare))) flag('grid centre ≠ value per share', `${r.sens.grid[2][2]} vs ${v.perShare}`);
     if (r.tv === 'gordon' && (v.tv === 'NM') !== (v.rate <= v.g)) flag('Gordon NM not exactly when rate ≤ g', `${v.rate} ${v.g}`);
-    if (r.tv === 'exit' && isNum(v.implied) && Math.abs(v.rate - v.implied) > 1e-6 && !near(v.lastCash * (1 + v.implied) / (v.rate - v.implied), v.tv, 1e-6)) flag('implied growth does not reproduce the exit TV', it);
-    if (r.tv === 'gordon' && isNum(v.tv) && isNum(v.implied) && !near(v.implied * (r.cf === 'fcff' ? r.F.ebitda.at(-1) : r.F.pat.at(-1)), v.tv)) flag('implied multiple does not reproduce the Gordon TV', it);
+    if (r.tv === 'exit' && isNum(v.implied) && Math.abs(v.rate - v.implied) > 1e-6) {
+      // the implied g, put back into the Gordon formula, gives the exit TV on the mid-year basis
+      const g = v.implied, tvm = v.tv / (1 + v.rate) ** (0.5 * v.mid);
+      const next = r.cf !== 'ddm' && v.normalise ? v.baseCash * (1 + g) - v.growBase * g : v.lastCash * (1 + g);
+      if (!near(next / (v.rate - g), tvm, 1e-6)) flag('implied growth does not reproduce the exit TV', it);
+    }
+    if (r.tv === 'gordon' && isNum(v.tv) && isNum(v.implied) && !near(v.implied * (r.cf === 'fcff' ? r.F.ebitda.at(-1) : r.F.pat.at(-1)), v.tv * (1 + v.rate) ** (v.endPeriod - v.tvPeriod))) flag('implied multiple does not reproduce the Gordon TV', it);
     if (r.F.tax.slice(r.n).some((x) => x < 0)) flag('negative forecast tax', it);
-    const pv = r.flows.cash.reduce((s, c, j) => s + c / (1 + v.rate) ** (j + 1), 0);
-    if (!near(pv, v.sumPv)) flag('sum of PVs ≠ Σ cash / (1 + r)^t', `${pv} ${v.sumPv}`);
+    const pv = r.flows.cash.reduce((s, c, j) => s + (c * (j === 0 ? v.stub : 1)) / (1 + v.rate) ** (j === 0 ? (v.mid ? v.stub / 2 : v.stub) : v.stub + j - (v.mid ? 0.5 : 0)), 0);
+    if (!near(pv, v.sumPv)) flag('sum of PVs ≠ Σ cash × share ÷ (1 + r)^period', `${pv} ${v.sumPv}`);
   } catch (e) { flag(`throws: ${e.message}`, e.stack); }
 }
 report('DCF (300 random models)');

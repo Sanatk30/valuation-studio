@@ -9,7 +9,7 @@
  */
 import { buildWorkbook } from '../../src/lib/excel/exportExcel.js';
 import { colL } from '../../src/lib/excel/xlsxUtil.js';
-import { computeDcfT, DRIVERS } from '../../src/lib/engine/dcfTemplate.js';
+import { computeDcfT, dcfDriverDefs } from '../../src/lib/engine/dcfTemplate.js';
 import { IS_LINES, BS_LINES, CF_LINES } from '../../src/lib/engine/companyPage.js';
 import { CURRENCIES } from '../../src/lib/format.js';
 import { recalc } from './recalc.mjs';
@@ -47,33 +47,49 @@ export function checkDcfWorkbook(a, opts = {}) {
     for (let i = 0; i < n; i++) cmp(r.hist[line.key][i], 'Historicals', `${H(i)}${row}`, line.label);
   }
   /* Assumptions: historical reference ratios */
-  for (const d of DRIVERS.filter((x) => x.key)) for (let i = 0; i < n; i++) cmp(r.ref[d.key][i], 'Assumptions', `${H(i)}${d.row}`, `ref ${d.key}`);
+  for (const d of dcfDriverDefs(cf).filter((x) => x.key)) for (let i = 0; i < n; i++) cmp(r.ref[d.key][i], 'Assumptions', `${H(i)}${d.row}`, `ref ${d.key}`);
   /* Forecast: every line, every column */
   for (const [key, row] of Object.entries(FROWS)) {
     for (let k = 0; k < n + m; k++) cmp(r.F[key][k], 'Forecast', `${k < n ? H(k) : Fc(k - n)}${row}`, `F.${key}[${k}]`);
+  }
+  /* leases (FCFF / FCFE) and the DDM's book equity: the template's extra Forecast rows */
+  const extra = cf === 'fcff' ? { leasePay: [54, true], leaseAdd: [55, false], leaseCost: [56, false] }
+    : cf === 'fcfe' ? { leasePay: [53, true] } : { eqOpen: [44, false], roe: [45, false], eqClose: [46, true] };
+  for (const [key, [row, hist]] of Object.entries(extra)) {
+    for (let k = hist ? 0 : n; k < n + m; k++) cmp(r.F[key][k], 'Forecast', `${k < n ? H(k) : Fc(k - n)}${row}`, `F.${key}[${k}]`);
   }
   /* valuation sheet */
   const S = wb.worksheets.find((w) => / - (Gordon Growth|Exit Multiple)$/.test(w.name)).name;
   const v = r.valuation;
   const row = (label) => { const x = X.row(S, label); ok(x > 0, `${S}: row "${label}"`); return x; };
   cmp(v.rate, S, 'B4', 'discount rate');
+  cmp(v.stub, S, 'B5', 'stub');
   const cashLabel = cf === 'fcff' ? 'Free Cash Flow to Firm' : cf === 'fcfe' ? 'Free Cash Flow to Equity' : 'Dividends';
-  const rc = row(cashLabel), rdf = row('Discount factor'), rpv = row('Present value');
+  const rc = row(cashLabel), rcn = row('Cash flow counted (× share of year)'), rdf = row('Discount factor'), rpv = row('Present value');
   for (let j = 0; j < m; j++) {
+    cmp(v.share[j], S, `${V(j)}8`, `share[${j}]`);
+    cmp(v.period[j], S, `${V(j)}9`, `period[${j}]`);
     cmp(r.flows.cash[j], S, `${V(j)}${rc}`, `cash[${j}]`);
+    cmp(v.counted[j], S, `${V(j)}${rcn}`, `counted[${j}]`);
     cmp(v.df[j], S, `${V(j)}${rdf}`, `df[${j}]`);
     cmp(v.pv[j], S, `${V(j)}${rpv}`, `pv[${j}]`);
   }
   const b = (label, eng) => cmp(eng, S, `B${row(label)}`, label);
   b('Sum of PV of forecast cash flows', v.sumPv);
   b('Terminal value', v.tv);
+  b('Terminal value discount period (years)', v.tvPeriod);
   b('PV of terminal value', v.pvTv);
-  if (cf === 'fcff') { b('Enterprise Value', v.ev); b('(−) Net debt / (net cash)', v.netDebt); b('(−) Non-controlling interest', v.nci); }
+  if (tv === 'gordon') b('Terminal-year cash flow (Year N+1)', v.nextCash);
+  if (cf === 'fcff') {
+    b('Enterprise Value', v.ev); b('(−) Net debt / (net cash)', v.netDebt); b('(−) Non-controlling interest', v.nci); b('(+) Non-operating investments', v.nonOp);
+    if (tv === 'gordon') { b('Terminal reinvestment rate', v.reinvestRate); b('Implied return on new invested capital (g ÷ reinvestment rate)', v.ronic); }
+  }
+  if (cf === 'ddm' && tv === 'gordon') { b('Sustainable payout = 1 − g ÷ ROE', v.payoutSust); b('Final-year sustainable growth (ROE × retention)', isFinite(v.sustGrowth) ? v.sustGrowth : 'NM'); }
   b('Equity Value', v.equity);
   b('Upside / (Downside)', v.upside);
   b('Terminal value as % of total value', v.tvShare);
   b(`Value per Share (${CURRENCIES[a.settings?.currency]?.symbol || ''})`, v.perShare);
-  const implied = ['Implied exit EV / EBITDA', 'Implied exit P / E', 'Implied perpetual growth rate'].map((l) => X.row(S, l)).find((x) => x > 0);
+  const implied = ['Implied terminal EV / EBITDA (TV ÷ final-year EBITDA)', 'Implied terminal P / E (TV ÷ final-year PAT)', 'Implied perpetual growth rate'].map((l) => X.row(S, l)).find((x) => x > 0);
   ok(implied > 0, 'cross-check row');
   cmp(v.implied, S, `B${implied}`, 'cross-check');
   // sensitivity grid: the header row is the one whose B cell starts "Rate ↓"
@@ -91,16 +107,17 @@ export function checkDcfWorkbook(a, opts = {}) {
     cmp(r.coe.ke, K, 'B9', 'Ke'); cmp(r.coe.beta, K, 'B6', 'beta'); cmp(r.coe.relevered, K, 'B16', 're-levered beta');
     const peers = r.coe.peers.rows;
     peers.forEach((p, i) => cmp(Number.isFinite(p.bu) ? p.bu : '', K, `I${14 + i}`, `peer βu ${p.name}`));
-    if (peers.length) {
-      cmp(Number.isFinite(r.coe.peers.mean) ? r.coe.peers.mean : 'NM', K, `I${14 + peers.length}`, 'peer βu mean');
-      cmp(Number.isFinite(r.coe.peers.median) ? r.coe.peers.median : 'NM', K, `I${15 + peers.length}`, 'peer βu median');
-    }
+    const nRows = Math.max(8, peers.length);       // the template's eight peer rows, always there
+    cmp(Number.isFinite(r.coe.peers.mean) ? r.coe.peers.mean : 'NM', K, `I${14 + nRows}`, 'peer βu mean');
+    cmp(Number.isFinite(r.coe.peers.median) ? r.coe.peers.median : 'NM', K, `I${15 + nRows}`, 'peer βu median');
   } else cmp(r.coe.ke, 'Cost of Equity (Build-Up)', 'B12', 'Ke');
   if (cf === 'fcff') {
     const w = r.wacc;
     cmp(w.wacc, 'WACC', 'B20', 'WACC'); cmp(w.kdAfter, 'WACC', 'B11', 'after-tax Kd'); cmp(w.currentWd, 'WACC', 'B16', 'current D/(D+E)');
     cmp(w.mve, 'WACC', 'B14', 'market value of equity'); cmp(w.debtRef, 'WACC', 'B15', 'debt incl. leases');
     cmp(r.bridge.netDebt, 'WACC', 'B27', 'net debt'); cmp(r.bridge.nci, 'WACC', 'B28', 'NCI');
+    cmp(r.bridge.nonOpBook, 'WACC', 'B29', 'non-current investments'); cmp(r.bridge.nonOp, 'WACC', 'B31', 'non-operating investments used');
+    cmp(r.bridge.netDebtUsed, 'WACC', 'B34', 'net debt used');
   } else ok(!X.sheets.includes('WACC'), 'no WACC sheet for an equity DCF');
   ok(X.row('Inputs', tv === 'gordon' ? 'Terminal (perpetual) growth rate' : `Exit ${cf === 'fcff' ? 'EV / EBITDA' : 'P / E'} multiple`) > 0, 'terminal input row');
   return { ...st, wb, X };

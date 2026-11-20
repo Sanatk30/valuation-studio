@@ -14,7 +14,7 @@ export function sampleDcfData(over = {}) {
     cf: 'fcff', tv: 'gordon', coe: 'capm',
     histYears: 3, fcstYears: 5,
     labels: { hist: ['FY24', 'FY25', 'FY26'], fcst: ['FY27E', 'FY28E', 'FY29E', 'FY30E', 'FY31E'] },
-    valDate: '2026-03-31', lease: 1,
+    valDate: '2026-03-31', fyEnd: '2026-03-31', lease: 1,
     growth: 5, exitMultiple: 12, rateStep: 0.5, tvStep: null,
     ...(over.settings || {}),
   };
@@ -36,6 +36,8 @@ export function sampleDcfData(over = {}) {
     netBorrow: [-100, -80, -60, -40, -20],
     intRate: [8.5, 8.5, 8.4, 8.3, 8.2],
     payout: [12, 14, 16, 18, 20],
+    leasePay: [0.6, 0.6, 0.6, 0.6, 0.6],
+    leaseAdd: [0.8, 0.8, 0.8, 0.8, 0.8],
   };
   d.capm = { rf: 6.5, beta: 1.05, erp: 7, betaMode: 'direct', peerBeta: 0.85, targetDe: 15, taxRate: 25.2, peers: [
     { id: 'b1', name: 'Alpha Chem', beta: 1.1, de: 20, taxRate: 25.2 },
