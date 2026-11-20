@@ -15,6 +15,20 @@ export function otherNetAssetsOf(a, nwc0) {
 }
 
 /**
+ * True when the balance sheet ties every year. The check is tested RELATIVE to
+ * the size of the balances: in absolute terms the floating-point residue grows
+ * with the figures (a company in INR thousands runs to 1e10 and leaves ~1e-6),
+ * so a fixed 1e-6 tolerance would call a tying sheet "off". A non-finite check
+ * (an NA input) never ties.
+ */
+function balanceTies(check, ...lines) {
+  return check.every((c, i) => {
+    const scale = lines.reduce((s, l) => s + Math.abs(Array.isArray(l) ? l[i] : l), 0);
+    return Number.isFinite(c) && Number.isFinite(scale) && Math.abs(c) <= 1e-9 * Math.max(1, scale);
+  });
+}
+
+/**
  * Linked three-statement model.
  * Interest is charged on OPENING balances (debt and cash) so the model has no
  * circular reference — this keeps the live-formula Excel export clean.
@@ -95,7 +109,7 @@ export function computeThreeStatement(a, opsIn = null) {
   }
 
   return {
-    ops, equity0, ppe0, cash0, debt0, otherNetAssets,
+    ops, equity0, ppe0, cash0, debt0, otherNetAssets, balanceOk: balanceTies(check, closeCash, ops.nwcBalance, ppe, otherNetAssets, closeDebt, equity),
     assets0: cash0 + ops.nwc0 + ppe0 + otherNetAssets,
     openDebt, repay, closeDebt, openCash, closeCash,
     interestExp, interestInc, ebt, taxAmt, netIncome, dividends,

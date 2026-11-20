@@ -23,7 +23,8 @@ export default function FootballField({ items, currentPrice, fmt }) {
   const lows = tw.slice(0, m), mids = tw.slice(m, 2 * m), highs = tw.slice(2 * m, 3 * m);
   const px = tw[3 * m];
 
-  const allVals = [...lows, ...highs];
+  // the marker (mid) is part of the domain too, in case it sits outside its bar
+  const allVals = [...lows, ...highs, ...mids.filter((v) => isFinite(v))];
   if (isFinite(currentPrice) && currentPrice > 0) allVals.push(px);
   let lo = Math.min(...allVals);
   let hi = Math.max(...allVals);

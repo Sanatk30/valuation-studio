@@ -31,6 +31,7 @@ export function forecastPeriods(a) {
   return {
     m: 1, freq: 'Y', N: n, ny: n, labels: periodLabels(a.settings, 'Y', n),
     rev: ops.revenue, ebitda: ops.ebitda, ebit: ops.ebit, da: ops.da, capex: ops.capex,
+    rev0: ops.revenue0, ebitda0: ops.ebitda0,     // LTM (Year 0): Year-1 growth is measured against them
     nwcClose: ops.nwcBalance, openNwc: open(ops.nwc0, ops.nwcBalance), dNWC: ops.deltaNwc,
     openDebt: ts.openDebt, closeDebt: ts.closeDebt, repay: ts.repay,
     openCash: ts.openCash, closeCash: ts.closeCash,
@@ -44,7 +45,7 @@ export function forecastPeriods(a) {
     fcff: nopat.map((np, i) => np + ops.da[i] - ops.capex[i] - ops.deltaNwc[i]),
     fcfe: ts.netIncome.map((ni, i) => ni + ops.da[i] - ops.capex[i] - ops.deltaNwc[i] - ts.repay[i]),
     netDebtClose: ts.closeDebt.map((d, i) => d - ts.closeCash[i]),
-    check: ts.check,
+    check: ts.check, balanceOk: ts.balanceOk,
     company: a.company, settings: a.settings,
   };
 }
@@ -85,7 +86,10 @@ export function computeRatios(pm) {
   const ev = map((i) => mktcap + pm.netDebtClose[i]);
   const pe = map((i) => g(price, epsA[i]));
 
-  const yoy = (arr) => idx.map((i) => (i >= m ? g(arr[i], arr[i - m]) * 100 - 100 : NaN));
+  // growth on the period a year earlier; the first annual period grows from the
+  // LTM (Year-0) figure when the model has one (revenue, EBITDA — not net income)
+  const yoy = (arr, base0) => idx.map((i) => (i >= m ? g(arr[i], arr[i - m]) * 100 - 100
+    : m === 1 && i === 0 && base0 !== undefined ? g(arr[0], base0) * 100 - 100 : NaN));
 
   const sec = (title, rows) => ({ title, rows });
   const row = (label, fmt, vals, note) => ({ label, fmt, vals, note });
@@ -147,9 +151,9 @@ export function computeRatios(pm) {
       row('Cash-flow margin (CFO / rev.)', 'pct', map((i) => g(pm.cfo[i], pm.rev[i]) * 100)),
     ]),
     sec('Growth', [
-      row('Revenue growth (period/period)', 'pct', idx.map((i) => (i ? g(pm.rev[i], pm.rev[i - 1]) * 100 - 100 : NaN))),
-      row('Revenue growth (YoY)', 'pct', yoy(pm.rev)),
-      row('EBITDA growth (YoY)', 'pct', yoy(pm.ebitda)),
+      row('Revenue growth (period/period)', 'pct', idx.map((i) => (i ? g(pm.rev[i], pm.rev[i - 1]) * 100 - 100 : m === 1 && pm.rev0 !== undefined ? g(pm.rev[0], pm.rev0) * 100 - 100 : NaN))),
+      row('Revenue growth (YoY)', 'pct', yoy(pm.rev, pm.rev0)),
+      row('EBITDA growth (YoY)', 'pct', yoy(pm.ebitda, pm.ebitda0)),
       row('Net income growth (YoY)', 'pct', yoy(pm.ni)),
       row('Sustainable growth (ROE × retention)', 'pct', map((i) => (roe[i] * retention[i]) / 100)),
     ]),
@@ -169,7 +173,7 @@ export function computeRatios(pm) {
     ]));
   }
 
-  return { sections, labels: pm.labels, m, N, balanceOk: pm.check.every((c) => Math.abs(c) < 1e-6) };
+  return { sections, labels: pm.labels, m, N, balanceOk: pm.balanceOk };
 }
 
 /**

@@ -32,7 +32,7 @@ function IpoPage({ a, f, ipo }) {
   const peBasis = p.basis === 'pe';
   const y1 = useMemo(() => periodLabels(a.settings, 'Y', 1)[0], [a.settings]);
   const gsPrimary = ipo.greenshoeType === 'primary';
-  const gsWho = ipo.greenshoeType === 'primary' ? 'Company' : ipo.greenshoeType === 'secondary' ? 'Selling holders' : DASH;
+  const gsWho = ipo.greenshoeShares === 0 ? DASH : ipo.greenshoeType === 'primary' ? 'Company' : ipo.greenshoeType === 'secondary' ? 'Selling holders' : DASH;
 
   const proceedsItems = [
     { label: 'Gross primary', value: ipo.grossPrimary, total: true },
@@ -60,7 +60,7 @@ function IpoPage({ a, f, ipo }) {
           !fin(ipo.postShares) && ipo.greenshoeShares > 0 && 'Choose whether the greenshoe shares are new (primary) or existing holders’ (secondary) in the Offer structure step.',
         ]}
         kpis={[
-          { label: 'Post-money market cap', value: ipo.mktCapAtOffer, fmt: (v) => f.money(v), hero: true, sub: `${f.shares(ipo.postShares)} shares after the offer` },
+          { label: 'Post-money market cap', value: ipo.mktCapAtOffer, fmt: (v) => f.money(v), hero: true, sub: `${f.shares(ipo.postShares)} ${f.unit} shares after the offer` },
           { label: 'Net primary proceeds', value: ipo.netPrimary, fmt: (v) => f.money(v), sub: `gross ${f.money(ipo.grossPrimary)} − fees ${f.money(ipo.fees)}` },
           { label: 'Fair-value uplift at listing', value: ipo.uplift, fmt: (v) => f.pct(v), tone: tone(ipo.uplift), sub: `to ${f.price(ipo.fairPricePost)} when the discount unwinds` },
           { label: `Pro-forma ${y1} EPS change`, value: ipo.epsDilution, fmt: (v) => f.pct(v), tone: tone(ipo.epsDilution), sub: `${f.price(ipo.epsPre)} → ${f.price(ipo.epsPost)}` },
@@ -118,7 +118,7 @@ function IpoPage({ a, f, ipo }) {
                 <tr><td>Secondary ({f.pct0(p.secondaryPct)} of existing)</td><td>{f.shares(ipo.secondaryShares)}</td><td>{f.num(ipo.secondaryShares * ipo.offerPrice)}</td><td>Selling holders</td></tr>
                 <tr className="sub"><td>Base deal</td><td>{f.shares(ipo.baseDealShares)}</td><td>{f.num(ipo.baseDealShares * ipo.offerPrice)}</td><td /></tr>
                 <tr>
-                  <td>Greenshoe ({f.pct0(p.greenshoePct)} of base, {f.pct0(p.greenshoeExercisedPct)} exercised · {gsPrimary ? 'new shares' : ipo.greenshoeType === 'secondary' ? 'existing holders’ shares' : 'type not chosen'})</td>
+                  <td>Greenshoe ({f.pct0(p.greenshoePct)} of base, {f.pct0(p.greenshoeExercisedPct)} exercised · {ipo.greenshoeShares === 0 ? 'none sold' : gsPrimary ? 'new shares' : ipo.greenshoeType === 'secondary' ? 'existing holders’ shares' : 'type not chosen'})</td>
                   <td>{f.shares(ipo.greenshoeShares)}</td><td>{f.num(ipo.greenshoeProceeds)}</td><td>{gsWho}</td>
                 </tr>
                 <tr className="bold"><td>Post-IPO shares</td><td>{f.shares(ipo.postShares)}</td><td>{f.num(ipo.mktCapAtOffer)}</td><td /></tr>

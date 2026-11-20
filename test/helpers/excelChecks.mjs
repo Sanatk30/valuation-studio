@@ -70,7 +70,8 @@ function checkStatements(a, X, T, { balanceSheet = true } = {}) {
     T.same(X.get(S, `B${X.row(S, "Shareholders' equity")}`), ts.equity0, 'opening equity');
     T.same(X.get(S, `B${X.row(S, 'Other net assets / (liabilities)')}`), ts.otherNetAssets, 'other net assets');
     const cr = X.row(S, 'Balance check (must be 0)');
-    for (let i = 0; i < n; i++) T.truthy(Math.abs(X.get(S, `${col(i)}${cr}`)) < 1e-6, `balance ties Y${i + 1}`);
+    // relative to the balances: the floating-point residue grows with the figures
+    for (let i = 0; i < n; i++) T.truthy(Math.abs(X.get(S, `${col(i)}${cr}`)) < 1e-6 + 1e-9 * (Math.abs(ts.assets[i]) + Math.abs(ts.liabEq[i])), `balance ties Y${i + 1}`);
   }
   return ts;
 }

@@ -54,8 +54,15 @@ export const HISTORY_GROUPS = [
 
 const num = (v) => (v === null || v === undefined || v === '' || !Number.isFinite(Number(v)) ? null : Number(v));
 
-/** An empty manual history with `years` columns ending in `lastFyEnd` (ISO date). */
+/** True for a usable fiscal-year-end date ("YYYY-MM-DD"); a cleared date box gives "". */
+export const validFyEnd = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s ?? '')) && Number.isFinite(Date.parse(s));
+
+/**
+ * An empty manual history with `years` columns ending in `lastFyEnd` (ISO date).
+ * null when the date is not a valid date (never throws).
+ */
 export function blankManualHistory(years, lastFyEnd) {
+  if (!validFyEnd(lastFyEnd)) return null;
   const end = new Date(lastFyEnd);
   const dates = Array.from({ length: years }, (_, i) => {
     const d = new Date(Date.UTC(end.getUTCFullYear() - (years - 1 - i), end.getUTCMonth(), end.getUTCDate()));
