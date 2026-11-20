@@ -129,10 +129,30 @@ function convertHistory(h, cv, meta) {
   return { ...h, annual: blk(h.annual), quarterly: blk(h.quarterly), statements };
 }
 
+/**
+ * The Company-step listing note (methods/steps/common.jsx applyListing).
+ * `applied` records what the last Yahoo fill wrote into each field, so the
+ * next fill can clear a value the old listing filled and the user never
+ * changed. It is compared with the field's current value, so it converts with
+ * the field; left in the old currency / unit, no applied value would match and
+ * the old company's figures would survive a fill from another listing.
+ * The fetch facts (rates, valuationCurrency, unit at fetch time) stay as fetched.
+ */
+const APPLIED_KIND = { 'company.currentPrice': 'price', 'company.sharesOut': 'shares', 'company.taxRate': null };
+function convertListing(l, cv) {
+  if (!l?.applied) return l;
+  const applied = Object.fromEntries(Object.entries(l.applied).map(([path, v]) => {
+    const kind = path in APPLIED_KIND ? APPLIED_KIND[path] : 'money';
+    return [path, kind ? mapNum(v, cv[kind]) : v];
+  }));
+  return { ...l, applied };
+}
+
 /** One method's data with every money / price / share input converted. */
 function convertMethodData(data, cv, meta) {
   if (!data) return data;
   const out = { ...data };
+  if (data.listing) out.listing = convertListing(data.listing, cv);
   if (data.company) out.company = convertCompanySection(data.company, cv);
   if (data.drivers) out.drivers = convertDrivers(data.drivers, cv);
   if (data.ts) out.ts = keys(data.ts, ['startingPPE', 'equity0'], cv.money);
