@@ -99,6 +99,24 @@ function ValuationChoices({ settings, onChange, methods }) {
   );
 }
 
+/**
+ * Labels for a label editor: as `periodLabels`, but a label the user has just
+ * cleared stays blank so it can be retyped — `periodLabels` reads a blank as its
+ * default, so deleting a label character by character snapped back to it. A
+ * never-typed label still shows its default; pages, outputs and workbooks keep
+ * reading a blank as its default.
+ */
+export function editorLabels(stored, n, startYear) {
+  const lab = periodLabels(stored, n, startYear);
+  const fy = Array.isArray(stored?.fy) ? stored.fy.slice(-n) : [];
+  const pad = n - fy.length;
+  const keep = (v, d) => (v === '' ? '' : d);
+  return {
+    fy: lab.fy.map((x, i) => (i >= pad ? keep(fy[i - pad], x) : x)),
+    p: keep(stored?.p, lab.p), c: keep(stored?.c, lab.c), ltm: keep(stored?.ltm, lab.ltm),
+  };
+}
+
 /** Period-label editor (comps: one set for every page). */
 function LabelsEditor({ labels, ytd, onChange }) {
   const set = (id, v) => {
@@ -133,7 +151,7 @@ function CompsSettingsExtra({ data, setData, company }) {
   const methods = COMPS_MULTIPLES.map((m) => ({ key: m.key, label: multipleLabel(m, compsLabels(data, company)) }));
   return (
     <div className="step-tools">
-      <LabelsEditor labels={compsLabels(data, company)} ytd={compsYtd(data)} onChange={(labels) => setSettings({ ...s, labels })} />
+      <LabelsEditor labels={editorLabels(s.labels, compsN(data), company?.startYear)} ytd={compsYtd(data)} onChange={(labels) => setSettings({ ...s, labels })} />
       <ValuationChoices settings={s} onChange={setSettings} methods={methods} />
     </div>
   );
@@ -269,7 +287,7 @@ function PeersExtra({ data, setData, company }) {
   };
   const locale = CURRENCIES[company.currency]?.locale;
   const filled = slots.filter((p) => !isBlankPeer(p)).length;
-  const included = slots.filter((p) => p.include === 1 && !isBlankPeer(p)).length;
+  const included = slots.filter((p) => p.include !== 0 && !isBlankPeer(p)).length;   // as the engine and the step check read it
 
   return (
     <div className="step-tools">
@@ -584,7 +602,7 @@ function PrecCompanyExtra({ data, setData, company }) {
   const c = data.precedent.company;
   const n = precN(data);
   const setCo = (fn) => setData((d) => ({ ...d, precedent: { ...d.precedent, company: fn(d.precedent.company) } }));
-  const labels = periodLabels(c.page?.labels, n, null);
+  const labels = editorLabels(c.page?.labels, n, null);
   return (
     <div className="step-tools">
       <div className="tool-card">
@@ -720,7 +738,7 @@ function DealPagesExtra({ data, setData, company }) {
     <div className="step-tools">
       {deals.map((d, k) => {
         const title = `Deal ${k + 1}: ${d.target || '[target]'}${d.acquirer ? ` acquired by ${d.acquirer}` : ''}${d.date ? ` (${fmtDate(d.date)})` : ''}`;
-        const labels = periodLabels(d.page?.labels, n, null);
+        const labels = editorLabels(d.page?.labels, n, null);
         return (
           <div key={d.id} className={`peer-item${open === d.id ? ' open' : ''}`}>
             <div className="peer-line">

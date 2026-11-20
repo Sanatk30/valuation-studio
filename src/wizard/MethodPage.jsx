@@ -1,7 +1,7 @@
 import React, { Suspense, useEffect, useMemo, useState } from 'react';
 import { METHODS, previewRows } from '../methods/registry.js';
 import { METHOD_META } from '../methods/labels.js';
-import { methodProgress, stepErrors, skippedFlags } from '../methods/progress.js';
+import { methodProgress, stepErrors, skippedFlags, wizardView } from '../methods/progress.js';
 import { methodFigures } from '../methods/figures.js';
 import { CombinedOutput, combinedResult } from '../methods/combined.jsx';
 import { toEngineInput } from '../store/methodModel.js';
@@ -39,7 +39,7 @@ export default function MethodPage({ record, methodId, onHome }) {
   const n = def.steps.length;
 
   // current view: a step index, or n = the output. Never beyond what is reachable.
-  const view = Math.min(mstate.step ?? 0, prog.reachable);
+  const { view, resync } = wizardView(mstate, prog);
   const [fromOutput, setFromOutput] = useState(false);
   const [reveal, setReveal] = useState(false);
   const [fillAll, setFillAll] = useState(false);
@@ -48,6 +48,8 @@ export default function MethodPage({ record, methodId, onHome }) {
   const go = (i) => updateMethod(record.id, methodId, (m) => ({ ...m, step: i }));
   const setData = (fn) => updateMethod(record.id, methodId, (m) => ({ ...m, data: fn(m.data) }));
   const setSkip = (id, v) => updateMethod(record.id, methodId, (m) => ({ ...m, skipped: { ...m.skipped, [id]: v } }));
+  // a saved step beyond the step shown is brought back to it (see wizardView)
+  useEffect(() => { if (resync) go(view); }, [resync, view]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   if (view >= n) {
     return (

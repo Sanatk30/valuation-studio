@@ -18,6 +18,13 @@ export const GRID_ROWS = [
 export const resize = (arr, n) => Array.from({ length: n }, (_, i) => (arr?.[i] ?? null));
 
 /**
+ * A stored per-year row padded to n years, keeping any years beyond the horizon
+ * (so lowering the projection years and raising them again loses nothing, as in
+ * the DCF / LBO driver grids). The engine reads only the first n.
+ */
+export const fitKeep = (arr, n) => [...resize(arr, n), ...(Array.isArray(arr) ? arr.slice(n) : [])];
+
+/**
  * Errors in the year-by-year grid. Same logical limits as the start → end
  * fields: growth above −100 %, revenue above 0, EBITDA margin at most 100 %,
  * D&A and capex not negative (in % or absolute).
