@@ -6,7 +6,7 @@ import { PeerBatchAdd, YahooSearch, RowFetch, mergeFetch } from '../../component
 import { NumBox } from '../../wizard/Field.jsx';
 import { computePage, MIN_YEARS, MAX_YEARS } from '../../lib/engine/companyPage.js';
 import {
-  COMPS_MULTIPLES, blankPeer, isBlankPeer, peerSlots, periodLabels, clampYears, multipleLabel, computeComps,
+  COMPS_MULTIPLES, blankPeer, isBlankPeer, peerSlots, periodLabels, clampYears, multipleLabel, computeComps, usedMultiples,
 } from '../../lib/engine/comps.js';
 import { PREC_METHODS, dealSlots, impliedEquity100, controlPremium } from '../../lib/engine/precedent.js';
 import { STAT_KEYS, STAT_LABELS, statsSettings } from '../../lib/engine/templateStats.js';
@@ -36,7 +36,8 @@ const ytdSpec = (path) => f.bool(path, 'Year-to-date columns', {
   hint: 'With YTD columns, LTM = latest FY + current YTD − prior YTD, and the current-YTD column holds the interim balance sheet.',
 });
 
-/** Is a page slot untouched (nothing typed or fetched)? */
+/** The implied valuation needs at least one multiple (method) ticked on the Settings step. */
+const needOneMethod = (methods, settings) => (usedMultiples(methods, settings?.multiples).length ? [] : ['Tick at least one multiple for the implied valuation (Valuation choices).']);
 
 /* ======================== Valuation choices ======================== */
 
@@ -147,6 +148,7 @@ export const compsSettingsStep = () => ({
   ],
   Extra: CompsSettingsExtra,
   extraBelow: true,
+  validate: (data) => needOneMethod(COMPS_MULTIPLES, data.comps?.settings),
 });
 
 /** The target company page. */
@@ -564,6 +566,7 @@ export const precSettingsStep = () => ({
   ],
   Extra: PrecSettingsExtra,
   extraBelow: true,
+  validate: (data) => needOneMethod(PREC_METHODS, data.precedent?.settings),
 });
 
 function PrecCompanyExtra({ data, setData, company }) {

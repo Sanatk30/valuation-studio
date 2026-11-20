@@ -9,7 +9,8 @@
  */
 import { withModel } from './fixtures/model.mjs';
 import { checkCompsWorkbook, checkPrecedentWorkbook } from './helpers/templateChecks.mjs';
-import { blankPeer } from '../src/lib/engine/comps.js';
+import { blankPeer, computeComps } from '../src/lib/engine/comps.js';
+import { runRegression } from '../src/lib/engine/regressionModel.js';
 import { blankDeal } from '../src/lib/engine/precedent.js';
 
 let checks = 0, failures = 0;
@@ -86,6 +87,36 @@ run('no deals', checkPrecedentWorkbook(prec((p) => { p.dealCount = 0; }), {}));
 run('blank deal rows', checkPrecedentWorkbook(prec((p) => { p.dealCount = 7; p.deals.push(blankDeal({ id: 'x1' })); }), {}));
 run('stake and consideration blank', checkPrecedentWorkbook(prec((p) => { p.deals[1].stakePct = null; p.deals[1].consideration = null; }), {}));
 run('lease off', checkPrecedentWorkbook(prec((p) => { p.settings.lease = 0; }), {}));
+
+/* ------------------------------------------------- fixes from the bug hunt */
+console.log('\n=== Excel = engine where they used to differ ===');
+run('comps: two tiers with the same name (case aside)', checkCompsWorkbook(comps((c) => { c.tiers = [{ id: 't1', name: 'Large' }, { id: 't2', name: 'large' }]; }), {}));
+run('comps: a tier named "Unassigned" beside unassigned peers', checkCompsWorkbook(comps((c) => { c.tiers = [{ id: 't1', name: 'Unassigned' }, { id: 't2', name: 'Mid caps' }]; }), {}));
+run('comps: two blank tier names', checkCompsWorkbook(comps((c) => { c.tiers = [{ id: 't1', name: '' }, { id: 't2', name: ' ' }]; }), {}));
+run('comps: a peer with no include flag', checkCompsWorkbook(comps((c) => { c.peers[0].include = null; }), {}));
+run('precedent: a deal with no include flag', checkPrecedentWorkbook(prec((p) => { p.deals[0].include = undefined; }), {}));
+run('precedent: Listed typed "yes"', checkPrecedentWorkbook(prec((p) => { p.deals[1].listed = 'yes'; p.deals[1].offerPrice = 10; p.deals[1].unaffectedPrice = 8; }), {}));
+{
+  const a = prec((p) => { p.settings.years = 5; });
+  const res = run('precedent: 5 years over 3 stored labels', checkPrecedentWorkbook(a, {}));
+  const eng = res.p.deals[0].labels.fy;
+  const xl = ['B', 'C', 'D', 'E', 'F'].map((c) => res.wb.getWorksheet('Deal 1').getCell(`${c}4`).value);
+  ok(xl.join(',') === eng.join(',') && eng[0] === 'FY19', `deal period labels in the workbook = the app's (${xl.join(', ')})`);
+  const cl = res.p.company.labels.fy;
+  ok(['B', 'C', 'D', 'E', 'F'].map((c) => res.wb.getWorksheet('Company Being Valued').getCell(`${c}4`).value).join(',') === cl.join(','), 'company page labels likewise');
+}
+{
+  // a collinear model is "not estimable" in both the app and the workbook
+  const a = withModel();
+  a.regression = { yVar: 'evEbitdaLtm', xVars: [{ key: 'revSize' }, { key: 'c_r2' }], customVars: [{ key: 'c_r2', label: 'Revenue × 2' }], targetOverrides: {} };
+  const rows = computeComps(a).peers;
+  a.comps.peers.forEach((p, i) => { p.c_r2 = 2 * rows[i].revLtm + 5; });   // an exact linear copy of the money-sized LTM revenue
+  ok(runRegression(a).fit?.ok === false, 'the engine finds the collinear model not estimable');
+  const res = run('regression: collinear regressors', checkCompsWorkbook(a, {}));
+  const txt = [];
+  res.wb.getWorksheet('Regression').eachRow((r) => r.eachCell((c) => { if (typeof c.value === 'string') txt.push(c.value); }));
+  ok(txt.some((t) => /not estimable: design matrix is singular/.test(t)), 'the Regression sheet says the model is not estimable');
+}
 
 console.log(`\n${checks - failures}/${checks} checks passed`);
 if (failures) { console.error(`${failures} FAILED`); process.exit(1); }

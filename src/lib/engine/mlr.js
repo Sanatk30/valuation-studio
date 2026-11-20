@@ -112,17 +112,17 @@ export function fitOLS(observations, spec) {
   const cols = designColumns(spec.xVars || []);
   if (!cols.length) return null;
   const rows = [];
-  const dropped = [];
+  const dropped = [], droppedIds = [];
   for (const ob of observations) {
     const yRaw = typeof ob.values[spec.yVar] === 'number' ? ob.values[spec.yVar] : NaN;
     const y = spec.yLog ? (yRaw > 0 ? ln(yRaw) : NaN) : yRaw;
     const xs = cols.map((c) => xTransform(ob.values[c.key], c));
-    if (Number.isFinite(y) && xs.every(Number.isFinite)) rows.push({ name: ob.name, y, yRaw, xs });
-    else dropped.push(ob.name);
+    if (Number.isFinite(y) && xs.every(Number.isFinite)) rows.push({ id: ob.id, name: ob.name, y, yRaw, xs });
+    else { dropped.push(ob.name); droppedIds.push(ob.id); }
   }
   const n = rows.length, k = cols.length;
   const df = n - k - 1;
-  if (df < 1) return { ok: false, reason: `need at least ${k + 2} complete peers for ${k} term${k > 1 ? 's' : ''} (have ${n})`, n, k, dropped };
+  if (df < 1) return { ok: false, reason: `need at least ${k + 2} complete peers for ${k} term${k > 1 ? 's' : ''} (have ${n})`, n, k, dropped, droppedIds };
 
   // normal equations on the augmented design [1, x1 … xk]
   const dim = k + 1;
@@ -135,11 +135,20 @@ export function fitOLS(observations, spec) {
       for (let j = 0; j < dim; j++) XtX[i][j] += z[i] * z[j];
     }
   }
+  // Solve on the unit-diagonal scaling D⁻¹X'XD⁻¹ (D = √diag X'X) so the
+  // singularity test is relative: money-sized or cubed regressors make X'X
+  // entries of 1e12+, where an exactly collinear design leaves a pivot far
+  // above any absolute threshold. β = D⁻¹z and (X'X)⁻¹ = D⁻¹ (scaled)⁻¹ D⁻¹ —
+  // the same numbers the export's elimination on X'X itself gives.
+  const d = XtX.map((row, i) => Math.sqrt(row[i]));
+  const singular = { ok: false, reason: 'design matrix is singular — drop a collinear variable', n, k, dropped, droppedIds };
+  if (!d.every((x) => Number.isFinite(x) && x > 0)) return singular;   // a regressor that is 0 for every peer
+  const A = XtX.map((row, i) => row.map((v, j) => v / (d[i] * d[j])));
   const I = Array.from({ length: dim }, (_, i) => Array.from({ length: dim }, (_, j) => (i === j ? 1 : 0)));
-  const sol = gaussJordan(XtX, XtX.map((_, i) => [Xty[i], ...I[i]]));
-  if (!sol) return { ok: false, reason: 'design matrix is singular — drop a collinear variable', n, k, dropped };
-  const beta = sol.map((r) => r[0]);
-  const inv = sol.map((r) => r.slice(1));
+  const sol = gaussJordan(A, A.map((_, i) => [Xty[i] / d[i], ...I[i]]));
+  if (!sol) return singular;
+  const beta = sol.map((r, i) => r[0] / d[i]);
+  const inv = sol.map((r, i) => r.slice(1).map((v, j) => v / (d[i] * d[j])));
 
   const yBar = rows.reduce((s, r) => s + r.y, 0) / n;
   let sse = 0, sst = 0;
@@ -161,11 +170,11 @@ export function fitOLS(observations, spec) {
   const fStat = k > 0 && sse > 0 ? ((sst - sse) / k) / mse : NaN;
 
   return {
-    ok: true, n, k, df, dropped,
+    ok: true, n, k, df, dropped, droppedIds,
     cols, beta, se, tStats, pVals,
     r2, adjR2, seReg: Math.sqrt(mse), fStat,
     rows: rows.map((r, i) => ({
-      name: r.name, y: r.y, yRaw: r.yRaw,
+      id: r.id, name: r.name, y: r.y, yRaw: r.yRaw,
       fitted: fitted[i], resid: resid[i],
       fittedRaw: spec.yLog ? Math.exp(fitted[i]) : fitted[i],
     })),

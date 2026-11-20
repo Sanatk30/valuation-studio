@@ -40,7 +40,7 @@ export default function RegressionSections({ a, f, R, px }) {
       const key = single.key;
       const fx = vFmt(key);
       const raw = fit.rows.map((r) => {
-        const ob = obs.find((o) => o.name === r.name);
+        const ob = obs.find((o) => o.id === r.id);
         return { x: Number(ob?.values?.[key]), y: r.yRaw, name: r.name };
       }).filter((p) => fin(p.x));
       const tx = R.target?.[key];
@@ -166,7 +166,7 @@ export default function RegressionSections({ a, f, R, px }) {
                   <td className="txt">{o.name || DASH}</td>
                   <td>{vFmt(yVar)(Number(o.values?.[yVar]))}</td>
                   {usedKeys.map((k) => <td key={k}>{vFmt(k)(Number(o.values?.[k]))}</td>)}
-                  <td>{fit.dropped?.includes(o.name) ? 'no' : 'yes'}</td>
+                  <td>{fit.droppedIds?.includes(o.id) ? 'no' : 'yes'}</td>
                 </tr>
               ))}
               <tr className="bold">

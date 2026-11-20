@@ -202,6 +202,29 @@ export function setCell(page, key, col, value, n) {
   return { ...page, lines: { ...page.lines, [key]: next } };
 }
 
+/**
+ * Fold a fetched page (a Yahoo fill, n fiscal years wide, latest last) into a
+ * page. `reported[i]` is true for the fiscal-year columns the fetch covers.
+ * A covered column takes the fetched figures as a whole, blanks included: a
+ * fetched page balances its "other" lines against the reported totals
+ * (EBITDA, pre-tax income, total assets…), so a figure kept from before in a
+ * line the fetch leaves blank would throw those totals off. Every column the
+ * fetch does not cover (earlier years it pads, years beyond the shown window,
+ * the YTD columns) keeps what the page had. Returns a new page.
+ */
+export function mergeFetchedPage(own, fetched, n, reported) {
+  const base = own || { lines: {} };
+  const lines = { ...(base.lines || {}) };
+  for (const [key, fl] of Object.entries(fetched?.lines || {})) {
+    const mine = base.lines?.[key] || { fy: [], p: null, c: null };
+    const cur = fyValues(mine, n);
+    const fy = fyValues(fl, n).map((v, i) => (reported[i] ? (isNum(v) ? v : null) : cur[i]));
+    const older = (mine.fy || []).slice(0, Math.max(0, (mine.fy || []).length - n));
+    lines[key] = { ...mine, fy: [...older, ...fy] };
+  }
+  return { ...base, lines };
+}
+
 /* -------------------------------------------------------------- helpers */
 
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v);

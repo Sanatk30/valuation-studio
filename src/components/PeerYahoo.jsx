@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import {
   searchSymbols, fetchListing, fetchListingByQuery, fetchListingsBatch, templateFromListing, requiredCurrencies,
 } from '../lib/yahoo.js';
-import { fyValues } from '../lib/engine/companyPage.js';
+import { blankPage, mergeFetchedPage } from '../lib/engine/companyPage.js';
 import { useLiveRates, rateNumbers, FxRateFields } from './FxRates.jsx';
 import PeerFinder from './PeerFinder.jsx';
 import { YF_HINT } from '../lib/yfBase.js';
@@ -19,8 +19,12 @@ import { YF_HINT } from '../lib/yfBase.js';
 
 /**
  * Fold a Yahoo fetch into a slot { name, ticker, sector, price, shares, page }.
- * Fetched figures win; the user's own entries are kept wherever the fetch has
- * nothing (a blank reported line, the YTD columns, include flag, tier, …).
+ * Each fiscal year Yahoo reports is taken as a whole (its balancing "other"
+ * lines only tie to Yahoo's EBITDA, pre-tax income and totals with the other
+ * fetched lines beside them); the user's own entries are kept everywhere the
+ * fetch has nothing — the years it does not report, the YTD columns, include
+ * flag, tier, … A slot last filled from a DIFFERENT listing starts from a
+ * blank page, so no figure of the old company stays behind.
  *   opts.n       fiscal years on the page
  *   opts.before  deal pages: only fiscal years ending before this ISO date
  *   opts.labels  true → the page takes the fetched period labels (precedent pages)
@@ -28,24 +32,21 @@ import { YF_HINT } from '../lib/yfBase.js';
  */
 export function mergeFetch(slot, m, company, { n, before = null, labels = false, market = true } = {}) {
   const f = templateFromListing(m.raw, company, m.rates || {}, { n, before });
-  const own = slot.page || { lines: {} };
-  const lines = { ...own.lines };
-  for (const [key, fl] of Object.entries(f.page.lines)) {
-    const mine = own.lines?.[key] || { fy: [], p: null, c: null };
-    const cur = fyValues(mine, n);
-    const fy = fyValues(fl, n).map((v, i) => (v === null || v === undefined ? cur[i] : v));
-    const older = (mine.fy || []).slice(0, Math.max(0, (mine.fy || []).length - n));
-    lines[key] = { ...mine, fy: [...older, ...fy] };
-  }
-  const page = { ...own, lines };
+  const was = String(slot._fetched?.symbol || '').toUpperCase();
+  const other = was && String(f.ticker || '').toUpperCase() !== was;
+  const own = other ? blankPage() : (slot.page || { lines: {} });
+  const covered = f.fyDates.length;
+  const reported = Array.from({ length: n }, (_, i) => i >= n - covered);
+  const page = mergeFetchedPage(own, f.page, n, reported);
   if (labels) page.labels = { ...(own.labels || {}), fy: f.page.labels.fy };
   const keep = (v, mine) => (v === null || v === undefined || v === '' ? mine ?? null : v);
+  const prev = other ? {} : slot;   // the old listing's sector / price / shares do not carry over
   return {
     ...slot,
     name: f.name || slot.name,
     ticker: f.ticker || slot.ticker,
-    sector: keep(f.sector, slot.sector) || '',
-    ...(market ? { price: keep(f.price, slot.price), shares: keep(f.shares, slot.shares) } : {}),
+    sector: keep(f.sector, prev.sector) || '',
+    ...(market ? { price: keep(f.price, prev.price), shares: keep(f.shares, prev.shares) } : {}),
     page,
     _fetched: { ...f.fetched, warnings: f.warnings, fyDates: f.fyDates },
   };

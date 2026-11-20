@@ -186,17 +186,37 @@ function statsFor(rows, cols, get, method) {
   return Object.fromEntries(cols.map((c) => [c.key, statBlock(incl.map((r) => get(r, c)), method)]));
 }
 
+/**
+ * The name each tier goes by in the tables and the workbook. The workbook
+ * puts peers in a tier by comparing names (Excel's "=" ignores case), so the
+ * names are made distinct: a blank name reads "Tier", a repeated one gets
+ * " (2)", " (3)"…, and the group of peers without a tier is "Unassigned"
+ * unless a tier already uses that name.
+ */
+function tierNames(tiers = []) {
+  const seen = new Set();
+  const unique = (base) => {
+    let nm = base;
+    for (let k = 2; seen.has(nm.toLowerCase()); k++) nm = `${base} (${k})`;
+    seen.add(nm.toLowerCase());
+    return nm;
+  };
+  const byId = new Map(tiers.map((t) => [t.id, unique(String(t.name ?? '').trim() || 'Tier')]));
+  return { byId, unassigned: unique('Unassigned') };
+}
+
 /** Tier groups for the per-tier statistics: the named tiers, plus 'Unassigned' when tiers exist and a peer has none. */
 export function tierGroups(tiers = [], peers = []) {
   if (!tiers.length) return [];
-  const known = new Set(tiers.map((t) => t.id));
-  const groups = tiers.map((t) => ({ id: t.id, name: t.name || 'Tier' }));
-  if (peers.some((p) => !known.has(p.tierId))) groups.push({ id: null, name: 'Unassigned' });
+  const names = tierNames(tiers);
+  const groups = tiers.map((t) => ({ id: t.id, name: names.byId.get(t.id) }));
+  if (peers.some((p) => !names.byId.has(p.tierId))) groups.push({ id: null, name: names.unassigned });
   return groups;
 }
 export const tierNameOf = (peer, tiers = []) => {
-  const t = tiers.find((x) => x.id === peer.tierId);
-  return t ? t.name || 'Tier' : tiers.length ? 'Unassigned' : '';
+  if (!tiers.length) return '';
+  const names = tierNames(tiers);
+  return names.byId.has(peer.tierId) ? names.byId.get(peer.tierId) : names.unassigned;
 };
 
 /**
@@ -252,9 +272,10 @@ export function computeComps(a) {
   const target = summaryRow(tPage, { id: '__target__', role: 'Target', name: a.company?.name || '', ticker: t.ticker || '', sector: t.sector || '', include: null, tier: '' });
 
   const slots = peerSlots(c);
+  // Include: anything but 0 is 1 — as the Peers step shows it and the workbook writes it
   const peers = slots.map((p, i) => summaryRow(
     computePage(p.page, { n, toggle, ytd, market: { price: p.price, shares: p.shares } }),
-    { id: p.id, role: `Peer ${i + 1}`, name: p.name || '', ticker: p.ticker || '', sector: p.sector || '', include: p.include === 1 ? 1 : p.include === 0 ? 0 : null, empty: isBlankPeer(p), tierId: p.tierId ?? null, tier: tierNameOf(p, tiers) },
+    { id: p.id, role: `Peer ${i + 1}`, name: p.name || '', ticker: p.ticker || '', sector: p.sector || '', include: p.include === 0 ? 0 : 1, empty: isBlankPeer(p), tierId: p.tierId ?? null, tier: tierNameOf(p, tiers) },
   ));
 
   const getMult = (r, col) => r.mult[col.key];

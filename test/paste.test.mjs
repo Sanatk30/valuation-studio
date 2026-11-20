@@ -129,5 +129,55 @@ console.log('\n=== company list ===');
   ok(!parseCompanyList(LIST_HEADER).ok, 'header alone → not ok');
 }
 
+/* ------------------------------------------------- fixes from the bug hunt */
+console.log('\n=== typographic minus, title lines, quoted CSV ===');
+{
+  ok(N('−1,234').value === -1234 && N('−1,234').ok, 'U+2212 minus (PDFs, annual reports) is a negative, not a dropped cell');
+  ok(N('–42.5').value === -42.5, 'an en dash before a number is a minus');
+  ok(!N('–').ok && !N('−').ok, 'a lone dash is still the empty marker');
+  const block = ['Standalone Statement of Profit and Loss (₹ Cr)', 'Particulars\tFY25\tFY26', 'Revenue from operations\t1,000\t1,100'].join('\n');
+  const rows = splitBlock(block);
+  ok(rows[2].length === 3 && rows[2][1] === '1,000', 'a title line without tabs above a tab-separated table: still split on tabs');
+  const g = parsePageGrid(block, { columns });
+  ok(g.ok && g.matched.find((m) => m.key === 'rev')?.values.join(',') === '1000,1100', 'the table under a title line parses (thousands separators intact)');
+  ok(g.header?.[1] === 'FY25' && g.slots.map((s) => s?.id).join(',') === '1,2', 'its header row (below the title) still lines FY25, FY26 up on FY25, FY26');
+  const csv = splitBlock('Revenue,"1,234","2,345"\nOther Income,10,20');
+  ok(csv[0].length === 3 && csv[0][1] === '1,234' && N(csv[0][2]).value === 2345, 'CSV: a quoted cell keeps its thousands separator');
+}
+
+console.log('\n=== two names for one figure are not added together ===');
+{
+  // the older Schedule III layout: Total Revenue = revenue from operations + other income
+  const block = [
+    'Particulars\tFY25\tFY26',
+    'Revenue from operations\t1,000\t1,100',
+    'Other income\t50\t60',
+    'Total revenue\t1,050\t1,160',
+    'Cost of materials consumed\t400\t420',
+    'Purchases of stock-in-trade\t100\t110',
+  ].join('\n');
+  const g = parsePageGrid(block, { columns });
+  const m = Object.fromEntries(g.matched.map((x) => [x.key, x]));
+  ok(m.rev.values[0] === 1000 && m.rev.values[1] === 1100 && m.rev.sources.length === 1, 'revenue = revenue from operations (not + total revenue)');
+  ok(g.skipped.some((s) => s.label === 'Total revenue' && s.duplicate === 'Revenue from operations'), 'the second name is listed as skipped, naming the row kept');
+  ok(m.materials.values[0] === 500, 'component lines still add (materials + purchases)');
+}
+
+console.log('\n=== company list: the template’s own list (Role, Target row) and Yes / No ===');
+{
+  const text = [
+    'Role\tCompany Name\tNSE / BSE Ticker\tSector / Sub-sector\tInclude in Stats (1/0)\tShare Price (₹)\tDiluted Shares Outstanding (Cr)\tMarket Cap (₹ Cr)',
+    'Target\tExample Manufacturing Ltd\tEXMFG\tChemicals\tn.a.\t620\t20\t12,400',
+    'Peer 1\tAlpha Chem\tALPHA\tChemicals\t1\t1,350\t36\t48,600',
+    'Peer 2\tBeta Ltd\tBETA\tChemicals\tNo\t900\t20\t18,000',
+    'Peer 3\tGamma\tGAMMA\tChemicals\tYes\t380\t14\t5,320',
+  ].join('\n');
+  const r = parseCompanyList(text);
+  ok(r.ok && r.companies.length === 3 && r.companies[0].name === 'Alpha Chem', 'the Target row is the company being valued — not peer 1');
+  ok(r.target?.name === 'Example Manufacturing Ltd', 'the skipped Target row is reported');
+  ok(r.companies[1].include === 0 && r.companies[2].include === 1, 'Include "No" → 0, "Yes" → 1');
+  ok(!('role' in r.companies[0]), 'the role column is not carried into the peer');
+}
+
 console.log(`\npaste: ${checks - failures}/${checks} checks passed`);
 if (failures) process.exit(1);
