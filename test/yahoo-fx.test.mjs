@@ -298,6 +298,13 @@ console.log('\n=== currency & unit conversion ===');
   ok(threw, 'no rate → no conversion');
 }
 
+console.log('\n=== typed history: a 29 February year end ===');
+{
+  const h = blankManualHistory(3, '2024-02-29');
+  ok(JSON.stringify(h.annual.dates) === JSON.stringify(['2022-02-28', '2023-02-28', '2024-02-29']), `earlier years end 28 Feb, not 1 March (${h.annual.dates.join(', ')})`);
+  ok(JSON.stringify(blankManualHistory(2, '2025-03-31').annual.dates) === JSON.stringify(['2024-03-31', '2025-03-31']), 'an ordinary year end is unchanged');
+}
+
 console.log('\n=== currency change after a Yahoo fill: the listing note follows ===');
 {
   // A listing filled the Company step in INR; the company then moved to USD; a second listing

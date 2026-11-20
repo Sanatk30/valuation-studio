@@ -65,8 +65,11 @@ export function blankManualHistory(years, lastFyEnd) {
   if (!validFyEnd(lastFyEnd)) return null;
   const end = new Date(lastFyEnd);
   const dates = Array.from({ length: years }, (_, i) => {
-    const d = new Date(Date.UTC(end.getUTCFullYear() - (years - 1 - i), end.getUTCMonth(), end.getUTCDate()));
-    return d.toISOString().slice(0, 10);
+    const y = end.getUTCFullYear() - (years - 1 - i), m = end.getUTCMonth();
+    // same day of the same month, kept inside the month: a 29 Feb year end gives 28 Feb in a
+    // common year (Date.UTC would roll it over to 1 March, a date in the next fiscal year)
+    const day = Math.min(end.getUTCDate(), new Date(Date.UTC(y, m + 1, 0)).getUTCDate());
+    return new Date(Date.UTC(y, m, day)).toISOString().slice(0, 10);
   });
   return {
     source: 'manual',
