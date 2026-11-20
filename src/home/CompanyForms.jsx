@@ -4,6 +4,36 @@ import { CURRENCIES, UNITS } from '../lib/format.js';
 import { SUPPORTED_CURRENCIES, fetchLiveRate } from '../lib/fx.js';
 import { convertCompanyRecord, rescaleUnit } from '../lib/currency.js';
 import { NumBox } from '../wizard/Field.jsx';
+import { latestCompletedFy, impliedYear1 } from '../lib/period.js';
+
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const fyTag = (y) => `FY${String(y).slice(-2)}`;
+
+/**
+ * Year 1 against the calendar: the latest fiscal year that has ended (from
+ * today's date and the year-end month) is the latest actual year, so Year 1
+ * is the year after it. Shows that, a one-click "Use" when Year 1 differs,
+ * and a warning when Year 1 is later — the history would then hold fiscal
+ * years that have not ended, with no figures (the forecast would start from 0).
+ *   onUse(year) — what the button does (set the form field, or save the company)
+ */
+export function YearCheck({ startYear, fyEndMonth, onUse, compact = false }) {
+  const last = latestCompletedFy(fyEndMonth);
+  const y1 = impliedYear1(fyEndMonth);
+  if (last === null) return null;
+  const m = Number(fyEndMonth);
+  const ahead = Number.isInteger(startYear) && startYear > y1;
+  const behind = Number.isInteger(startYear) && startYear < y1;
+  const future = ahead ? Array.from({ length: startYear - y1 }, (_, i) => fyTag(y1 + i)) : [];
+  return (
+    <div className={ahead ? 'readout warn' : 'fld-h'} style={compact ? undefined : { marginTop: 6 }}>
+      Latest completed fiscal year: <b>{fyTag(last)}</b> (year to {MON[m - 1]} {last}), so Year 1 = <b>{fyTag(y1)}</b> ({y1}).
+      {ahead && <> Year 1 is set to {startYear}, but {future.join(', ')} {future.length === 1 ? 'has' : 'have'} not ended and can't be historical {future.length === 1 ? 'year' : 'years'} — the methods use Year 1 = {y1} until you save it.</>}
+      {behind && <> Year 1 is set to {startYear} — fine for a valuation as of an earlier date.</>}
+      {(ahead || behind || !Number.isInteger(startYear)) && onUse && <>{' '}<button type="button" className="btn sm" onClick={() => onUse(y1)}>Use {y1}</button></>}
+    </div>
+  );
+}
 
 export const FY_OPTIONS = [
   { value: 12, label: 'Calendar year (Jan – Dec)' },
@@ -28,7 +58,8 @@ export function NewCompanyForm({ onDone, onCancel }) {
     name: !name.trim() ? 'Required' : null,
     currency: !currency ? 'Choose the valuation currency' : null,
     unit: !unit ? 'Choose a unit' : null,
-    startYear: !(Number.isInteger(startYear) && startYear >= 1990 && startYear <= 2100) ? 'A year like 2026' : null,
+    startYear: !(Number.isInteger(startYear) && startYear >= 1990 && startYear <= 2100) ? 'A year like 2026'
+      : fy && impliedYear1(Number(fy)) !== null && startYear > impliedYear1(Number(fy)) ? `At most ${impliedYear1(Number(fy))}: FY${String(impliedYear1(Number(fy))).slice(-2)} has not ended, so it can't be a historical year` : null,
     fy: !fy ? 'Choose the fiscal year' : null,
   };
   const ok = Object.values(errs).every((e) => !e);
@@ -72,6 +103,7 @@ export function NewCompanyForm({ onDone, onCancel }) {
           <div className="fld-l"><label>First forecast year (Year 1)</label></div>
           <NumBox plain value={startYear} onChange={(v) => setStartYear(v)} placeholder="e.g. 2027" />
           <div className="fld-h">The LTM / base year is the year before it.</div>
+          {fy ? <YearCheck startYear={startYear} fyEndMonth={Number(fy)} onUse={setStartYear} /> : <div className="fld-h">Choose the fiscal year to see which year that is.</div>}
           <E k="startYear" />
         </div>
         <div className={`fld${tried && errs.fy ? ' bad' : ''}`}>
@@ -116,7 +148,8 @@ export function CompanySettings({ record, onClose }) {
   }, [toCur, record.currency]);
 
   const basicsChanged = name.trim() !== record.name || startYear !== record.startYear || fy !== record.fyEndMonth;
-  const basicsOk = name.trim() && Number.isInteger(startYear) && startYear >= 1990 && startYear <= 2100;
+  const basicsOk = name.trim() && Number.isInteger(startYear) && startYear >= 1990 && startYear <= 2100
+    && !(impliedYear1(fy) !== null && startYear > impliedYear1(fy));   // a historical year must have ended
 
   const saveBasics = () => { if (basicsOk) updateCompany(record.id, { name: name.trim(), startYear, fyEndMonth: Number(fy) }); };
   const convert = () => {
@@ -144,6 +177,7 @@ export function CompanySettings({ record, onClose }) {
               <select className="fld-in" value={fy} onChange={(e) => setFy(Number(e.target.value))}>{FY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
             </div>
           </div>
+          <YearCheck startYear={startYear} fyEndMonth={fy} onUse={setStartYear} />
           <button className="btn sm" disabled={!basicsChanged || !basicsOk} onClick={saveBasics}>Save</button>
         </section>
 

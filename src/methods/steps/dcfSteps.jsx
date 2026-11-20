@@ -11,6 +11,8 @@ import {
 } from '../../lib/engine/dcfTemplate.js';
 import { MIN_YEARS, MAX_YEARS } from '../../lib/engine/companyPage.js';
 import { fmtNum, fmtTpl, CURRENCIES, UNITS } from '../../lib/format.js';
+import { YearCheck } from '../../home/CompanyForms.jsx';
+import { updateCompany } from '../../store/store.js';
 
 /**
  * Wizard steps for the DCF, following the user's twelve DCF templates:
@@ -83,6 +85,7 @@ function DcfLabelsEditor({ data, setData, company }) {
   const s = S(data);
   return (
     <div className="step-tools">
+      <YearCheck startYear={company?.startYear} fyEndMonth={company?.fyEndMonth} onUse={(y) => company?.id && updateCompany(company.id, { startYear: y })} />
       <PeriodLabelsCard labels={dcfLabels(s.labels, nHist(data), nFcst(data), company?.startYear, { keepBlank: true })} onChange={(labels) => setData((d) => ({ ...d, dcf: { ...d.dcf, settings: { ...d.dcf.settings, labels } } }))} />
       {s.cf && s.tv && s.coe && (
         <div className="readout">

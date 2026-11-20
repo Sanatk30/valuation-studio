@@ -6,13 +6,16 @@ import { PeerBatchAdd, YahooSearch, RowFetch, mergeFetch } from '../../component
 import { NumBox } from '../../wizard/Field.jsx';
 import { computePage, MIN_YEARS, MAX_YEARS } from '../../lib/engine/companyPage.js';
 import {
-  COMPS_MULTIPLES, CONSENSUS_KEYS, blankPeer, blankConsensus, isBlankPeer, peerSlots, periodLabels, clampYears, multipleLabel, computeComps, usedMultiples, tsmShares,
+  COMPS_MULTIPLES, blankPeer, isBlankPeer, peerSlots, periodLabels, clampYears, multipleLabel, computeComps, usedMultiples, tsmShares,
 } from '../../lib/engine/comps.js';
 import { PREC_METHODS, dealSlots, isBlankDeal, impliedEquity100, controlPremium } from '../../lib/engine/precedent.js';
 import { STAT_KEYS, STAT_LABELS, statsSettings } from '../../lib/engine/templateStats.js';
 import { runRegression, allVars, observations, targetValues, unpricedPeers } from '../../lib/engine/regressionModel.js';
 import { toEngineInput } from '../../store/methodModel.js';
 import { fmtX, fmtPct, fmtNum, fmtTpl, fmtDate, CURRENCIES } from '../../lib/format.js';
+import { YearCheck } from '../../home/CompanyForms.jsx';
+import { updateCompany } from '../../store/store.js';
+import { latestYearErrors } from './dcfSteps.jsx';
 
 /**
  * Wizard steps for the two template methods:
@@ -148,54 +151,13 @@ function LabelsEditor({ labels, ytd, forward = false, onChange }) {
 /* ============================== COMPS ============================== */
 
 /**
- * The template's share data (Inputs I–M): basic shares, then optional options /
- * ESOPs with their weighted average exercise price and convertibles with their
- * conversion price. The workbook's diluted count is the treasury stock method.
+ * The target's share count. Options, convertibles and consensus forecasts are
+ * not asked for (the user's choice): the workbook's treasury-stock and forward
+ * columns read them as blank — diluted = this count, forward multiples NM.
  */
 const shareDataFields = (base) => [
-  f.shares(`${base}.shares`, 'Basic shares outstanding', { required: false, gt: undefined, min: 0, hint: 'Latest basic share count. Diluted shares are worked out by the treasury stock method from the fields below.' }),
-  f.shares(`${base}.options`, 'Options / ESOPs outstanding', { required: false, gt: undefined, min: 0, hint: 'Optional. In the money only when the share price is above the exercise price.' }),
-  f.price(`${base}.exPrice`, 'Weighted avg. exercise price', { required: false, gt: undefined, min: 0, hint: 'Optional — needed with the options.' }),
-  f.shares(`${base}.convShares`, 'Convertibles: shares on conversion', { required: false, gt: undefined, min: 0, hint: 'Optional. If they are in the money, take that convertible out of borrowings on the company page.' }),
-  f.price(`${base}.convPrice`, 'Conversion price', { required: false, gt: undefined, min: 0, hint: 'Optional — needed with the convertibles.' }),
+  f.shares(`${base}.shares`, 'Shares outstanding', { required: false, gt: undefined, min: 0, hint: 'Latest share count.' }),
 ];
-
-/** The Consensus sheet's six figures (FY+1 / FY+2 revenue, EBITDA, PAT) and their source. */
-const consensusFields = (base) => [
-  ...CONSENSUS_KEYS.map((k) => f.num(`${base}.cons.${k.key}`, `Consensus ${k.name} — forecast year ${k.period === 'f1' ? 1 : 2}`, {
-    required: false,
-    hint: k.key === 'rev1' ? 'Optional — broker consensus (or management case) on the same basis as the company page. Blank → that forward multiple is NM.' : undefined,
-  })),
-  f.text(`${base}.cons.source`, 'Consensus source / date'),
-];
-
-/** One peer's share data and consensus (opened under its row on the Peers step). */
-function PeerExtras({ p, labels, locale, onChange }) {
-  const cons = p.cons || blankConsensus();
-  const box = (key, label) => (
-    <label key={key}>{label}<NumBox small value={p[key] ?? null} onChange={(v) => onChange({ [key]: v })} /></label>
-  );
-  return (
-    <div className="peer-extras">
-      <div className="tool-h">Share data — treasury stock method <span className="fld-opt">diluted {fmtTpl(tsmShares(p), 'n2', locale)}</span></div>
-      <div className="lab-grid">
-        {box('options', 'Options / ESOPs outstanding')}
-        {box('exPrice', 'Weighted avg. exercise price')}
-        {box('convShares', 'Convertibles: shares on conversion')}
-        {box('convPrice', 'Conversion price')}
-      </div>
-      <div className="tool-h">Consensus forecasts <span className="fld-opt">optional — blank gives NM for that forward multiple</span></div>
-      <div className="lab-grid">
-        {CONSENSUS_KEYS.map((k) => (
-          <label key={k.key}>{k.name} {k.period === 'f1' ? labels.f1 : labels.f2}
-            <NumBox small value={cons[k.key] ?? null} onChange={(v) => onChange({ cons: { ...cons, [k.key]: v } })} />
-          </label>
-        ))}
-        <label>Source / date<input className="fld-in txt" value={cons.source || ''} onChange={(e) => onChange({ cons: { ...cons, source: e.target.value } })} /></label>
-      </div>
-    </div>
-  );
-}
 
 const compsN = (data) => clampYears(data.comps?.settings?.years);
 const compsYtd = (data) => data.comps?.settings?.ytd !== false;
@@ -207,6 +169,7 @@ function CompsSettingsExtra({ data, setData, company }) {
   const methods = COMPS_MULTIPLES.map((m) => ({ key: m.key, label: multipleLabel(m, compsLabels(data, company)) }));
   return (
     <div className="step-tools">
+      <YearCheck startYear={company?.startYear} fyEndMonth={company?.fyEndMonth} onUse={(y) => company?.id && updateCompany(company.id, { startYear: y })} />
       <LabelsEditor labels={editorLabels(s.labels, compsN(data), company?.startYear)} ytd={compsYtd(data)} forward onChange={(labels) => setSettings({ ...s, labels })} />
       <ValuationChoices settings={s} onChange={setSettings} methods={methods} />
     </div>
@@ -286,11 +249,26 @@ export const compsTargetStep = () => ({
     f.text('comps.target.sector', 'Sector / sub-sector'),
     f.price('comps.target.price', 'Share price', { required: false, gt: undefined, min: 0 }),
     ...shareDataFields('comps.target'),
-    ...consensusFields('comps.target'),
   ],
   Extra: CompsTargetExtra,
   extraBelow: true,
+  // the LTM is built on the latest FY column: with no figures there the target's multiples base is 0
+  validate: (data, ctx) => latestYearErrors(pageRevShape(data.comps.target?.page, compsN(data), compsLabels(data, ctx.company).fy), ctx.company, "the target's LTM"),
 });
+
+/** A company page's revenue by FY column in the shape latestYearErrors reads (null when the page has no revenue at all). */
+function pageRevShape(page, n, labels) {
+  const fy = page?.lines?.rev?.fy || [];
+  const rev = Array.from({ length: n }, (_, i) => (Number.isFinite(fy[i]) ? fy[i] : 0));
+  return rev.some((v) => v !== 0) ? { n, F: { rev }, labels: { hist: labels } } : null;
+}
+
+/** Peers whose latest FY column is empty (their multiples come out NM and drop out of the statistics). */
+function peersMissingLatest(comps, slots, n, labels) {
+  return slots.map((k) => comps.peers?.[k]).filter((p) => p && !isBlankPeer(p))
+    .filter((p) => { const sh = pageRevShape(p.page, n, labels); return sh && sh.F.rev[n - 1] === 0; })
+    .map((p) => p.name || p.ticker || 'a peer');
+}
 
 /** Peer slots: the chosen number of peers, each an input row + a company page. */
 function PeersExtra({ data, setData, company }) {
@@ -361,6 +339,10 @@ function PeersExtra({ data, setData, company }) {
 
   return (
     <div className="step-tools">
+      {(() => {
+        const miss = peersMissingLatest(comps, slots, n, labels.fy);
+        return miss.length ? <div className="readout warn">{miss.join(', ')} {miss.length === 1 ? 'has' : 'have'} no figures in {labels.fy[n - 1]}, the latest year — {miss.length === 1 ? 'its' : 'their'} multiples are NM and left out of the statistics. If {labels.fy[n - 1]} has not ended yet, set Year 1 earlier in Company settings and fill again.</div> : null;
+      })()}
       <div className="tool-card">
         <div className="tool-h">Fill peers</div>
         <div className="fld-h" style={{ marginBottom: 8 }}>
@@ -428,7 +410,6 @@ function PeersExtra({ data, setData, company }) {
                       </tr>
                       {open === p.id && (
                         <tr className="slot-page"><td colSpan={11}>
-                          <PeerExtras p={p} labels={labels} locale={locale} onChange={(patch) => setPeer(k, (x) => ({ ...x, ...patch }))} />
                           <TemplatePageEditor
                             page={p.page} onChange={(page) => setPeer(k, (x) => ({ ...x, page }))}
                             n={n} ytd={ytd} labels={labels} toggle={toggle} inv={inv}

@@ -11,6 +11,8 @@ import { REPAY_KINDS, repayKind, LBO_DRIVERS, TRANCHES, computeLboT } from '../.
 import { clampN, dcfLabels } from '../../lib/engine/dcfTemplate.js';
 import { MIN_YEARS, MAX_YEARS } from '../../lib/engine/companyPage.js';
 import { fmtTpl, CURRENCIES, UNITS } from '../../lib/format.js';
+import { YearCheck } from '../../home/CompanyForms.jsx';
+import { updateCompany } from '../../store/store.js';
 
 /**
  * Wizard steps for the LBO, following the user's three LBO templates:
@@ -37,6 +39,7 @@ function SettingsExtra({ data, setData, company }) {
   const s = S(data);
   return (
     <div className="step-tools">
+      <YearCheck startYear={company?.startYear} fyEndMonth={company?.fyEndMonth} onUse={(y) => company?.id && updateCompany(company.id, { startYear: y })} />
       <PeriodLabelsCard
         labels={dcfLabels(S(data).labels, nHist(data), nHold(data), company?.startYear, { keepBlank: true })} latestName="Latest actual year (entry)"
         fcstName={(i, m) => `Forecast year ${i + 1}${i === m - 1 ? ' (exit)' : ''}`}

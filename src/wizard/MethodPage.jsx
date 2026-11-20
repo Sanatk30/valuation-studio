@@ -7,6 +7,7 @@ import { CombinedOutput, combinedResult } from '../methods/combined.jsx';
 import { toEngineInput } from '../store/methodModel.js';
 import { updateMethod, resetMethod, setPath } from '../store/store.js';
 import { FieldGrid, NumLocaleContext } from './Field.jsx';
+import { effectiveYear1 } from '../lib/period.js';
 import { CURRENCIES } from '../lib/format.js';
 import FillAllDialog from './FillAllDialog.jsx';
 
@@ -28,7 +29,8 @@ export function useCompanyCtx(record) {
   }, [record]);
 }
 
-export const companyOf = (r) => ({ id: r.id, name: r.name, currency: r.currency, unit: r.unit, startYear: r.startYear, fyEndMonth: r.fyEndMonth });
+// Year 1 never later than the calendar allows (a historical year must have ended): see effectiveYear1
+export const companyOf = (r) => ({ id: r.id, name: r.name, currency: r.currency, unit: r.unit, startYear: effectiveYear1(r.startYear, r.fyEndMonth), fyEndMonth: r.fyEndMonth });
 
 export default function MethodPage({ record, methodId, onHome }) {
   const def = METHODS[methodId];

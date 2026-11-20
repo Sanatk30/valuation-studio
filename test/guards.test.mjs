@@ -26,5 +26,14 @@ const growth = ['n.a.', 0.5082, 0.3323, -1, ''];
 ok(near(grid.histAverage(growth, 'pct', skip), (0.5082 + 0.3323) / 2 * 100), 'the average leaves the empty FY27 out (was −5.3 %)');
 ok(near(grid.histAverage(growth, 'pct'), (0.5082 + 0.3323 - 1) / 3 * 100), 'without the skip list the old average is unchanged');
 
+// the latest completed fiscal year from the date and the year-end month
+const { latestCompletedFy, impliedYear1 } = await import('../src/lib/period.js');
+const nov20 = new Date(2026, 10, 20);
+ok(latestCompletedFy(3, nov20) === 2026 && impliedYear1(3, nov20) === 2027, 'March year end on 20 Nov 2026: latest FY26, Year 1 = 2027');
+ok(latestCompletedFy(12, nov20) === 2025 && impliedYear1(12, nov20) === 2026, 'December year end on 20 Nov 2026: latest FY25, Year 1 = 2026');
+ok(latestCompletedFy(12, new Date(2027, 0, 2)) === 2026, 'December year end on 2 Jan 2027: FY26 has ended');
+ok(latestCompletedFy(3, new Date(2026, 2, 31, 12)) === 2025, 'on the year-end day itself the year has not ended');
+ok(latestCompletedFy(null) === null, 'no year-end month: null');
+
 console.log(`guards: ${checks} checks, ${failures} failures`);
 if (failures) process.exit(1);
