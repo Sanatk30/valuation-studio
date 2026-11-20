@@ -109,6 +109,39 @@ export async function fetchLiveRate(from, to, opts = {}) {
   return parseRateResponse(await res.json(), from, to);
 }
 
+/* ---------------------------------------------- rate boxes (FxRates.jsx) */
+
+/**
+ * The rates in a set of rate boxes belong to ONE request: these currencies
+ * into this target. `rateRequestId` names it; the box state is
+ * { id, fetched, rates } and is read only for the request it was made for —
+ * so after the company's currency changes, a rate into the OLD currency is
+ * never shown, labelled "live" or used while the new one is fetched.
+ */
+export const rateRequestId = (currencies, to) => `${[...new Set((currencies || []).filter(Boolean))].sort().join(',')}>${to || ''}`;
+
+/** The rates to show / use for request `id` ({} when the state is another request's). */
+export const ratesFor = (st, id) => (st && st.id === id ? st.rates || {} : {});
+
+/** True while the live fetch for request `id` has not landed (never for a request needing no rate). */
+export const ratesLoading = (st, id, needed) => needed > 0 && !(st && st.id === id && st.fetched);
+
+/** The live fetch for `id` landed: its rates, except a rate the user typed meanwhile (theirs wins). */
+export function landFetchedRates(st, id, fetched) {
+  const typed = Object.entries(ratesFor(st, id)).filter(([, r]) => r?.source === 'typed');
+  return { id, fetched: true, rates: { ...(fetched || {}), ...Object.fromEntries(typed) } };
+}
+
+/** The user typed `v` as the rate for `ccy` in request `id`. */
+export function typeRate(st, id, ccy, v, at = new Date().toISOString()) {
+  const cur = ratesFor(st, id);
+  return {
+    id,
+    fetched: !!(st && st.id === id && st.fetched),
+    rates: { ...cur, [ccy]: { ...(cur[ccy] || {}), rate: v, source: 'typed', at, error: null } },
+  };
+}
+
 /**
  * Live rates for several currencies into one target. Never throws: each entry
  * is either the fetchLiveRate result or { rate: null, source: 'failed', error }.
