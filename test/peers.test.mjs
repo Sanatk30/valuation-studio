@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import { parseListing, ltmPeriod, parseSearch } from '../src/lib/yahoo.js';
 import { parseRateResponse } from '../src/lib/fx.js';
 import {
-  parseSnapshot, scoreCandidate, buildReference, rankCandidates, findPeers, makeConvert, WEIGHTS, SNAPSHOT_TYPES, mapLimit,
+  parseSnapshot, scoreCandidate, buildReference, rankCandidates, findPeers, makeConvert, WEIGHTS, SNAPSHOT_TYPES, mapLimit, resultStale,
 } from '../src/lib/peerFinder.js';
 import { computePage, setCell } from '../src/lib/engine/companyPage.js';
 import { blankPeer } from '../src/lib/engine/comps.js';
@@ -208,6 +208,8 @@ console.log('\n=== findPeers end to end ===');
   ok(out.candidates.every((c, i, a) => i === 0 || (a[i - 1].score ?? -1) >= (c.score ?? -1)), 'list is sorted best first');
   ok(stages.some((s) => /profiles/.test(s)) && stages.some((s) => /figures/.test(s)), 'progress reported per stage');
   ok(out.ref.from.revenue === 'seed' && out.ref.industry === 'Oil & Gas Refining & Marketing', 'reference = seed profile and figures');
+  // the company's currency changed after the search: the INR sizes / FX must not be shown as USD
+  ok(out.currency === 'INR' && !resultStale(out, 'INR') && resultStale(out, 'USD') && !resultStale(null, 'USD'), 'a result is stale once the valuation currency differs from the one it was ranked in');
 
   const withInputs = await findPeers({ seed: 'RELIANCE.NS', currency: 'INR', unit: 'Cr', inputs: { revenue: 5, ebitda: 1, priorRevenue: 4 }, fetchImpl: fakeFetch() });
   ok(withInputs.ref.from.revenue === 'inputs' && near(withInputs.ref.margin, 0.2) && withInputs.ref.from.marketCap === 'seed', 'typed target figures override the seed’s, per figure');

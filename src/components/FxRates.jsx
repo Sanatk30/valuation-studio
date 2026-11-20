@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { NumBox } from '../wizard/Field.jsx';
-import { fetchLiveRates, validRate, rateShown } from '../lib/fx.js';
+import {
+  fetchLiveRates, validRate, rateShown, rateRequestId, ratesFor, ratesLoading, landFetchedRates, typeRate,
+} from '../lib/fx.js';
 
 /**
  * Live FX for a Yahoo pull: fetches a spot rate for every foreign currency
@@ -11,23 +13,25 @@ import { fetchLiveRates, validRate, rateShown } from '../lib/fx.js';
  * rates = { [ccy]: { rate, source: 'live' | 'typed' | 'failed', at, pair, error } }
  */
 export function useLiveRates(currencies, to) {
-  const key = [...new Set(currencies || [])].sort().join(',');
-  const [rates, setRates] = useState({});
-  const [loading, setLoading] = useState(false);
+  const list = [...new Set((currencies || []).filter(Boolean))].sort();
+  const key = list.join(',');
+  const id = rateRequestId(list, to);
+  // The state belongs to one request (these currencies into `to`): when the company's currency
+  // changes, the old rates are neither shown nor usable while the new ones load (lib/fx.js).
+  const [st, setSt] = useState(null);
   useEffect(() => {
-    const list = key ? key.split(',') : [];
-    if (!list.length) { setRates({}); return undefined; }
+    const need = key ? key.split(',') : [];
+    if (!need.length) return undefined;
     let alive = true;
-    setLoading(true);
-    fetchLiveRates(list, to).then((r) => {
-      if (!alive) return;
-      setRates(r);
-      setLoading(false);
+    fetchLiveRates(need, to).then((r) => {
+      if (alive) setSt((s) => landFetchedRates(s, id, r));
     });
     return () => { alive = false; };
-  }, [key, to]);
-  const setRate = (ccy, v) => setRates((r) => ({ ...r, [ccy]: { ...(r[ccy] || {}), rate: v, source: 'typed', at: new Date().toISOString(), error: null } }));
-  const ready = !loading && (key ? key.split(',') : []).every((c) => validRate(rates[c]));
+  }, [key, to, id]);
+  const rates = ratesFor(st, id);
+  const loading = ratesLoading(st, id, list.length);
+  const setRate = (ccy, v) => setSt((s) => typeRate(s, id, ccy, v));
+  const ready = !loading && list.every((c) => validRate(rates[c]));
   return { rates, setRate, loading, ready };
 }
 

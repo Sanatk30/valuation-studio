@@ -11,7 +11,11 @@ import fs from 'node:fs';
 import {
   parseListing, mapListing, fetchListing, timeseriesWindow, searchSymbols, yahooBusy, ltmPeriod, balanceSheetDate, templateFromListing, requiredCurrencies, parseSearch, UNIT_FACTOR, ebitdaSuspect,
 } from '../src/lib/yahoo.js';
-import { parseRateResponse, fetchLiveRate, fetchLiveRates, normalizeCurrency, rateShown, validRate } from '../src/lib/fx.js';
+import {
+  parseRateResponse, fetchLiveRate, fetchLiveRates, normalizeCurrency, rateShown, validRate,
+  rateRequestId, ratesFor, ratesLoading, landFetchedRates, typeRate,
+} from '../src/lib/fx.js';
+import { importJsx } from './helpers/bundleJsx.mjs';
 import { convertCompanyRecord, rescaleUnit } from '../src/lib/currency.js';
 import { blankMethodState, METHOD_IDS } from '../src/store/methodModel.js';
 import { blankManualHistory } from '../src/lib/historyModel.js';
@@ -60,6 +64,21 @@ console.log('=== live FX ===');
   // a rate box keeps a typed 0 (on the way to 0.012) instead of wiping it; it is still not a usable rate
   ok(rateShown({ rate: 0, source: 'typed' }) === 0 && !validRate({ rate: 0 }), 'a typed 0 stays in the rate box but is not usable');
   ok(rateShown({ rate: 83.2, source: 'live' }) === 83.2 && rateShown({ rate: null, source: 'failed' }) === null && rateShown(undefined) === null, 'the rate box shows the held number, blank when none');
+
+  // rate boxes belong to one request (currencies → target). After the company's currency
+  // changes, the old request's rate must not be shown (tagged "live") or used while the new loads.
+  const inInr = rateRequestId(['USD'], 'INR'), inEur = rateRequestId(['USD'], 'EUR');
+  ok(inInr !== inEur && rateRequestId(['USD', 'TWD', 'USD'], 'INR') === rateRequestId(['TWD', 'USD'], 'INR'), 'a request is its currency set and its target');
+  const st1 = landFetchedRates(null, inInr, { USD: { rate: 83.2, source: 'live', at: 'x' } });
+  ok(ratesFor(st1, inInr).USD.rate === 83.2 && !ratesLoading(st1, inInr, 1), 'the fetched USD→INR rate fills its own request');
+  ok(Object.keys(ratesFor(st1, inEur)).length === 0 && ratesLoading(st1, inEur, 1), 'switched to EUR: the USD→INR rate is not shown, and the boxes read as loading');
+  ok(!ratesLoading(null, rateRequestId([], 'USD'), 0), 'no currency to convert → never loading (Apply is not held back)');
+  // a rate typed while the live fetch is in flight is kept when the fetch lands
+  const typed = typeRate(null, inEur, 'USD', 0.92, 't');
+  ok(ratesFor(typed, inEur).USD.rate === 0.92 && ratesLoading(typed, inEur, 1), 'a typed rate shows while the live one loads');
+  const landed = landFetchedRates(typed, inEur, { USD: { rate: 0.95, source: 'live' }, GBP: { rate: 1.1, source: 'live' } });
+  ok(ratesFor(landed, inEur).USD.rate === 0.92 && ratesFor(landed, inEur).GBP.rate === 1.1 && !ratesLoading(landed, inEur, 1), 'the late live fetch does not overwrite the typed rate');
+  ok(ratesFor(landFetchedRates(typed, inInr, { USD: { rate: 83, source: 'live' } }), inInr).USD.rate === 83, "another request's typed rate is not carried over");
 }
 
 /* ------------------------------------------------- fetch: stable URLs */
@@ -277,6 +296,37 @@ console.log('\n=== currency & unit conversion ===');
   let threw = false;
   try { convertCompanyRecord(rec, 'USD', null); } catch { threw = true; }
   ok(threw, 'no rate → no conversion');
+}
+
+console.log('\n=== typed history: a 29 February year end ===');
+{
+  const h = blankManualHistory(3, '2024-02-29');
+  ok(JSON.stringify(h.annual.dates) === JSON.stringify(['2022-02-28', '2023-02-28', '2024-02-29']), `earlier years end 28 Feb, not 1 March (${h.annual.dates.join(', ')})`);
+  ok(JSON.stringify(blankManualHistory(2, '2025-03-31').annual.dates) === JSON.stringify(['2024-03-31', '2025-03-31']), 'an ordinary year end is unchanged');
+}
+
+console.log('\n=== currency change after a Yahoo fill: the listing note follows ===');
+{
+  // A listing filled the Company step in INR; the company then moved to USD; a second listing
+  // (a bank: no EBITDA, no NWC) is applied. The first listing's EBITDA must be cleared — before
+  // the fix the record of what it wrote stayed in INR, matched nothing, and the old EBITDA stayed.
+  const { applyListing } = await importJsx('src/methods/steps/common.jsx');
+  const data0 = { ...blankMethodState('ts').data };
+  const tcs = { company: { sharesOut: 362, currentPrice: 3400, grossDebt: 8000, cash: 9000, taxRate: 25 }, drivers: { revenue0: 255000, ebitda0: 68000, nwc0: 40000 }, ts: { startingPPE: 2500, equity0: 9000 }, listing: { symbol: 'TCS.NS' } };
+  const filled = applyListing(data0, tcs, { methodId: 'ts' });
+  const rec = { id: 'c', name: 'X', currency: 'INR', unit: 'Cr', startYear: 2027, fyEndMonth: 3, methods: { ts: { ...blankMethodState('ts'), data: filled } } };
+  const r = 0.012;
+  const usd = convertCompanyRecord(rec, 'USD', r).methods.ts.data;
+  const ap = usd.listing.applied;
+  ok(near(ap['drivers.ebitda0'], 68000 * r) && near(ap['company.currentPrice'], 3400 * r) && ap['company.sharesOut'] === 362 && ap['company.taxRate'] === 25 && near(ap['ts.equity0'], 9000 * r),
+    'what the fill wrote converts with the fields (money and price × rate; shares and tax rate untouched)');
+  ok(ap['drivers.ebitda0'] === usd.drivers.ebitda0 && ap['company.cash'] === usd.company.cash, 'each recorded value still equals the field it was written to');
+  const bank = { company: { sharesOut: 760, currentPrice: 22, grossDebt: 900, cash: 400, taxRate: 24 }, drivers: { revenue0: 3000, ebitda0: null, nwc0: null }, ts: { startingPPE: 40, equity0: 900 }, listing: { symbol: 'HDFCBANK.NS' } };
+  const after = applyListing(usd, bank, { methodId: 'ts' });
+  ok(after.drivers.ebitda0 === null && after.drivers.nwc0 === null, "the first listing's EBITDA and NWC are cleared after the currency change");
+  const mn = rescaleUnit({ ...rec, methods: { ts: { ...rec.methods.ts, data: filled } } }, 'Mn').methods.ts.data;
+  ok(mn.listing.applied['drivers.ebitda0'] === mn.drivers.ebitda0 && mn.listing.applied['company.sharesOut'] === mn.company.sharesOut && mn.listing.applied['company.currentPrice'] === 3400,
+    'a unit change rescales the record the same way (money and shares; price untouched)');
 }
 
 /* ------------------------------------------------ reported statements */
