@@ -391,7 +391,7 @@ function writeSimpleRegression(ws, { T1, T2, tRef, labelRef, consTarget, peers, 
   for (let i = 2; i <= 8; i++) ws.getColumn(i).width = 14;
   ws.getColumn(4).width = 18;
   title(ws, 'A1', 'Regression Analysis – Peer Multiple vs Value Driver');
-  note(ws, 'A2', 'Ordinary least squares on included peers (Include = 1, both values numeric, NM excluded). Needs at least 3 observations. Pick the variables with the codes below.');
+  note(ws, 'A2', 'Ordinary least squares on included peers (Include = 1, a market cap above 0, both values numeric, NM excluded). Needs at least 3 observations. Pick the variables with the codes below.');
   w(ws, 'A4', 'Dependent variable y (multiple) – code');
   w(ws, 'B4', codes.y, { input: true, align: 'center' });
   w(ws, 'C4', fx(`CHOOSE($B$4,"EV / Revenue LTM","EV / EBITDA LTM","P / E LTM","EV / EBITDA "&${labelRef.f1},"P / E "&${labelRef.f1})`), { bold: true });
@@ -412,8 +412,10 @@ function writeSimpleRegression(ws, { T1, T2, tRef, labelRef, consTarget, peers, 
     w(ws, `B${rr}`, fx(`'Comps Summary'!$C$${T1.p0 + k}`), { link: true, align: 'center' });
     w(ws, `C${rr}`, fx(xCh(T2.p0 + k)), { fmt: '0.0%;(0.0%);-' });
     w(ws, `D${rr}`, fx(yCh(T1.p0 + k)), { fmt: NF.x });
-    w(ws, `E${rr}`, fx(`IF(AND(B${rr}=1,ISNUMBER(C${rr}),ISNUMBER(D${rr})),C${rr},"")`), { fmt: '0.0%;(0.0%);-' });
-    w(ws, `F${rr}`, fx(`IF(AND(B${rr}=1,ISNUMBER(C${rr}),ISNUMBER(D${rr})),D${rr},"")`), { fmt: NF.x });
+    // a peer with no share price (or shares) has a market cap of 0: its multiples are meaningless, so it stays out of the fit
+    const priced = `'Comps Summary'!$E$${T1.p0 + k}>0`;
+    w(ws, `E${rr}`, fx(`IF(AND(B${rr}=1,${priced},ISNUMBER(C${rr}),ISNUMBER(D${rr})),C${rr},"")`), { fmt: '0.0%;(0.0%);-' });
+    w(ws, `F${rr}`, fx(`IF(AND(B${rr}=1,${priced},ISNUMBER(C${rr}),ISNUMBER(D${rr})),D${rr},"")`), { fmt: NF.x });
     w(ws, `G${rr}`, fx(`IF(AND(ISNUMBER(E${rr}),ISNUMBER($B$${R.slope})),$B$${R.icpt}+$B$${R.slope}*E${rr},"")`), { fmt: NF.x });
     w(ws, `H${rr}`, fx(`IF(ISNUMBER(G${rr}),F${rr}-G${rr},"")`), { fmt: NF.x });
   }
@@ -614,8 +616,11 @@ export function buildPrecedentWorkbook(a) {
       col: m.col, key: m.key, head: m.label, fmt: NF.x, stat: true,
       get: (ref) => {
         const metric = m.metric === 'book' ? ref.mkt(15) : ref.ltm(metricRow[m.metric]);
-        // a blank deal (no implied equity) gives #VALUE! here → NM
-        return `IFERROR(IF(${metric}<=0,"NM",${m.ev ? ref.mkt(14) : ref.mkt(5)}/${metric}),"NM")`;
+        // a blank deal (no implied equity) gives #VALUE! here → NM. Equity-based multiples also test the
+        // equity is a number: Google Sheets / LibreOffice read the blank "" as 0 and would show 0, not NM
+        return m.ev
+          ? `IFERROR(IF(${metric}<=0,"NM",${ref.mkt(14)}/${metric}),"NM")`
+          : `IFERROR(IF(ISNUMBER(${ref.mkt(5)}),IF(${metric}<=0,"NM",${ref.mkt(5)}/${metric}),"NM"),"NM")`;
       },
     })),
     { col: 'S', key: 'premium', head: 'Control Premium', fmt: NF.pct, stat: true, get: (_ref, k) => `Inputs!$N$${dealRow[k]}` },

@@ -4,9 +4,21 @@ import { NumBox } from '../wizard/Field.jsx';
 import { METHOD_META } from './labels.js';
 import { fmtPrice, fmtPct } from '../lib/format.js';
 import { includeBox, methodMarketPrice } from './figures.js';
+import { YahooSearch } from '../components/PeerYahoo.jsx';
 
-/** Methods that can feed the Combined valuation. */
-export const COMBINABLE = ['dcf', 'comps', 'precedent', 'ipo'];
+/**
+ * The Combined template's six rows: DCF (FCFF, or FCFE / DDM), Comparable
+ * Companies and Precedent Transactions come from their methods; the LBO
+ * (sponsor's ability to pay) and the 52-week trading range are typed in.
+ * IPO is not combined: an offer price prices an unlisted company, not a view
+ * of a listed company's value.
+ */
+export const COMBINABLE = ['dcf', 'comps', 'precedent'];
+export const MANUAL_ROWS = [
+  { id: 'lbo', label: 'LBO (sponsor ability to pay)', figureLabel: 'Price at target IRR', rangeNote: 'typed in — e.g. prices at the low / high IRR' },
+  { id: 'range52', label: '52-week trading range', figureLabel: 'Current price', rangeNote: '52-week low → high' },
+];
+export const rowLabel = (id) => METHOD_META[id]?.label || MANUAL_ROWS.find((m) => m.id === id)?.label || id;
 const fin = Number.isFinite;
 
 /**
@@ -21,7 +33,15 @@ export function combinedRows(data, ctx) {
     const complete = ctx.progressOf(id).complete;
     const figs = complete ? ctx.figuresOf(id) : [];
     return { methodId: id, complete, figures: figs, figure: figs.find((x) => x.key === e.figure) || null, weight: e.weight };
-  });
+  }).concat(MANUAL_ROWS.filter((m) => entries[m.id]?.include).map((m) => {
+    const e = entries[m.id];
+    const v = e.value;
+    const ends = [e.low, e.high].filter(fin);
+    const figure = fin(v) && v > 0
+      ? { key: 'manual', label: `${m.label} — ${m.figureLabel}`, value: v, low: ends.length ? Math.min(v, ...ends) : v, high: ends.length ? Math.max(v, ...ends) : v, rangeNote: m.rangeNote }
+      : null;
+    return { methodId: m.id, manual: true, complete: true, figures: [], figure, weight: e.weight, low: e.low, high: e.high };
+  }));
 }
 
 export function combinedResult(data, ctx) {
@@ -80,13 +100,51 @@ function CombinedPicker({ data, setData, company, ctx }) {
                 </tr>
               );
             })}
+          </tbody>
+        </table>
+        <div className="fld-h">Only completed methods can be included. Results update when you change a method.</div>
+      </div>
+
+      <div className="tool-card">
+        <div className="tool-h">Typed-in rows <span className="fld-opt">optional — the template's LBO and 52-week rows</span></div>
+        <div className="tablewrap">
+        <table className="fin comb-pick">
+          <thead><tr><th>Row</th><th>Include</th><th>Low</th><th>Value / share</th><th>High</th><th>Weight</th></tr></thead>
+          <tbody>
+            {MANUAL_ROWS.map((m) => {
+              const e = entries[m.id] || {};
+              const box = (key, extra = {}) => <NumBox small value={e[key] ?? null} {...extra} onChange={(v) => setEntry(m.id, { [key]: v })} />;
+              return (
+                <tr key={m.id}>
+                  <td>{m.label}<div className="fld-h">{m.figureLabel}</div></td>
+                  <td><input type="checkbox" checked={!!e.include} onChange={(ev) => setEntry(m.id, { include: ev.target.checked })} /></td>
+                  <td>{e.include ? box('low') : '—'}</td>
+                  <td>{e.include ? box('value') : '—'}</td>
+                  <td>{e.include ? box('high') : '—'}</td>
+                  <td>{e.include ? box('weight', { suffix: '%' }) : '—'}</td>
+                </tr>
+              );
+            })}
             <tr className="bold">
-              <td colSpan={5}>Total weight</td>
+              <td colSpan={5}>Total weight (all rows)</td>
               <td className={Math.abs(res.wsum - 100) < 0.005 ? 'pos' : 'neg'}>{fmtPct(res.wsum, 1)}</td>
             </tr>
           </tbody>
         </table>
-        <div className="fld-h">Only completed methods can be included. Results update when you change a method.</div>
+        </div>
+        {entries.range52?.include && (
+          <div style={{ marginTop: 8 }}>
+            <div className="fld-h">Fill the 52-week row from Yahoo Finance (low, current price, high):</div>
+            <YahooSearch company={company} action="Use its 52-week range"
+              onPick={({ raw, rates }) => {
+                const cur = raw.price?.currency;
+                const r = cur === company.currency ? 1 : Number(typeof rates?.[cur] === 'object' ? rates[cur]?.rate : rates?.[cur]);
+                const cv = (v) => (fin(v) && fin(r) && r > 0 ? v * r : null);
+                setEntry('range52', { low: cv(raw.price?.low52), value: cv(raw.price?.value), high: cv(raw.price?.high52) });
+              }} />
+          </div>
+        )}
+        <div className="fld-h">LBO: the price per share a financial sponsor could pay at its target IRR (e.g. from the LBO output at the low / high IRR). 52-week: the trading range for context. Leave a row unticked to drop it.</div>
       </div>
 
       <div className="tool-card">
@@ -118,8 +176,12 @@ export const combinedStep = () => ({
     const errs = [];
     if (!res.rows.length) errs.push('Include at least one completed method.');
     for (const r of res.rows) {
-      const name = METHOD_META[r.methodId].label;
-      if (!r.complete) errs.push(`${name} is no longer complete — finish it or untick it.`);
+      const name = rowLabel(r.methodId);
+      const typed = MANUAL_ROWS.find((m) => m.id === r.methodId);
+      if (typed) {
+        if (!r.figure) errs.push(`Enter the ${typed.figureLabel.toLowerCase()} (above 0) for ${name}.`);
+        if (fin(r.low) && fin(r.high) && r.low > r.high) errs.push(`${name}: the low is above the high.`);
+      } else if (!r.complete) errs.push(`${name} is no longer complete — finish it or untick it.`);
       else if (!r.figure) errs.push(`Choose the figure ${name} contributes.`);
       if (!fin(r.weight) || r.weight <= 0) errs.push(`Give ${name} a weight above 0.`);
     }
@@ -157,7 +219,7 @@ export function CombinedOutput({ data, company, ctx }) {
           <tbody>
             {res.rows.map((r) => (
               <tr key={r.methodId}>
-                <td>{METHOD_META[r.methodId].label}</td>
+                <td>{rowLabel(r.methodId)}</td>
                 <td>{r.figure.label}</td>
                 <td>{fmtPrice(r.figure.low, company, 2)}</td>
                 <td><b>{fmtPrice(r.figure.value, company, 2)}</b></td>

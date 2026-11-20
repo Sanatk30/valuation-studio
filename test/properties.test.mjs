@@ -309,8 +309,11 @@ console.log('\n=== Combined: weighting ===');
   };
   const ctx = { progressOf: () => ({ complete: true }), figuresOf: (id) => figs[id] || [] };
   const data = (entries, marketPrice = null) => ({ combined: { entries, marketPrice } });
-  const r = combinedResult(data({ dcf: { include: true, figure: 'dcf', weight: 50 }, comps: { include: true, figure: 'comps_x', weight: 30 }, ipo: { include: true, figure: 'ipoOffer', weight: 20 } }, 80), ctx);
-  ok(r.ok && near(r.value, 0.5 * 100 + 0.3 * 90 + 0.2 * 60) && near(r.wsum, 100) && near(r.upside, (89 / 80 - 1) * 100), 'weighted value = Σ weight × figure (89), upside vs 80 = +11.25 %');
+  // IPO is not combined (the template's rows); the LBO row is typed in
+  const r = combinedResult(data({ dcf: { include: true, figure: 'dcf', weight: 50 }, comps: { include: true, figure: 'comps_x', weight: 30 }, ipo: { include: true, figure: 'ipoOffer', weight: 20 }, lbo: { include: true, value: 60, low: 55, high: 70, weight: 20 } }, 80), ctx);
+  ok(r.ok && r.rows.length === 3 && near(r.value, 0.5 * 100 + 0.3 * 90 + 0.2 * 60) && near(r.wsum, 100) && near(r.upside, (89 / 80 - 1) * 100), 'weighted value = Σ weight × figure (89, IPO ignored, LBO typed), upside vs 80 = +11.25 %');
+  const blankLbo = combinedResult(data({ dcf: { include: true, figure: 'dcf', weight: 80 }, lbo: { include: true, value: null, weight: 20 } }), ctx);
+  ok(!blankLbo.ok, 'a typed row without a value gives no combined value');
   const gone = combinedResult(data({ dcf: { include: true, figure: 'dcf', weight: 50 }, comps: { include: true, figure: 'comps_gone', weight: 50 } }), ctx);
   ok(!gone.ok && Number.isNaN(gone.value), 'a figure that no longer exists (e.g. became NM) → no combined value');
   const zero = combinedResult(data({ dcf: { include: true, figure: 'dcf', weight: 0 } }), ctx);

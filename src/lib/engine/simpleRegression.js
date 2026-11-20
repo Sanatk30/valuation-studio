@@ -3,7 +3,7 @@
  * multiple (y) on ONE value driver (x), over the included peers whose two
  * values are both numbers, with the target's predicted multiple, a ±1
  * standard-error band and the implied share price. Mirrors the sheet cell for
- * cell (SLOPE, INTERCEPT, RSQ, STEYX, DEVSQ, TDIST), with "NA" where the sheet
+ * cell (priced peers only — a market cap above 0; SLOPE, INTERCEPT, RSQ, STEYX, DEVSQ, TDIST), with "NA" where the sheet
  * shows NA (fewer than 3 observations, or a missing target metric).
  *
  * Codes as on the sheet:
@@ -37,7 +37,8 @@ export function simpleRegression(comps, codes = { y: 2, x: 4 }) {
   const yKey = SIMPLE_REG_Y[codes.y - 1], xKey = SIMPLE_REG_X[codes.x - 1];
   const rows = comps.peers.map((p) => {
     const x = p.bench[xKey], y = p.mult[yKey];
-    const used = p.include === 1 && isNum(x) && isNum(y);
+    // a peer with no price or share count (market cap 0) is left out, as in the multi-variable regression
+    const used = p.include === 1 && isNum(p.mcap) && p.mcap > 0 && isNum(x) && isNum(y);
     return { name: p.name || p.role, include: p.include, x, y, used };
   });
   const pts = rows.filter((r) => r.used);

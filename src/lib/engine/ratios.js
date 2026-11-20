@@ -84,7 +84,8 @@ export function computeRatios(pm) {
   const roe = map((i) => g(niA[i], avgEquity[i]) * 100);
   const retention = map((i) => 100 - g(pm.div[i], pm.ni[i]) * 100);
   const ev = map((i) => mktcap + pm.netDebtClose[i]);
-  const pe = map((i) => g(price, epsA[i]));
+  // P/E, P/B and EV/EBITDA on a zero or negative base are NM (the workbook shows "NM"; here NaN → —)
+  const pe = map((i) => (niA[i] > 0 ? g(price, epsA[i]) : NaN));
 
   // growth on the period a year earlier; the first annual period grows from the
   // LTM (Year-0) figure when the model has one (revenue, EBITDA — not net income)
@@ -151,7 +152,8 @@ export function computeRatios(pm) {
       row('Cash-flow margin (CFO / rev.)', 'pct', map((i) => g(pm.cfo[i], pm.rev[i]) * 100)),
     ]),
     sec('Growth', [
-      row('Revenue growth (period/period)', 'pct', idx.map((i) => (i ? g(pm.rev[i], pm.rev[i - 1]) * 100 - 100 : m === 1 && pm.rev0 !== undefined ? g(pm.rev[0], pm.rev0) * 100 - 100 : NaN))),
+      // compound annual growth from the LTM (Year-0) revenue — replaces a duplicate of the YoY row
+      row('Revenue CAGR since Year 0', 'pct', idx.map((i) => (m === 1 && pm.rev0 !== undefined ? (Math.pow(g(pm.rev[i], pm.rev0), 1 / (i + 1)) - 1) * 100 : NaN))),
       row('Revenue growth (YoY)', 'pct', yoy(pm.rev, pm.rev0)),
       row('EBITDA growth (YoY)', 'pct', yoy(pm.ebitda, pm.ebitda0)),
       row('Net income growth (YoY)', 'pct', yoy(pm.ni)),
@@ -159,17 +161,18 @@ export function computeRatios(pm) {
     ]),
   ];
 
-  if (price > 0 && shares > 0) {
+  // always listed (as the workbook): without a price or share count every value is NA
+  {
     sections.push(sec('Valuation (at current price)', [
       row('Market capitalisation', 'num', map(() => mktcap)),
       row('Enterprise value (EV)', 'num', ev),
       row('P / E', 'x', pe),
-      row('P / B', 'x', map((i) => g(price, bvps[i]))),
-      row('EV / EBITDA (ann.)', 'x', map((i) => g(ev[i], ebitdaA[i]))),
+      row('P / B', 'x', map((i) => (pm.closeEquity[i] > 0 ? g(price, bvps[i]) : NaN))),
+      row('EV / EBITDA (ann.)', 'x', map((i) => (ebitdaA[i] > 0 ? g(ev[i], ebitdaA[i]) : NaN))),
       row('EV / Sales (ann.)', 'x', map((i) => g(ev[i], revA[i]))),
       row('Dividend yield', 'pct', map((i) => g(dpsA[i], price) * 100)),
       row('FCFE yield', 'pct', map((i) => g(fcfeA[i], mktcap) * 100)),
-      row('Earnings yield', 'pct', map((i) => g(1, pe[i]) * 100)),
+      row('Earnings yield', 'pct', map((i) => g(epsA[i], price) * 100)),
     ]));
   }
 

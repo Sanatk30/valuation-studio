@@ -203,8 +203,11 @@ function OutputView({ def, record, mstate, ctx, company, onEdit, onHome, onReset
       const opts = { skipped };
       if (def.id === 'combined') {
         const res = combinedResult(mstate.data, ctx);
+        // the template's rows: DCF in the FCFF row or the FCFE / DDM row, by its cash-flow basis
+        const dcfCf = record.methods?.dcf?.data?.dcf?.settings?.cf;
+        const keyOf = (id) => (id === 'dcf' ? (dcfCf === 'fcff' ? 'dcfFcff' : 'dcfFcfe') : id === 'precedent' ? 'prec' : id);
         opts.combined = {
-          rows: res.rows.map((r) => ({ method: METHOD_META[r.methodId].label, figureLabel: r.figure.label, value: r.figure.value, low: r.figure.low, high: r.figure.high, weight: r.weight })),
+          rows: res.rows.filter((r) => r.figure).map((r) => ({ key: keyOf(r.methodId), figureLabel: r.figure.label, value: r.figure.value, low: r.figure.low, high: r.figure.high, weight: r.weight })),
           marketPrice: res.marketPrice ?? null,
         };
       }

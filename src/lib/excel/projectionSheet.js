@@ -98,7 +98,7 @@ export function writeProjectionSheet(ws, a, F, R, o) {
   banner(ws, R_BAND, cProj(0), n, 'Projection Period');
   put(ws, `${pCagr}${R_BAND}`, 'CAGR', { fill: C_HDR_FILL, color: C_HDR_TEXT, bold: true, align: 'center' });
 
-  for (const c of allCols) put(ws, `${c}${R_YEAR}`, '', { fill: C_SECTION_FILL });
+  for (const c of allCols) put(ws, `${c}${R_YEAR}`, null, { fill: C_SECTION_FILL });
   histCols.forEach((c, i) => {
     const y = Number(String(hist.dates[i]).slice(0, 4));
     put(ws, `${c}${R_YEAR}`, y, { fmt: F.fyYear, bold: true, align: 'center', fill: C_SECTION_FILL });
@@ -187,7 +187,9 @@ export function writeProjectionSheet(ws, a, F, R, o) {
 
   // % growth under every sales figure that has one before it
   for (const c of [...histCols.slice(1), ltm, ...projCols]) {
-    put(ws, `${c}${D.growth}`, { formula: na(`${c}${D.sales}/${priorCol(c)}${D.sales}-1`) }, { fmt: F.aPct, ...MUTED });
+    // the LTM column with no reported year before it has no growth: "n.a." (it used to read C10/null10)
+    if (!priorCol(c)) put(ws, `${c}${D.growth}`, 'n.a.', { ...MUTED, align: 'right' });
+    else put(ws, `${c}${D.growth}`, { formula: na(`${c}${D.sales}/${priorCol(c)}${D.sales}-1`) }, { fmt: F.aPct, ...MUTED });
   }
 
   /* ================= projection ================= */
@@ -236,7 +238,7 @@ export function writeProjectionSheet(ws, a, F, R, o) {
     ['aNwc', 'Net working capital (% sales)'],
   ]) put(ws, `B${D[key]}`, label);
   projCols.forEach((c, i) => {
-    const pct = (v) => (Number.isFinite(v) ? v : 'NA');
+    const pct = (v) => (Number.isFinite(v) ? v : null);   // a blank driver stays an empty cell
     put(ws, `${c}${D.aGrowth}`, pct(opsX.growth[i] / 100), BLUE(F.aPct));
     put(ws, `${c}${D.aMargin}`, pct(opsX.margin[i] / 100), BLUE(F.aPct));
     put(ws, `${c}${D.aDa}`, pct(opsX.da[i] / opsX.revenue[i]), BLUE(F.aPct));

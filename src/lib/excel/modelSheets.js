@@ -66,7 +66,7 @@ export function writeThreeStatementSheet(ws, a, F, R, P, o = {}) {
   yearHeader(ws, tr, n, F);
   tr++;
 
-  const T = {};
+  const T = { hdr: tr - 1 };   // the year-number header row (0, 1, 2 …)
   const line = (key, label, opts = {}) => { T[key] = tr; put(ws, `A${tr}`, label, opts); tr++; };
   const each = (key, f, fmt, opts = {}) => {
     for (let i = 0; i < n; i++) put(ws, `${yc(i)}${T[key]}`, { formula: f(yc(i), i, i === 0 ? 'B' : yc(i - 1)) }, { fmt, ...opts });
@@ -114,6 +114,7 @@ export function writeThreeStatementSheet(ws, a, F, R, P, o = {}) {
   line('closeDebt', 'Closing debt', { bold: true });
   line('openCash', 'Opening cash');
   line('closeCash', 'Closing cash', { bold: true });
+  line('cashCheck', 'Cash check (closing cash ≥ 0)', { italic: true });
 
   // Year 0 anchors
   put(ws, `B${T.rev}`, { formula: R.rev0 }, { fmt: F.money, ...link });
@@ -130,6 +131,8 @@ export function writeThreeStatementSheet(ws, a, F, R, P, o = {}) {
   each('closeDebt', (c) => `${c}${T.openDebt}-${c}${T.schedRepay}`, F.money, { bold: true });
   each('openCash', (c, i, p) => `${p}${T.closeCash}`, F.money);
   each('closeCash', (c) => `${c}${T.openCash}+${c}${T.dCash}`, F.money, { bold: true });
+  // a negative closing cash means the plan needs funding (the model has no revolver)
+  each('cashCheck', (c) => `IF(ISNUMBER(${c}${T.closeCash}),IF(${c}${T.closeCash}<-0.001,"NEGATIVE – add funding","OK"),"NA")`, undefined, { italic: true, align: 'right' });
   each('intExp', (c) => `-${c}${T.openDebt}*${R.intDebt}`, F.money);
   each('intInc', (c) => `${c}${T.openCash}*${R.intCash}`, F.money);
   each('ebt', (c) => `${c}${T.ebit}+${c}${T.intExp}+${c}${T.intInc}`, F.money, { bold: true });
@@ -166,7 +169,7 @@ export function writeThreeStatementSheet(ws, a, F, R, P, o = {}) {
     put(ws, `B${T.equity}`, { formula: `B${T.assets}-B${T.debt}` }, { fmt: F.money });
   }
 
-  if (ratios) tr = writeForecastRatios(ws, a, F, R, P, T, tr + 1, n);
+  if (ratios) tr = writeForecastRatios(ws, a, F, R, P, T, tr, n);   // straight after the cash check, as the template
 
   const q = `'${ws.name}'`;
   return { T, yc, ni: (i) => `${q}!$${yc(i)}$${T.ni}`, ebt: (i) => `${q}!$${yc(i)}$${T.ebt}`, nolOpen: (i) => `${q}!$${yc(i)}$${T.nolOpen}`, lastRow: tr };
@@ -205,11 +208,15 @@ function writeForecastRatios(ws, a, F, R, P, T, r0, n) {
   const eps = (i) => `(${ni(i)}/${shares})`, bvps = (i) => `(${eqC(i)}/${shares})`, dps = (i) => `(${div(i)}/${shares})`;
   const mktcap = `(${price}*${shares})`;
   const ev = (i) => `(${mktcap}+${nd(i)})`;
-  const pe = (i) => `(${price}/${eps(i)})`;
+  // P/E, P/B and EV/EBITDA on a zero or negative base read NM (not a negative multiple)
+  const pe = (i) => `IF(${ni(i)}>0,${price}/${eps(i)},"NM")`;
   // Year 1 grows from the LTM figure in column B (revenue, EBITDA); net income has no Year 0
   const yoy = (fn, base0) => (i) => (i >= 1 ? `${fn(i)}/${fn(i - 1)}-1` : base0 ? `${fn(0)}/${base0}-1` : null);
 
-  const hasValuation = a.company.currentPrice > 0 && a.company.sharesOut > 0;
+  // the valuation block is always there (it reads NA without a price or share count)
+  const hasValuation = true;
+  // revenue CAGR from Year 0 (column B) to each year: the year number is in the header row
+  const cagr = (i) => `(${rev(i)}/$B$${T.rev})^(1/${yc(i)}$${T.hdr})-1`;
   const sections = [
     ['Profitability & margins', [
       ['EBITDA margin', 'pct', (i) => `${ebitda(i)}/${rev(i)}`],
@@ -267,7 +274,7 @@ function writeForecastRatios(ws, a, F, R, P, T, r0, n) {
       ['Cash-flow margin (CFO / rev.)', 'pct', (i) => `${cfo(i)}/${rev(i)}`],
     ]],
     ['Growth', [
-      ['Revenue growth (period/period)', 'pct', yoy(rev, `B${T.rev}`)],
+      ['Revenue CAGR since Year 0', 'pct', cagr],
       ['Revenue growth (YoY)', 'pct', yoy(rev, `B${T.rev}`)],
       ['EBITDA growth (YoY)', 'pct', yoy(ebitda, `B${T.ebitda}`)],
       ['Net income growth (YoY)', 'pct', yoy(ni)],
@@ -277,12 +284,12 @@ function writeForecastRatios(ws, a, F, R, P, T, r0, n) {
       ['Market capitalisation', 'num', () => mktcap],
       ['Enterprise value (EV)', 'num', ev],
       ['P / E', 'x', pe],
-      ['P / B', 'x', (i) => `${price}/${bvps(i)}`],
-      ['EV / EBITDA (ann.)', 'x', (i) => `${ev(i)}/${ebitda(i)}`],
+      ['P / B', 'x', (i) => `IF(${eqC(i)}>0,${price}/${bvps(i)},"NM")`],
+      ['EV / EBITDA (ann.)', 'x', (i) => `IF(${ebitda(i)}>0,${ev(i)}/${ebitda(i)},"NM")`],
       ['EV / Sales (ann.)', 'x', (i) => `${ev(i)}/${rev(i)}`],
       ['Dividend yield', 'pct', (i) => `${dps(i)}/${price}`],
       ['FCFE yield', 'pct', (i) => `${fcfe(i)}/${mktcap}`],
-      ['Earnings yield', 'pct', (i) => `1/${pe(i)}`],
+      ['Earnings yield', 'pct', (i) => `${eps(i)}/${price}`],
     ]]] : []),
   ];
 
@@ -290,19 +297,22 @@ function writeForecastRatios(ws, a, F, R, P, T, r0, n) {
   sectionHeader(ws, r++, 'RATIO ANALYSIS — FORECAST', span);
   for (const [title, rows] of sections) {
     put(ws, `A${r}`, title, { bold: true, fill: C_SECTION_FILL });
-    for (let c = 2; c <= span; c++) put(ws, `${colL(c)}${r}`, '', { fill: C_SECTION_FILL });
+    for (let c = 2; c <= span; c++) put(ws, `${colL(c)}${r}`, null, { fill: C_SECTION_FILL });
     r++;
+    // valuation ratios need a share price and a share count: with either blank they read NA, as
+    // the sheet's note says (a blank price would otherwise give a market cap of 0 and a P/E of 0)
+    const guard = title.startsWith('Valuation') ? (f) => `IF(AND(${price}>0,${shares}>0),${f},"NA")` : (f) => f;
     for (const [label, kind, fn] of rows) {
       put(ws, `A${r}`, label);
       for (let i = 0; i < n; i++) {
         const f = fn(i);
-        put(ws, `${yc(i)}${r}`, f ? { formula: na(f) } : 'NA', { fmt: fmtOf(kind), align: 'right' });
+        put(ws, `${yc(i)}${r}`, f ? { formula: na(guard(f)) } : 'NA', { fmt: fmtOf(kind), align: 'right' });
       }
       r++;
     }
   }
   r++;
-  put(ws, `A${r++}`, '“(ann.)” marks a figure on an annual basis. Balance-based ratios use the average of opening and closing balances; a ratio on a zero base reads NA.', { italic: true, color: C_MUTED, size: 9 });
+  put(ws, `A${r++}`, '“(ann.)” marks a figure on an annual basis. Balance-based ratios use the average of opening and closing balances; a ratio on a zero base reads NA. Valuation ratios need the share price and diluted shares on Inputs (NA otherwise).', { italic: true, color: C_MUTED, size: 9 });
   return r;
 }
 
@@ -435,7 +445,7 @@ export function writePastRatiosSheet(ws, a, F, o = {}) {
   sectionHeader(ws, r++, `RATIOS — the latest ${N} ${freq === 'Q' ? 'quarter' : 'year'}${N > 1 ? 's' : ''}`, span);
   for (const [title, rows] of sections) {
     put(ws, `A${r}`, title, { bold: true, fill: C_SECTION_FILL });
-    for (let c = 2; c <= span; c++) put(ws, `${colL(c)}${r}`, '', { fill: C_SECTION_FILL });
+    for (let c = 2; c <= span; c++) put(ws, `${colL(c)}${r}`, null, { fill: C_SECTION_FILL });
     r++;
     for (const [label, kind, fn] of rows) {
       put(ws, `A${r}`, label);
@@ -479,7 +489,7 @@ export function writeIpoSheet(ws, a, F, R, P, TS) {
   iVal('ntmEB', 'Year-1 EBITDA', P.ref('ebitda', 0), F.money, '', { color: C_LINK });
   iVal('fairPre', 'Fair pre-money equity value',
     `IF(${R.ipoBasis}="pe",${R.offerPE}*${B('ntmNI')},IF(${R.ipoBasis}="evEbitda",${R.offerEvE}*${B('ntmEB')}-${R.netDebt},"NA"))`,
-    F.money, 'Basis chosen on the Inputs sheet ("pe" or "evEbitda")', { bold: true });
+    F.money, 'Basis chosen on the Inputs sheet ("pe" or "evEbitda"); multiple = fair value before the IPO discount', { bold: true });
   iVal('fairPxPre', 'Fair value per existing share', na(`${B('fairPre')}/${R.shares}`), F.price);
   iVal('offerEq', 'Offer pre-money equity (after the IPO discount)', na(`${B('fairPre')}*(1-${R.ipoDisc})`), F.money);
   iVal('offerPx', 'OFFER PRICE', na(`${B('offerEq')}/${R.shares}`), F.price, '', { bold: true });

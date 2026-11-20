@@ -31,6 +31,8 @@ function TsPage({ a, f, ts, showHistory }) {
   const n = ops.n;
   const last = n - 1;
   const labels = useMemo(() => periodLabels(a.settings, 'Y', n), [a.settings, n]);
+  // the workbook's cash check: closing cash must stay at or above 0
+  const negCash = labels.filter((_, i) => fin(ts.closeCash[i]) && ts.closeCash[i] < -0.001);
   const maxCheck = Math.max(...ts.check.map((c) => (fin(c) ? Math.abs(c) : Infinity)));
   const ties = ts.balanceOk;
   const shares = a.company.sharesOut;
@@ -64,7 +66,8 @@ function TsPage({ a, f, ts, showHistory }) {
         value={ts.netIncome[last]}
         fmt={(v) => f.money(v)}
         sub={`Linked income statement, cash flow and balance sheet over ${labels[0]}–${labels[last]}. Interest runs on opening balances and cash is the balancing item, so the balance sheet ties every year. Opening equity is the reported ${f.money(ts.equity0)}.`}
-        warnings={[!ties && 'The balance sheet does not tie — an input is NA. Use Edit on the steps to complete it.']}
+        warnings={[!ties && 'The balance sheet does not tie — an input is NA. Use Edit on the steps to complete it.',
+          negCash.length > 0 && `Closing cash goes negative in ${negCash.join(', ')} — the plan needs funding (a revolver or new debt), or lower payouts.`]}
         kpis={[
           { label: 'Net margin', value: ops.revenue[last] ? (ts.netIncome[last] / ops.revenue[last]) * 100 : NaN, fmt: (v) => f.pct(v), sub: labels[last] },
           { label: `Closing cash, ${labels[last]}`, value: ts.closeCash[last], fmt: (v) => f.money(v), sub: `from ${f.money(ts.cash0)} opening` },
@@ -113,6 +116,7 @@ function TsPage({ a, f, ts, showHistory }) {
             { label: 'Net change in cash', values: ts.deltaCash, fmt: f.num, bold: true },
             { label: 'Opening cash', values: ts.openCash, fmt: f.num, sub: true },
             { label: 'Closing cash', values: ts.closeCash, fmt: f.num, bold: true },
+            { label: 'Cash check (closing cash ≥ 0)', values: ts.closeCash.map((v) => (fin(v) ? (v < -0.001 ? 'NEGATIVE – add funding' : 'OK') : 'NA')), fmt: (v) => v, sub: true },
           ]} />
         </Collapsible>
 

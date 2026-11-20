@@ -46,7 +46,8 @@ const data = (patch = {}) => ({ company: clone(A.company), drivers: clone(A.driv
   const row = (label) => R.sections.flatMap((s) => s.rows).find((r) => r.label === label).vals;
   const ts = computeThreeStatement(A);
   ok(close(row('Revenue growth (YoY)')[0], A.drivers.growthStart), 'ratios: Year-1 revenue growth = the forecast growth (vs LTM revenue)');
-  ok(close(row('Revenue growth (period/period)')[0], A.drivers.growthStart), 'ratios: Year-1 period/period growth vs LTM revenue');
+  ok(close(row('Revenue CAGR since Year 0')[0], A.drivers.growthStart), 'ratios: Year-1 revenue CAGR = its growth on LTM revenue');
+  ok(close(row('Revenue CAGR since Year 0')[2], ((ts.ops.revenue[2] / A.drivers.revenue0) ** (1 / 3) - 1) * 100), 'ratios: Year-3 revenue CAGR from Year 0');
   ok(close(row('EBITDA growth (YoY)')[0], (ts.ops.ebitda[0] / A.drivers.ebitda0 - 1) * 100), 'ratios: Year-1 EBITDA growth vs LTM EBITDA');
   ok(Number.isNaN(row('Net income growth (YoY)')[0]), 'ratios: Year-1 net income growth stays NA (no Year-0 net income)');
   ok(close(row('Revenue growth (YoY)')[2], (ts.ops.revenue[2] / ts.ops.revenue[1] - 1) * 100), 'ratios: later years grow on the year before');

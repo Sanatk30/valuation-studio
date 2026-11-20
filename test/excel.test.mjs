@@ -16,7 +16,7 @@ import { C_INPUT } from '../src/lib/excel/xlsxUtil.js';
 let failures = 0, checks = 0;
 const ok = (cond, msg) => { checks++; if (!cond) { failures++; console.error('FAIL:', msg); } };
 
-const COMBINED = { rows: [{ method: 'DCF', figureLabel: 'FCFF', value: 900, low: 800, high: 1000, weight: 100 }], marketPrice: 850 };
+const COMBINED = { rows: [{ key: 'dcfFcff', figureLabel: 'FCFF', value: 900, low: 800, high: 1000, weight: 100 }], marketPrice: 850 };
 const EXPECT = {
   dcf: ['Instructions', 'Inputs', 'FCFF - Gordon Growth', 'Historicals', 'Assumptions', 'Forecast', 'Cost of Equity (CAPM)', 'WACC'],
   lbo: ['Instructions', 'Inputs', 'Sources & Uses', 'Returns', 'Sensitivity', 'LBO Model', 'Historicals', 'Assumptions', 'Sensitivity Engine'],

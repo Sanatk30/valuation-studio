@@ -86,12 +86,12 @@ function IpoPage({ a, f, ipo }) {
                 {peBasis ? (
                   <>
                     <tr><td>{y1} net income</td><td>{f.num(ipo.ntm.netIncome)}</td></tr>
-                    <tr className="sub"><td>× Offer P/E</td><td>{f.x(p.offerPE)}</td></tr>
+                    <tr className="sub"><td>× Fair-value P/E (before the IPO discount)</td><td>{f.x(p.offerPE)}</td></tr>
                   </>
                 ) : (
                   <>
                     <tr><td>{y1} EBITDA</td><td>{f.num(ipo.ntm.ebitda)}</td></tr>
-                    <tr className="sub"><td>× Offer EV/EBITDA</td><td>{f.x(p.offerEvEbitda)}</td></tr>
+                    <tr className="sub"><td>× Fair-value EV/EBITDA (before the IPO discount)</td><td>{f.x(p.offerEvEbitda)}</td></tr>
                     <tr><td>Implied enterprise value</td><td>{f.num(p.offerEvEbitda * ipo.ntm.ebitda)}</td></tr>
                     <tr className="sub"><td>Less: net debt</td><td className="neg">{f.num(-ipo.netDebt)}</td></tr>
                   </>

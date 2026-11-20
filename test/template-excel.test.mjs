@@ -94,6 +94,11 @@ console.log('\n=== Excel = engine where they used to differ ===');
 run('comps: two tiers with the same name (case aside)', checkCompsWorkbook(comps((c) => { c.tiers = [{ id: 't1', name: 'Large' }, { id: 't2', name: 'large' }]; }), {}));
 run('comps: a tier named "Unassigned" beside unassigned peers', checkCompsWorkbook(comps((c) => { c.tiers = [{ id: 't1', name: 'Unassigned' }, { id: 't2', name: 'Mid caps' }]; }), {}));
 run('comps: two blank tier names', checkCompsWorkbook(comps((c) => { c.tiers = [{ id: 't1', name: '' }, { id: 't2', name: ' ' }]; }), {}));
+{
+  const res = run('comps: a peer with no share price (out of the simple regression)', checkCompsWorkbook(comps((c) => { c.peers[1].price = null; }), {}));
+  const k = 1, rr = 8 + k;
+  ok(res.X.get('Regression', `E${rr}`) === '' && res.X.get('Regression', `F${rr}`) === '', 'the unpriced peer has no x / y used on the Regression sheet');
+}
 run('comps: a peer with no include flag', checkCompsWorkbook(comps((c) => { c.peers[0].include = null; }), {}));
 run('precedent: a deal with no include flag', checkPrecedentWorkbook(prec((p) => { p.deals[0].include = undefined; }), {}));
 run('precedent: Listed typed "yes"', checkPrecedentWorkbook(prec((p) => { p.deals[1].listed = 'yes'; p.deals[1].offerPrice = 10; p.deals[1].unaffectedPrice = 8; }), {}));

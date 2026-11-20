@@ -16,8 +16,8 @@ const runs = [
   checkPrecedent(A),
   checkCombined(A, {
     rows: [
-      { method: 'Discounted Cash Flow', figureLabel: 'DCF — FCFF, perpetuity growth', value: 912.4, low: 801.2, high: 1043.9, weight: 60 },
-      { method: 'Comparable Companies', figureLabel: 'Comps — EV / EBITDA median', value: 701.5, low: 655.0, high: 752.3, weight: 40 },
+      { key: 'dcfFcff', figureLabel: 'DCF — FCFF, perpetuity growth', value: 912.4, low: 801.2, high: 1043.9, weight: 60 },
+      { key: 'comps', figureLabel: 'Comps — EV / EBITDA median', value: 701.5, low: 655.0, high: 752.3, weight: 40 },
     ],
     marketPrice: 850,
   }),

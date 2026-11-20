@@ -208,19 +208,14 @@ export function checkPrecedentWorkbook(a, opts = {}) {
     { col: 'S', key: 'premium', get: (d) => d.premium },
   ];
   const t2 = DEAL_BENCH.map((b) => ({ col: b.col, key: b.key, get: (d) => d.bench[b.key] }));
-  // A deal with no implied equity: Excel computes ""/x as #VALUE! → IFERROR → NM (as the engine), but
-  // HyperFormula (like Google Sheets) reads "" as 0, so the template's P/E and P/B show 0 there and
-  // enter the statistics. Those two columns are left out of the comparison for such a workbook.
-  const blankEq = p.deals.some((d) => d.equity === '' && d.include === 1);
-  const sheetsOnly = (col) => blankEq && (col.key === 'pe' || col.key === 'pb');
   p.deals.forEach((d, i) => {
-    for (const col of t1) if (!sheetsOnly(col)) T.ok(same(col.get(d), X.get(S, `${col.col}${h1 + 1 + i}`)), `${S}!${col.col}${h1 + 1 + i} T1 ${d.role}: engine ${JSON.stringify(col.get(d))} vs sheet ${JSON.stringify(X.get(S, `${col.col}${h1 + 1 + i}`))}`);
+    for (const col of t1) T.ok(same(col.get(d), X.get(S, `${col.col}${h1 + 1 + i}`)), `${S}!${col.col}${h1 + 1 + i} T1 ${d.role}: engine ${JSON.stringify(col.get(d))} vs sheet ${JSON.stringify(X.get(S, `${col.col}${h1 + 1 + i}`))}`);
     for (const col of t2) T.ok(same(col.get(d), X.get(S, `${col.col}${h2 + 1 + i}`)), `${S}!${col.col}${h2 + 1 + i} T2 ${d.role}: engine ${JSON.stringify(col.get(d))} vs sheet ${JSON.stringify(X.get(S, `${col.col}${h2 + 1 + i}`))}`);
   });
   if (p.deals.length) {
-    checkStats(X, T, S, h1 + 1 + p.deals.length + 1, p.statSel.show, t1.filter((x) => x.key && !sheetsOnly(x)), p.stats1, 'T1');
+    checkStats(X, T, S, h1 + 1 + p.deals.length + 1, p.statSel.show, t1.filter((x) => x.key), p.stats1, 'T1');
     checkStats(X, T, S, h2 + 1 + p.deals.length + 1, p.statSel.show, t2, p.stats2, 'T2');
   }
-  checkImplied(X, T, p.implied, blankEq ? null : p.summary, blankEq ? new Set(['pe', 'pb']) : undefined);
+  checkImplied(X, T, p.implied, p.summary);
   return { ...T.st, wb, X, p };
 }

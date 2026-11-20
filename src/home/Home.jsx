@@ -69,7 +69,7 @@ function MethodCard({ id, record, ctx, onOpen }) {
   const p = ctx.progressOf(id);
   const n = def.steps.length;
   const mstate = record.methods[id];
-  const combinedLocked = id === 'combined' && !['dcf', 'comps', 'precedent', 'ipo'].some((m) => ctx.progressOf(m).complete);
+  const combinedLocked = id === 'combined' && !['dcf', 'comps', 'precedent'].some((m) => ctx.progressOf(m).complete);
   const status = p.complete
     ? { cls: 'done', text: 'Complete' }
     : p.started

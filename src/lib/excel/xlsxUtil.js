@@ -15,6 +15,8 @@ export const C_INPUT_FILL = 'FFF5F9FF';
 
 /** A numeric input as written to a cell: a blank / non-finite value is the text "NA". */
 export const nv = (x) => (typeof x === 'number' && Number.isFinite(x) ? x : 'NA');
+/** A numeric input left blank when missing (the revised IPO / 3-statement / ratio / combined templates: no "NA" text in inputs). */
+export const nb = (x) => (typeof x === 'number' && Number.isFinite(x) ? x : null);
 
 export function colL(n) {
   let s = '';

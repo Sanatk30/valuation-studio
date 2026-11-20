@@ -107,7 +107,7 @@ for (const [name, [a, o = {}]] of Object.entries(ipoVariants)) run(`ipo — ${na
 for (const [name, [a, o = {}]] of Object.entries(tsVariants)) run(`ts — ${name}`, checkTs(a, { ...o, tag: name }, 'ts'));
 for (const [name, [a, o = {}]] of Object.entries(ratioVariants)) run(`ratios — ${name}`, checkTs(a, { ...o, tag: name }, 'ratios'));
 for (const [name, [a, o = {}]] of Object.entries(compsVariants)) run(`comps — ${name}`, checkComps(a, { ...o, tag: name }));
-run('combined — a missing weight → NA', checkCombined(withModel({}), { rows: [{ method: 'DCF', figureLabel: 'x', value: 900, low: 800, high: 1000, weight: 70 }, { method: 'Comps', figureLabel: 'y', value: 820, low: 760, high: 880, weight: null }], marketPrice: null }));
+run('combined — a missing weight → NA', checkCombined(withModel({}), { rows: [{ key: 'dcfFcff', figureLabel: 'x', value: 900, low: 800, high: 1000, weight: 70 }, { key: 'comps', figureLabel: 'y', value: 820, low: 760, high: 880, weight: null }], marketPrice: null }));
 
 console.log(`excel-variants: ${checks} checks, ${failures} failures`);
 if (failures) process.exit(1);
