@@ -20,7 +20,10 @@ export const colLetter = (n) => {
  * it two paired ranges (x and y blank together), where
  * INTERCEPT(y, x) = AVERAGE(y) − SLOPE(y, x) × AVERAGE(x) exactly.
  */
-const hfCompat = (f) => f.replace(/INTERCEPT\(([^,()]+),([^,()]+)\)/g, '(AVERAGE($1)-SLOPE($1,$2)*AVERAGE($2))');
+const hfCompat = (f) => f
+  // a post-2007 function is saved with Excel's _xlfn. prefix (e.g. _xlfn.QUARTILE.EXC); HyperFormula reads the bare name
+  .replace(/_xlfn\./g, '')
+  .replace(/INTERCEPT\(([^,()]+),([^,()]+)\)/g, '(AVERAGE($1)-SLOPE($1,$2)*AVERAGE($2))');
 
 export function recalc(wb) {
   const sheets = {};

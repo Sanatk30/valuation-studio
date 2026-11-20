@@ -52,7 +52,7 @@ console.log('\n=== structure & look ===');
   ok(mdl.getCell('B16').fill?.fgColor?.argb === 'FFE7E6E6', 'not-applicable cells greyed');
   ok(mdl.views?.[0]?.state === 'frozen' && mdl.views[0].ySplit === 4, 'LBO Model frozen at B5');
   const ret = wb.getWorksheet('Returns');
-  ok(ret.getCell('B25').value?.formula === 'IF(AND(B22>0,B23>0),IRR(B20:G20),"NM")', 'IRR with Excel\'s IRR function');
+  ok(ret.getCell('B25').value?.formula === 'IF(AND(B22>0,B23>0),IRR(B20:G20,B24^(1/5)-1),"NM")', 'IRR with Excel\'s IRR function, guessed from the MOIC (real Excel fails on deep losses with the default guess)');
   const sen = wb.getWorksheet('Sensitivity');
   ok(sen.getCell('E9').fill?.fgColor?.argb === 'FFEAF1DD' && sen.getCell('E9').font?.bold, 'sensitivity centre cell shaded');
   ok(res.X.get('LBO Model', 'A1') === 'Example Manufacturing Ltd – LBO Model', 'LBO Model title from Inputs!B5');
@@ -79,6 +79,15 @@ run('cash shortfall (heavy amortisation, cash used up)', checkLboWorkbook(model(
 run('shortfall with a sweep', checkLboWorkbook(model({}, (d) => { d.debt.senA.amort = 25; d.deal.cashUsed = 600; d.debt.mezz.tenor = null; })));
 run('over-levered: negative sponsor equity → NM', checkLboWorkbook(model({}, (d) => { d.debt.senA.x = 9; d.debt.senB.x = 4; })));
 run('exit below entry (loss)', checkLboWorkbook(model({}, (d) => { d.deal.exitMultiple = 3; })));
+// deep losses (MOIC ≈ 0.005): real Excel's IRR returns #NUM! here with its default 10% guess; the MOIC-based guess converges
+for (const [f, x] of [[5, 2.243], [10, 0.296]]) {
+  const res = run(`deep loss over ${f} years (MOIC ≈ 0.005)`, checkLboWorkbook(model({ holdYears: f, labels: null }, (d) => {
+    for (const k of Object.keys(d.drivers)) d.drivers[k] = Array.from({ length: f }, (_, j) => d.drivers[k][j % 5]);
+    d.deal.exitMultiple = x;
+  }), { tag: `deep loss ${f}y` }));
+  ok(res.r.moic > 0 && res.r.moic < 0.01 && res.r.irr < -0.4, `deep loss ${f}y: MOIC ${res.r.moic}, IRR ${res.r.irr}`);
+  ok(res.wb.getWorksheet('Returns').getCell('B25').value?.formula.includes(`IRR(B20:${String.fromCharCode(66 + f)}20,B24^(1/${f})-1)`), `deep loss ${f}y: IRR guessed from the MOIC`);
+}
 run('no mezzanine, no fees', checkLboWorkbook(model({}, (d) => { d.debt.mezz = { x: 0, rate: 0, pik: 0, tenor: 0, feePct: 0 }; d.deal.txnFeePct = 0; })));
 run('partial sweep, zero minimum cash', checkLboWorkbook(model({}, (d) => { d.cash = { sweepPct: 50, minCash: 0 }; })));
 run('custom sensitivity steps', checkLboWorkbook(model({ exitStep: 2.5, entryStep: 0.5, growthStep: 5 })));

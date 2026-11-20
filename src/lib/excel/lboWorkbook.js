@@ -304,7 +304,9 @@ export function buildLboWorkbook(a) {
     w(ws, 'A23', 'Exit equity value'); w(ws, 'B23', fx('B15'), S11);
     const KEYS = { bold: true, fill: KEY };
     w(ws, 'A24', 'MOIC', KEYS); w(ws, 'B24', fx('IF(B22>0,B23/B22,"NM")'), { ...KEYS, fmt: NFM });
-    w(ws, 'A25', 'IRR', KEYS); w(ws, 'B25', fx(`IF(AND(B22>0,B23>0),IRR(B20:${RC(m)}20),"NM")`), { ...KEYS, fmt: NF.pct });
+    // the guess is the exact answer (one investment, one exit: MOIC^(1/m) − 1). With Excel's default 10% guess real
+    // Excel's IRR fails (#NUM!) on deep losses, e.g. MOIC 0.01 over 7–10 years or 0.001 over 5; HyperFormula converges
+    w(ws, 'A25', 'IRR', KEYS); w(ws, 'B25', fx(`IF(AND(B22>0,B23>0),IRR(B20:${RC(m)}20,B24^(1/${m})-1),"NM")`), { ...KEYS, fmt: NF.pct });
     note(ws, 'C25', 'IRR function on the cash flow row above');
 
     hdr(ws, 'A28', 'Value creation bridge', { align: 'left', wrap: false }); hdr(ws, 'B28', unitShort, { wrap: false }); hdr(ws, 'C28', '% of value created', { wrap: false });
