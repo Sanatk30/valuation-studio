@@ -502,7 +502,7 @@ export function buildPrecedentWorkbook(a) {
       ['5. Company Being Valued sheet', 'Same layout – enter the company you are valuing with its latest financials. Its LTM figures are what the deal multiples are applied to.'],
       ['6. Sign convention', 'Income statement: expenses POSITIVE; exceptional items gain +, loss −. Cash flow: outflows NEGATIVE, as reported.'],
       ['7. Checks', 'Each sheet has a balance sheet check row that must show 0.0.'],
-      ['8. Transaction Summary', `Transaction multiples (LTM at announcement) and control premia, with statistics (${sel.show.map((k) => STAT_SHORT[k]).join(', ') || 'none shown'}; ${sel.method === 'exc' ? 'exclusive' : 'inclusive'} percentiles) across deals flagged 1 in 'Include'.`],
+      ['8. Transaction Summary', `Transaction multiples (LTM at announcement) and control premia, with statistics (${sel.show.map((k) => STAT_SHORT[k]).join(', ') || 'none shown'}; ${sel.method === 'exc' ? 'exclusive' : 'inclusive'} percentiles) across deals flagged 1 in 'Include'. Empty deal rows are set to 0 – set a row to 1 once you fill it in.`],
       ['9. Implied Valuation', `Applies the deal ${STAT_SHORT[sel.low]} / ${STAT_SHORT[sel.mid]} / ${STAT_SHORT[sel.high]} multiples and control premium to the company being valued.`],
       ['10. Cross-border deals', `Convert all foreign-currency figures to ${unitLabel} at the exchange rate on the announcement date, and note the rate in the Source column.`],
     ],
@@ -558,7 +558,8 @@ export function buildPrecedentWorkbook(a) {
     w(inp, `L${rr}`, num(d.offerPrice), { input: true, fmt: NF.n2 });
     w(inp, `M${rr}`, num(d.unaffectedPrice), { input: true, fmt: NF.n2 });
     w(inp, `N${rr}`, fx(`IF(AND(K${rr}="Yes",M${rr}>0,L${rr}>0),L${rr}/M${rr}-1,"")`), { fmt: NF.pct });
-    w(inp, `O${rr}`, d.include === 0 ? 0 : 1, { input: true, align: 'center' });
+    // the engine's flag: an empty deal slot (nothing entered) is 0, so it stays out of every statistic
+    w(inp, `O${rr}`, p.deals[k].include, { input: true, align: 'center' });
     w(inp, `P${rr}`, text(d.source), { input: true });
   });
   inp.views = [{ state: 'frozen', xSplit: 0, ySplit: 17, topLeftCell: 'A18' }];

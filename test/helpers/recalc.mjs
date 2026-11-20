@@ -23,7 +23,9 @@ export const colLetter = (n) => {
 const hfCompat = (f) => f
   // a post-2007 function is saved with Excel's _xlfn. prefix (e.g. _xlfn.QUARTILE.EXC); HyperFormula reads the bare name
   .replace(/_xlfn\./g, '')
-  .replace(/INTERCEPT\(([^,()]+),([^,()]+)\)/g, '(AVERAGE($1)-SLOPE($1,$2)*AVERAGE($2))');
+  .replace(/INTERCEPT\(([^,()]+),([^,()]+)\)/g, '(AVERAGE($1)-SLOPE($1,$2)*AVERAGE($2))')
+  // real Excel takes the signed odd root of a negative base, (−0.8)^(1/3) = −0.928; HyperFormula gives #NUM!
+  .replace(/\(([^()]+)\)\^\(1\/([^()]+)\)/g, 'IF(AND(($1)<0,ISODD($2)),-((-($1))^(1/($2))),($1)^(1/($2)))');
 
 export function recalc(wb) {
   const sheets = {};

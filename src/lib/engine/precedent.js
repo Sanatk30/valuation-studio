@@ -14,6 +14,7 @@
  *   Transaction Summary   Table 1 — deal values & transaction multiples
  *                         Table 2 — target operating profile at announcement
  *                         statistics over the deals flagged Include = 1
+ *                         (an empty deal slot is Include = 0: never in a statistic)
  *   Implied Valuation     the chosen multiples (and control premium) at the
  *                         chosen low / mid / high statistics
  */
@@ -116,6 +117,7 @@ export function computePrecedent(a) {
   };
 
   const deals = dealSlots(pr).map((d, i) => {
+    const empty = isBlankDeal(d);
     const equity = impliedEquity100(d);
     const pg = computePage(d.page, { n, toggle, ytd, inv, market: { dealEquity: equity, stake: d.stakePct, consideration: d.consideration } });
     const { L } = pg.cols;
@@ -124,8 +126,10 @@ export function computePrecedent(a) {
     return {
       id: d.id, role: `Deal ${i + 1}`, deal: d, page: pg,
       labels: periodLabels(d.page?.labels, n, null),
-      include: d.include === 0 ? 0 : 1,   // anything but 0 is 1, as the Deal list step and the workbook show it
-      empty: isBlankDeal(d),
+      // anything but 0 is 1, as the Deal list step and the workbook show it — except an empty slot
+      // (nothing entered), which is 0: it is left out of every statistic, and the workbook writes 0
+      include: empty || d.include === 0 ? 0 : 1,
+      empty,
       equity, netDebt: pg.market.netDebt, ev: pg.market.ev,
       revLtm: pg.v.rev[L], ebitdaLtm: pg.v.ebitda[L], patLtm: pg.v.patOwners[L],
       mult: Object.fromEntries(DEAL_MULTIPLES.map((m) => [m.key, multipleOf(m.ev ? pg.market.ev : equity, metric(m))])),
@@ -134,7 +138,7 @@ export function computePrecedent(a) {
     };
   });
 
-  const incl = deals.filter((d) => d.include === 1);
+  const incl = deals.filter((d) => d.include === 1 && !d.empty);
   const st = (vals) => statBlock(vals, statSel.method);
   const stats1 = {
     equity: st(incl.map((d) => d.equity)),

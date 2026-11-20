@@ -96,6 +96,24 @@ console.log('\n=== blank slots ===');
   const b = withModel();
   ok(JSON.stringify(computeComps(b).stats1) === JSON.stringify(c.stats1), 'empty slots do not move the statistics');
 }
+{
+  // precedent: the template's 10 deal slots with 5 filled — the empty five are Include = 0, out of every statistic
+  const five = computePrecedent(withModel());
+  const a = withModel();
+  a.precedent.dealCount = 10;
+  a.precedent.deals.push(blankDeal({ id: 'x1', include: 1 }));   // an empty slot the user left at Include = 1
+  const ten = computePrecedent(a);
+  ok(ten.deals.length === 10 && ten.deals.slice(5).every((d) => d.empty && d.include === 0), 'precedent: the five empty slots are flagged empty and Include = 0 (even one stored as 1)');
+  ok(ten.deals.slice(0, 5).map((d) => d.include).join('') === five.deals.map((d) => d.include).join('') && ten.deals[3].include === 0,
+    'precedent: the filled deals keep their own Include (deal 4 stays 0)');
+  for (const k of ['stats1', 'stats2', 'implied', 'summary']) {
+    ok(JSON.stringify(ten[k]) === JSON.stringify(five[k]), `precedent: 10 slots with 5 filled = exactly 5 slots (${k})`);
+  }
+  ok(near(ten.stats1.equity.median, 16436.274509803923, 1e-12) && ten.stats1.equity.min === 11800, `precedent: equity median ${ten.stats1.equity.median}, minimum ${ten.stats1.equity.min} (no 0 from an empty slot)`);
+  const b = withModel();
+  b.precedent.deals[3] = { ...b.precedent.deals[3], include: 1 };
+  ok(computePrecedent(b).stats1.equity.min === b.precedent.deals[3].consideration / (b.precedent.deals[3].stakePct / 100), 'precedent: a filled deal set back to 1 is in the statistics');
+}
 
 /* --------------------------------------------------------------- migrate */
 console.log('\n=== saved-state migration ===');

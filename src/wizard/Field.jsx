@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
 import { getPath } from '../store/store.js';
 import { fieldError, unitSuffix } from '../methods/fields.js';
-import { parseInputNumber } from '../lib/format.js';
+import { parseInputNumber, fmtBox } from '../lib/format.js';
 
 /**
  * One input, rendered from its spec. Empty stays empty (stored as null) — the
@@ -79,7 +79,7 @@ export function Field({ spec, data, onSet, company, reveal = false }) {
         {optional && <span className="fld-opt">optional</span>}
       </div>
       <NumBox
-        value={value}
+        value={value} plain={spec.kind === 'int'}
         suffix={spec.suffix ?? unitSuffix(spec.kind, company)}
         onChange={(v) => onSet(spec.path, v)}
         onBlur={() => setTouched(true)}
@@ -93,11 +93,17 @@ export function Field({ spec, data, onSet, company, reveal = false }) {
 
 /**
  * Numeric text box. Keeps the raw text while typing ("12.", "-") and commits a
- * number, or null when cleared. Accepts pasted "1,234.5" and "(1,234)".
+ * number, or null when cleared. Accepts pasted "1,234.5", "1.234,5" and "(1,234)".
  */
-export function NumBox({ value, onChange, onBlur, suffix, placeholder, small }) {
+export const NumLocaleContext = createContext('en-US');
+
+export function NumBox({ value, onChange, onBlur, suffix, placeholder, small, plain = false }) {
   const fmt = (v) => (v === null || v === undefined || Number.isNaN(v) ? '' : String(v));
+  const locale = useContext(NumLocaleContext);
   const [text, setText] = useState(fmt(value));
+  const [editing, setEditing] = useState(false);
+  // idle: grouped and rounded for reading (the stored value is untouched); editing: the full number
+  const shown = editing || plain || typeof value !== 'number' ? text : fmtBox(value, locale);
   useEffect(() => {
     const parsed = parseNum(text);
     if (parsed !== (value ?? null) && !(Number.isNaN(parsed) && value == null)) setText(fmt(value));
@@ -114,16 +120,18 @@ export function NumBox({ value, onChange, onBlur, suffix, placeholder, small }) 
   return (
     <div className={`fld-box${small ? ' sm' : ''}`}>
       <input
-        className="fld-in" inputMode="decimal" value={text} placeholder={placeholder || ''}
+        className="fld-in" inputMode="decimal" value={shown} placeholder={placeholder || ''}
+        title={!editing && typeof value === 'number' && !plain && fmtBox(value, locale) !== String(value) ? String(value) : undefined}
+        onFocus={() => { setText(fmt(value)); setEditing(true); }}
         onChange={(e) => commit(e.target.value)}
-        onBlur={() => { setText(fmt(value)); onBlur?.(); }}
+        onBlur={() => { setText(fmt(value)); setEditing(false); onBlur?.(); }}
       />
       {suffix ? <span className="fld-suf">{suffix}</span> : null}
     </div>
   );
 }
 
-/** "" → null; "1,234.5" → 1234.5; "(12)" / "−12" → −12; junk → NaN (see lib/format.js parseInputNumber). */
+/** "" → null; "1,234.5" / "1.234,5" → 1234.5; "12,5" → 12.5; "(12)" / "−12" → −12; junk → NaN (see lib/format.js parseInputNumber). */
 export const parseNum = parseInputNumber;
 
 /** A labelled group of fields in a two-column grid. */

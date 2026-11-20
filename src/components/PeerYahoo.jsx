@@ -33,6 +33,16 @@ import { YF_HINT } from '../lib/yfBase.js';
  *                label names, not simply the latest n Yahoo reports (unparseable labels → latest n)
  *   opts.basic   true → `shares` is the BASIC share count (comps: diluted by the treasury stock method)
  */
+/** "USD → INR at 92.66 per USD (live, 20-Nov-2026)": the rate a fetch's figures were converted at, or null. */
+function convNote(m, company) {
+  const from = m.raw?.financialCurrency;
+  const to = company?.currency;
+  if (!from || !to || from === to) return null;
+  const r = m.rates?.[from];
+  const rate = typeof r === 'number' ? r : r?.rate;
+  if (!(rate > 0)) return null;
+  return { from, to, rate, source: typeof r === 'object' ? r.source || null : null, at: typeof r === 'object' ? r.at || null : null };
+}
 export const labelYear = (l) => {
   const m = /^\s*FY\s*'?(\d{4}|\d{2})\s*$/i.exec(String(l ?? ''));
   if (!m) return null;
@@ -61,7 +71,7 @@ export function mergeFetch(slot, m, company, { n, before = null, labels = false,
     sector: keep(f.sector, prev.sector) || '',
     ...(market ? { price: keep(f.price, prev.price), shares: keep(basic ? f.basicShares : f.shares, prev.shares) } : {}),
     page,
-    _fetched: { ...f.fetched, warnings: f.warnings, fyDates: f.fyDates, lastFyEnd: f.lastFyEnd, shareBasis: market ? (basic ? 'basic' : 'diluted') : null },
+    _fetched: { ...f.fetched, warnings: f.warnings, fyDates: f.fyDates, lastFyEnd: f.lastFyEnd, shareBasis: market ? (basic ? 'basic' : 'diluted') : null, conv: convNote(m, company) },
   };
 }
 

@@ -181,12 +181,17 @@ function checkSimpleRegression(X, T, R, peers) {
   }
 }
 
-/** The precedent workbook against computePrecedent. */
+/**
+ * The precedent workbook against computePrecedent. `opts.expect` (an engine
+ * result) — the statistics and implied valuation the sheet must ALSO show,
+ * e.g. those of the same deals without the empty slots.
+ */
 export function checkPrecedentWorkbook(a, opts = {}) {
   const T = ctx(`precedent${opts.tag ? ` [${opts.tag}]` : ''}`);
   const wb = buildWorkbook(a, 'precedent', opts);
   const X = recalc(wb);
   const p = computePrecedent(a);
+  const E = opts.expect || null;
   const errs = X.errors();
   T.ok(errs.length === 0, `no error cells (${errs.slice(0, 3).map((e) => `${e.sheet}!${e.addr} ${e.err} ${e.formula}`).join(' | ')})`);
 
@@ -196,6 +201,7 @@ export function checkPrecedentWorkbook(a, opts = {}) {
   p.deals.forEach((d, k) => {
     T.ok(same(d.equity, X.get('Inputs', `H${18 + k}`)), `Inputs!H${18 + k} implied 100% equity`);
     T.ok(same(d.premium, X.get('Inputs', `N${18 + k}`)), `Inputs!N${18 + k} control premium: engine ${JSON.stringify(d.premium)} vs ${JSON.stringify(X.get('Inputs', `N${18 + k}`))}`);
+    T.ok(X.get('Inputs', `O${18 + k}`) === d.include, `Inputs!O${18 + k} Include: engine ${d.include}${d.empty ? ' (empty slot)' : ''} vs sheet ${JSON.stringify(X.get('Inputs', `O${18 + k}`))}`);
   });
 
   const S = 'Transaction Summary';
@@ -212,10 +218,13 @@ export function checkPrecedentWorkbook(a, opts = {}) {
     for (const col of t1) T.ok(same(col.get(d), X.get(S, `${col.col}${h1 + 1 + i}`)), `${S}!${col.col}${h1 + 1 + i} T1 ${d.role}: engine ${JSON.stringify(col.get(d))} vs sheet ${JSON.stringify(X.get(S, `${col.col}${h1 + 1 + i}`))}`);
     for (const col of t2) T.ok(same(col.get(d), X.get(S, `${col.col}${h2 + 1 + i}`)), `${S}!${col.col}${h2 + 1 + i} T2 ${d.role}: engine ${JSON.stringify(col.get(d))} vs sheet ${JSON.stringify(X.get(S, `${col.col}${h2 + 1 + i}`))}`);
   });
-  if (p.deals.length) {
-    checkStats(X, T, S, h1 + 1 + p.deals.length + 1, p.statSel.show, t1.filter((x) => x.key), p.stats1, 'T1');
-    checkStats(X, T, S, h2 + 1 + p.deals.length + 1, p.statSel.show, t2, p.stats2, 'T2');
+  for (const q of E ? [p, E] : [p]) {
+    const tag = q === p ? '' : ' (expected)';
+    if (p.deals.length) {
+      checkStats(X, T, S, h1 + 1 + p.deals.length + 1, p.statSel.show, t1.filter((x) => x.key), q.stats1, `T1${tag}`);
+      checkStats(X, T, S, h2 + 1 + p.deals.length + 1, p.statSel.show, t2, q.stats2, `T2${tag}`);
+    }
+    checkImplied(X, T, q.implied, q.summary);
   }
-  checkImplied(X, T, p.implied, p.summary);
   return { ...T.st, wb, X, p };
 }

@@ -1,6 +1,32 @@
 import React from 'react';
 import { NumBox, parseNum } from './Field.jsx';
 
+/** A row label pasted with its figures: text with a letter in it, not a number or an NA / NM marker. */
+const isLabel = (s) => {
+  const t = String(s).trim();
+  return /\p{L}/u.test(t) && Number.isNaN(parseNum(t)) && !/^(na|n\/a|n\.a\.?|nm|nmf)$/i.test(t);
+};
+
+/**
+ * Clipboard text → rows of cells (number, null for blank, NaN for anything
+ * else), or null for a single value (an ordinary paste into the box). Rows by
+ * line breaks, columns by tabs only — so the "." and "," inside a European
+ * "1.234,5" never split a cell; each cell reads by `parseNum`.
+ */
+export function pasteBlock(text) {
+  if (!/[\t\n]/.test(String(text).trim())) return null;
+  return String(text).replace(/\r/g, '').split('\n').filter((l, i, arr) => l.length || i < arr.length - 1)
+    .map((l) => {
+      const cells = l.split('\t');
+      // a leading text label ("Revenue", copied with its row) is not a value: drop it, so the
+      // figures land in the cells they were copied from instead of one column to the right.
+      // An empty marker in the first value cell ("-", an Excel accounting zero; "NM", "n.a.")
+      // is not a label: it stays, as a cell the paste leaves alone.
+      if (cells.length > 1 && isLabel(cells[0])) cells.shift();
+      return cells.map((s) => parseNum(s));
+    });
+}
+
 /**
  * Spreadsheet-style grid: rows × columns of null-able numbers. Blank cells stay
  * blank. Paste a block copied from Excel/Sheets into any cell and it fills
@@ -10,17 +36,9 @@ import { NumBox, parseNum } from './Field.jsx';
  */
 export default function YearGrid({ heads, rows, onCell, onMode, onPasteBlock, note }) {
   const onPaste = (r, c, e) => {
-    const text = e.clipboardData.getData('text');
-    if (!/[\t\n]/.test(text.trim())) return;          // single value: normal paste
+    const block = pasteBlock(e.clipboardData.getData('text'));
+    if (!block) return;                                // single value: normal paste
     e.preventDefault();
-    const block = text.replace(/\r/g, '').split('\n').filter((l, i, arr) => l.length || i < arr.length - 1)
-      .map((l) => {
-        const cells = l.split('\t');
-        // a leading text label ("Revenue", copied with its row) is not a value: drop it, so the
-        // figures land in the cells they were copied from instead of one column to the right
-        if (cells.length > 1 && cells[0].trim() && Number.isNaN(parseNum(cells[0]))) cells.shift();
-        return cells.map((s) => parseNum(s));
-      });
     onPasteBlock(r, c, block);
   };
 

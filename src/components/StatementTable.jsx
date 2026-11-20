@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { parseInputNumber } from '../lib/format.js';
 
 /** Excel-style in-place cell editor: shows the raw number, commits on blur/Enter, Escape cancels. */
 function EditCell({ raw, onCommit }) {
@@ -21,7 +22,7 @@ function EditCell({ raw, onCommit }) {
       }}
       onChange={(e) => setTxt(e.target.value)}
       onBlur={() => {
-        const v = parseFloat(txt);
+        const v = parseInputNumber(txt);   // the app's one number rule: 1.234,5 · 1,234.5 · (12)
         // commit only what the user actually typed — an untouched cell must not
         // round the model value, and Escape must leave it untouched
         if (!cancelled.current && txt !== null && txt !== initial.current && isFinite(v) && v !== raw) onCommit(v);

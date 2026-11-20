@@ -11,6 +11,8 @@ import {
 } from '../../lib/engine/dcfTemplate.js';
 import { MIN_YEARS, MAX_YEARS } from '../../lib/engine/companyPage.js';
 import { fmtNum, fmtTpl, CURRENCIES, UNITS } from '../../lib/format.js';
+import { YearCheck } from '../../home/CompanyForms.jsx';
+import { updateCompany } from '../../store/store.js';
 
 /**
  * Wizard steps for the DCF, following the user's twelve DCF templates:
@@ -31,6 +33,28 @@ const pct2 = (v) => (fin(v) ? `${(v * 100).toFixed(2)}%` : 'NM');
 /** The whole engine on the current data (null when it cannot run yet). */
 function resultOf(company, data) {
   try { return computeDcfT(toEngineInput(company, data)); } catch { return null; }
+}
+
+/** Historical years with no revenue (blank or 0): they hold no figures. */
+export const emptyHistYears = (r) => (r ? r.F.rev.slice(0, r.n).map((v) => !(fin(v) && v !== 0)) : []);
+
+/**
+ * The latest actual year is the base the forecast grows from (DCF) or the entry
+ * year (LBO). With no revenue there, every forecast year starts from 0 and the
+ * value comes out as 0 — stop on the step and say how to fix it.
+ */
+export function latestYearErrors(r, company, what) {
+  if (!r) return [];
+  const empty = emptyHistYears(r);
+  if (!empty.length || !empty[empty.length - 1]) return [];
+  const lab = r.labels.hist;
+  const last = lab[lab.length - 1];
+  const k = empty.lastIndexOf(false);
+  if (k < 0) return [`No historical year has revenue yet — fill the historicals (or use Yahoo) before continuing.`];
+  const blank = lab.slice(k + 1);
+  const year1 = Number.isInteger(company?.startYear) ? company.startYear - (lab.length - 1 - k) : null;
+  return [`${blank.join(', ')} ${blank.length === 1 ? 'has' : 'have'} no figures, but ${last} is the latest actual year — ${what} would start from 0 and the result would be 0. `
+    + `The latest year with figures is ${lab[k]}: ${year1 ? `set Year 1 to ${year1} in Company settings (so ${lab[k]} becomes the latest actual year)` : `move Year 1 earlier in Company settings`}, or fill ${blank.join(' and ')}.`];
 }
 
 /* ============================== Settings ============================== */
@@ -61,6 +85,7 @@ function DcfLabelsEditor({ data, setData, company }) {
   const s = S(data);
   return (
     <div className="step-tools">
+      <YearCheck startYear={company?.startYear} fyEndMonth={company?.fyEndMonth} onUse={(y) => company?.id && updateCompany(company.id, { startYear: y })} />
       <PeriodLabelsCard labels={dcfLabels(s.labels, nHist(data), nFcst(data), company?.startYear, { keepBlank: true })} onChange={(labels) => setData((d) => ({ ...d, dcf: { ...d.dcf, settings: { ...d.dcf.settings, labels } } }))} />
       {s.cf && s.tv && s.coe && (
         <div className="readout">
@@ -117,7 +142,7 @@ function CompanyExtra({ data, setData, company }) {
       <div className="tool-card">
         <div className="tool-h">Fill from Yahoo Finance <span className="fld-opt">optional</span></div>
         <YahooSearch company={company} action="Fill the historicals" onPick={(m) => setCo((cur) => mergeFetch(cur, m, company, { n, alignTo: lab.hist }))} />
-        {c._fetched && <FetchNote f={c._fetched} />}
+        {c._fetched && <FetchNote f={c._fetched} company={company} />}
       </div>
       <div className="tool-card">
         <div className="tool-h">{company.name} — historical financials</div>
@@ -142,6 +167,7 @@ export const dcfCompanyStep = () => ({
   ],
   Extra: CompanyExtra,
   extraBelow: true,
+  validate: (data, ctx) => latestYearErrors(resultOf(ctx.company, data), ctx.company, 'the forecast'),
 });
 
 /* ============================ Assumptions ============================ */
@@ -163,7 +189,7 @@ function AssumptionsExtra({ data, setData, company }) {
     <div className="step-tools">
       <div className="tool-card">
         <div className="tool-h">Forecast drivers</div>
-        <DriversGrid drivers={data.dcf.drivers} onChange={setDrivers} m={m} labels={r.labels} refs={r.ref} locale={locale} unitLabel={unit} defs={dcfDriverDefs(r.cf)} />
+        <DriversGrid drivers={data.dcf.drivers} onChange={setDrivers} m={m} labels={r.labels} refs={r.ref} locale={locale} unitLabel={unit} defs={dcfDriverDefs(r.cf)} emptyHist={emptyHistYears(r)} />
       </div>
       <div className="tool-card">
         <div className="tool-h">What the drivers give <span className="fld-opt">{unit}</span></div>
@@ -315,7 +341,7 @@ function TerminalReadout({ data, company }) {
   const locale = CURRENCIES[company.currency]?.locale;
   const sym = CURRENCIES[company.currency]?.symbol || '';
   if (r.tv === 'gordon' && !(v.rate > v.g)) {
-    return <div className="readout warn">The discount rate ({pct2(v.rate)}) is not above the terminal growth ({pct2(v.g)}) — the terminal value is NM, as in the template.</div>;
+    return <div className="readout warn">The discount rate ({pct2(v.rate)}) is not above the terminal growth ({pct2(v.g)}) — lower the growth below it to continue (the template shows NM here).</div>;
   }
   return (
     <div className="readout">
@@ -343,4 +369,13 @@ export const dcfTerminalStep = () => ({
     ];
   },
   Readout: TerminalReadout,
+  // the user's choice: a Gordon growth at or above the discount rate is stopped here, not carried
+  // to an NM output (the template's own NM handling stays in the engine and the workbook)
+  validate: (data, ctx) => {
+    if (S(data).tv !== 'gordon') return [];
+    const r = resultOf(ctx.company, data);
+    const v = r?.valuation;
+    if (!v || !fin(v.rate) || !fin(v.g) || v.rate > v.g) return [];
+    return [`Terminal growth (${pct2(v.g)}) must be below the ${S(data).cf === 'fcff' ? 'WACC' : 'cost of equity'} (${pct2(v.rate)}) — lower it to continue.`];
+  },
 });

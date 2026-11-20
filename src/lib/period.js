@@ -37,3 +37,30 @@ export function periodLabels(settings, freq, years) {
   }
   return out;
 }
+
+/**
+ * The latest fiscal year that has already ended, named by the calendar year it
+ * ends in (FY26 = the year to March 2026 for a March year end). Today, 20 Nov
+ * 2026: a March year end gives 2026, a December year end 2025. null when the
+ * year-end month is unknown.
+ */
+export function latestCompletedFy(fyEndMonth, now = new Date()) {
+  const m = Number(fyEndMonth);
+  if (!(Number.isInteger(m) && m >= 1 && m <= 12)) return null;
+  const y = now.getFullYear();
+  const end = new Date(y, m, 0, 23, 59, 59);   // last day of month m in year y
+  return end < now ? y : y - 1;
+}
+/** Year 1 (the first forecast year) the calendar implies: the year after the latest completed one. */
+export const impliedYear1 = (fyEndMonth, now) => { const l = latestCompletedFy(fyEndMonth, now); return l === null ? null : l + 1; };
+/**
+ * The Year 1 the app works with: the company's own, but never later than the
+ * calendar allows — a historical year must have ended. A company saved with
+ * Year 1 = 2029 on 21 Nov 2026 (March year end) works as 2027, so its latest
+ * actual year is FY26, not FY28. An earlier Year 1 (a valuation as of an
+ * earlier date) is kept.
+ */
+export function effectiveYear1(startYear, fyEndMonth, now) {
+  const cap = impliedYear1(fyEndMonth, now);
+  return Number.isInteger(startYear) && Number.isInteger(cap) ? Math.min(startYear, cap) : startYear;
+}

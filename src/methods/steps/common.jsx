@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { f, anyFilled } from '../fields.js';
-import { getPath } from '../../store/store.js';
+import { getPath, updateCompany } from '../../store/store.js';
+import { YearCheck } from '../../home/CompanyForms.jsx';
 import { METHOD_META } from '../labels.js';
 import YearGrid from '../../wizard/YearGrid.jsx';
 import ListingSearch from '../../components/ListingSearch.jsx';
@@ -105,6 +106,7 @@ function CompanyExtras({ data, setData, company, ctx, specs }) {
   });
   return (
     <div className="step-tools">
+      <YearCheck startYear={company?.startYear} fyEndMonth={company?.fyEndMonth} onUse={(y) => company?.id && updateCompany(company.id, { startYear: y })} />
       <div className="tool-card">
         <div className="tool-h">Listed company?</div>
         <div className="fld-h" style={{ marginBottom: 8 }}>

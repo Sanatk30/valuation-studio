@@ -6,6 +6,7 @@ import { METHOD_META, VALUATION_ORDER, ANALYSIS_ORDER } from '../methods/labels.
 import { useCompanyCtx } from '../wizard/MethodPage.jsx';
 import { setActive, resetMethod, updateMethod } from '../store/store.js';
 import { CURRENCIES, UNITS } from '../lib/format.js';
+import { effectiveYear1 } from '../lib/period.js';
 
 const ICONS = {
   dcf: <path d="M3 17l6-6 4 4 8-8M15 7h6v6" />,
@@ -41,7 +42,7 @@ export function TopBar({ state, record, onHome, onNew, onSettings }) {
         <div className="co-bar" ref={ref}>
           <button className="co-pill" onClick={() => setOpen(!open)} aria-expanded={open}>
             <span className="co-name">{record.name}</span>
-            <span className="co-meta">{CURRENCIES[record.currency].symbol} {record.currency} · {UNITS[record.unit]} · Year 1 = {record.startYear}{fy && fy.value !== 12 ? ` · ${fy.label}` : ''}</span>
+            <span className="co-meta">{CURRENCIES[record.currency].symbol} {record.currency} · {UNITS[record.unit]} · Year 1 = {effectiveYear1(record.startYear, record.fyEndMonth)}{fy && fy.value !== 12 ? ` · ${fy.label}` : ''}</span>
             <span className="chev">▾</span>
           </button>
           {open && (
