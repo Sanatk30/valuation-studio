@@ -7,6 +7,7 @@
  * the file (and, across sheets, to a non-empty cell), parentheses balance,
  * inputs are blue, and nothing writes NaN / Infinity into a cell.
  */
+import { MULTI_REG_SHEET } from '../src/lib/excel/templateWorkbooks.js';
 import ExcelJS from 'exceljs';
 import { SAMPLE_MODEL as A, withModel } from './fixtures/model.mjs';
 import { buildWorkbook, EXPORT_METHODS } from '../src/lib/excel/exportExcel.js';
@@ -97,7 +98,9 @@ async function checkFile(a, method, opts = {}, expect = EXPECT[method]) {
           ok(!!target, `${method}: ${ws.name}!${cell.address} → unknown sheet '${ref.sheet}'`);
           if (!target || !ref.sheet || ref.b) continue;
           const c = target.getCell(norm(ref.a));
-          ok(c.value !== null && c.value !== undefined, `${method}: ${ws.name}!${cell.address} → ${ref.sheet}!${norm(ref.a)} is empty`);
+          // a blank INPUT cell (cream) is fine — e.g. an empty Consensus figure, which the formula reads as NM
+          const blankInput = c.fill?.fgColor?.argb === 'FFFFF2CC';
+          ok(blankInput || (c.value !== null && c.value !== undefined), `${method}: ${ws.name}!${cell.address} → ${ref.sheet}!${norm(ref.a)} is empty`);
         }
       });
     });
@@ -116,8 +119,8 @@ for (const m of EXPORT_METHODS) {
   const fcfe = buildWorkbook(withModel({ dcf: { ...A.dcf, settings: { ...A.dcf.settings, cf: 'fcfe', coe: 'buildup' } } }), 'dcf');
   ok(!fcfe.worksheets.some((w) => w.name === 'WACC') && fcfe.worksheets.some((w) => w.name === 'Cost of Equity (Build-Up)'), 'dcf FCFE + build-up: no WACC sheet, build-up cost of equity');
   const noReg = buildWorkbook(A, 'comps', { skipped: { regression: true } });
-  ok(!noReg.worksheets.some((w) => w.name === 'Regression'), 'comps without regression: no Regression sheet');
-  ok(buildWorkbook(A, 'comps', {}).worksheets.some((w) => w.name === 'Regression'), 'comps with regression: Regression sheet');
+  ok(noReg.worksheets.some((w) => w.name === 'Regression') && !noReg.worksheets.some((w) => w.name === MULTI_REG_SHEET), 'comps without the regression step: the template Regression sheet only');
+  ok(buildWorkbook(A, 'comps', {}).worksheets.some((w) => w.name === MULTI_REG_SHEET), 'comps with the regression step: plus the multi-variable sheet');
   const hist = withModel({ history: { source: 'manual', label: 'typed', annual: { dates: ['2023-12-31', '2024-12-31'], lines: { revenue: [4200, 4600] } }, quarterly: null, statements: null } });
   ok(buildWorkbook(hist, 'ratios', {}).worksheets.some((w) => w.name === 'Past Ratios'), 'ratios with history: Past Ratios sheet');
   ok(!buildWorkbook(hist, 'ratios', { skipped: { history: true } }).worksheets.some((w) => w.name === 'Past Ratios'), 'ratios with history skipped: no Past Ratios');

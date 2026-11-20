@@ -6,7 +6,7 @@ import { PeerBatchAdd, YahooSearch, RowFetch, mergeFetch } from '../../component
 import { NumBox } from '../../wizard/Field.jsx';
 import { computePage, MIN_YEARS, MAX_YEARS } from '../../lib/engine/companyPage.js';
 import {
-  COMPS_MULTIPLES, blankPeer, isBlankPeer, peerSlots, periodLabels, clampYears, multipleLabel, computeComps, usedMultiples,
+  COMPS_MULTIPLES, CONSENSUS_KEYS, blankPeer, blankConsensus, isBlankPeer, peerSlots, periodLabels, clampYears, multipleLabel, computeComps, usedMultiples, tsmShares,
 } from '../../lib/engine/comps.js';
 import { PREC_METHODS, dealSlots, isBlankDeal, impliedEquity100, controlPremium } from '../../lib/engine/precedent.js';
 import { STAT_KEYS, STAT_LABELS, statsSettings } from '../../lib/engine/templateStats.js';
@@ -30,6 +30,9 @@ const isNum = (v) => typeof v === 'number' && fin(v);
 const leaseSpec = (path) => f.choice(path, 'Include lease liabilities in net debt / EV?', [
   { value: 1, label: 'Yes (1)' }, { value: 0, label: 'No (0)' },
 ], { hint: 'Template: 1 — under Ind AS 116 rent sits below EBITDA, so lease liabilities are debt-like.' });
+const invSpec = (path) => f.choice(path, 'Deduct non-current investments from EV?', [
+  { value: 1, label: 'Yes (1)' }, { value: 0, label: 'No (0)' },
+], { hint: 'Template: 1 — associates, JVs and strategic stakes are non-operating: their value is not earned through EBITDA, so leaving them in EV overstates EV / EBITDA. Choose 0 if the investments are operating.' });
 const yearsSpec = (path) => f.int(path, 'Historical fiscal years on each page', { min: MIN_YEARS, max: MAX_YEARS, hint: `${MIN_YEARS} to ${MAX_YEARS}. Template: 3.` });
 const ytdSpec = (path) => f.bool(path, 'Year-to-date columns', {
   yes: 'On — prior & current YTD', no: 'Off — LTM = latest FY',
@@ -114,13 +117,14 @@ export function editorLabels(stored, n, startYear) {
   return {
     fy: lab.fy.map((x, i) => (i >= pad ? keep(fy[i - pad], x) : x)),
     p: keep(stored?.p, lab.p), c: keep(stored?.c, lab.c), ltm: keep(stored?.ltm, lab.ltm),
+    f1: keep(stored?.f1, lab.f1), f2: keep(stored?.f2, lab.f2),
   };
 }
 
 /** Period-label editor (comps: one set for every page). */
-function LabelsEditor({ labels, ytd, onChange }) {
+function LabelsEditor({ labels, ytd, forward = false, onChange }) {
   const set = (id, v) => {
-    const cur = { fy: [...labels.fy], p: labels.p, c: labels.c, ltm: labels.ltm };
+    const cur = { fy: [...labels.fy], p: labels.p, c: labels.c, ltm: labels.ltm, ...(forward ? { f1: labels.f1, f2: labels.f2 } : {}) };
     if (typeof id === 'number') cur.fy[id] = v; else cur[id] = v;
     onChange(cur);
   };
@@ -134,12 +138,64 @@ function LabelsEditor({ labels, ytd, onChange }) {
         {ytd && <label>Prior-year YTD<input className="fld-in txt" value={labels.p} onChange={(e) => set('p', e.target.value)} /></label>}
         {ytd && <label>Current YTD<input className="fld-in txt" value={labels.c} onChange={(e) => set('c', e.target.value)} /></label>}
         <label>LTM<input className="fld-in txt" value={labels.ltm} onChange={(e) => set('ltm', e.target.value)} /></label>
+        {forward && <label>Forecast year 1 (consensus)<input className="fld-in txt" value={labels.f1} onChange={(e) => set('f1', e.target.value)} /></label>}
+        {forward && <label>Forecast year 2 (consensus)<input className="fld-in txt" value={labels.f2} onChange={(e) => set('f2', e.target.value)} /></label>}
       </div>
     </div>
   );
 }
 
 /* ============================== COMPS ============================== */
+
+/**
+ * The template's share data (Inputs I–M): basic shares, then optional options /
+ * ESOPs with their weighted average exercise price and convertibles with their
+ * conversion price. The workbook's diluted count is the treasury stock method.
+ */
+const shareDataFields = (base) => [
+  f.shares(`${base}.shares`, 'Basic shares outstanding', { required: false, gt: undefined, min: 0, hint: 'Latest basic share count. Diluted shares are worked out by the treasury stock method from the fields below.' }),
+  f.shares(`${base}.options`, 'Options / ESOPs outstanding', { required: false, gt: undefined, min: 0, hint: 'Optional. In the money only when the share price is above the exercise price.' }),
+  f.price(`${base}.exPrice`, 'Weighted avg. exercise price', { required: false, gt: undefined, min: 0, hint: 'Optional — needed with the options.' }),
+  f.shares(`${base}.convShares`, 'Convertibles: shares on conversion', { required: false, gt: undefined, min: 0, hint: 'Optional. If they are in the money, take that convertible out of borrowings on the company page.' }),
+  f.price(`${base}.convPrice`, 'Conversion price', { required: false, gt: undefined, min: 0, hint: 'Optional — needed with the convertibles.' }),
+];
+
+/** The Consensus sheet's six figures (FY+1 / FY+2 revenue, EBITDA, PAT) and their source. */
+const consensusFields = (base) => [
+  ...CONSENSUS_KEYS.map((k) => f.num(`${base}.cons.${k.key}`, `Consensus ${k.name} — forecast year ${k.period === 'f1' ? 1 : 2}`, {
+    required: false,
+    hint: k.key === 'rev1' ? 'Optional — broker consensus (or management case) on the same basis as the company page. Blank → that forward multiple is NM.' : undefined,
+  })),
+  f.text(`${base}.cons.source`, 'Consensus source / date'),
+];
+
+/** One peer's share data and consensus (opened under its row on the Peers step). */
+function PeerExtras({ p, labels, locale, onChange }) {
+  const cons = p.cons || blankConsensus();
+  const box = (key, label) => (
+    <label key={key}>{label}<NumBox small value={p[key] ?? null} onChange={(v) => onChange({ [key]: v })} /></label>
+  );
+  return (
+    <div className="peer-extras">
+      <div className="tool-h">Share data — treasury stock method <span className="fld-opt">diluted {fmtTpl(tsmShares(p), 'n2', locale)}</span></div>
+      <div className="lab-grid">
+        {box('options', 'Options / ESOPs outstanding')}
+        {box('exPrice', 'Weighted avg. exercise price')}
+        {box('convShares', 'Convertibles: shares on conversion')}
+        {box('convPrice', 'Conversion price')}
+      </div>
+      <div className="tool-h">Consensus forecasts <span className="fld-opt">optional — blank gives NM for that forward multiple</span></div>
+      <div className="lab-grid">
+        {CONSENSUS_KEYS.map((k) => (
+          <label key={k.key}>{k.name} {k.period === 'f1' ? labels.f1 : labels.f2}
+            <NumBox small value={cons[k.key] ?? null} onChange={(v) => onChange({ cons: { ...cons, [k.key]: v } })} />
+          </label>
+        ))}
+        <label>Source / date<input className="fld-in txt" value={cons.source || ''} onChange={(e) => onChange({ cons: { ...cons, source: e.target.value } })} /></label>
+      </div>
+    </div>
+  );
+}
 
 const compsN = (data) => clampYears(data.comps?.settings?.years);
 const compsYtd = (data) => data.comps?.settings?.ytd !== false;
@@ -151,7 +207,7 @@ function CompsSettingsExtra({ data, setData, company }) {
   const methods = COMPS_MULTIPLES.map((m) => ({ key: m.key, label: multipleLabel(m, compsLabels(data, company)) }));
   return (
     <div className="step-tools">
-      <LabelsEditor labels={editorLabels(s.labels, compsN(data), company?.startYear)} ytd={compsYtd(data)} onChange={(labels) => setSettings({ ...s, labels })} />
+      <LabelsEditor labels={editorLabels(s.labels, compsN(data), company?.startYear)} ytd={compsYtd(data)} forward onChange={(labels) => setSettings({ ...s, labels })} />
       <ValuationChoices settings={s} onChange={setSettings} methods={methods} />
     </div>
   );
@@ -160,10 +216,11 @@ function CompsSettingsExtra({ data, setData, company }) {
 export const compsSettingsStep = () => ({
   id: 'compsSettings',
   title: 'Settings',
-  blurb: 'How the workbook is laid out: price date, the lease toggle, how many fiscal years each page carries, YTD columns, period labels and the valuation choices.',
+  blurb: 'How the workbook is laid out: price date, the lease and investment toggles, how many fiscal years each page carries, YTD columns, period labels and the valuation choices.',
   fields: () => [
     f.date('comps.settings.priceDate', 'Share price date', { hint: 'The date the share prices are taken on.' }),
     leaseSpec('comps.settings.lease'),
+    invSpec('comps.settings.inv'),
     yearsSpec('comps.settings.years'),
     ytdSpec('comps.settings.ytd'),
   ],
@@ -178,8 +235,17 @@ function CompsTargetExtra({ data, setData, company }) {
   const n = compsN(data);
   const setTarget = (fn) => setData((d) => ({ ...d, comps: { ...d.comps, target: fn(d.comps.target) } }));
   const toggle = data.comps.settings?.lease === 0 ? 0 : 1;
+  const inv = data.comps.settings?.inv === 0 ? 0 : 1;
+  const locale = CURRENCIES[company.currency]?.locale;
   return (
     <div className="step-tools">
+      <div className="tool-card">
+        <div className="tool-h">Diluted shares (treasury stock method)</div>
+        <div className="fld-h">
+          {fmtTpl(tsmShares(t), 'n2', locale)} = basic shares + in-the-money options × (1 − exercise price ÷ share price) + in-the-money convertibles.
+          With no options or convertibles entered it equals the basic share count.
+        </div>
+      </div>
       <div className="tool-card">
         <div className="tool-h">Fill from Yahoo Finance <span className="fld-opt">optional</span></div>
         <YahooSearch company={company} action="Fill the page"
@@ -190,8 +256,8 @@ function CompsTargetExtra({ data, setData, company }) {
         <div className="tool-h">{company.name} — company page</div>
         <TemplatePageEditor
           page={t.page} onChange={(page) => setTarget((cur) => ({ ...cur, page }))}
-          n={n} ytd={compsYtd(data)} labels={compsLabels(data, company)} toggle={toggle}
-          market={{ price: t.price, shares: t.shares }} company={company}
+          n={n} ytd={compsYtd(data)} labels={compsLabels(data, company)} toggle={toggle} inv={inv}
+          market={{ price: t.price, shares: tsmShares(t) }} company={company}
         />
       </div>
     </div>
@@ -217,7 +283,8 @@ export const compsTargetStep = () => ({
     f.text('comps.target.ticker', 'NSE / BSE ticker'),
     f.text('comps.target.sector', 'Sector / sub-sector'),
     f.price('comps.target.price', 'Share price', { required: false, gt: undefined, min: 0 }),
-    f.shares('comps.target.shares', 'Diluted shares outstanding', { required: false, gt: undefined, min: 0, hint: 'Latest basic shares + dilutive ESOPs / convertibles.' }),
+    ...shareDataFields('comps.target'),
+    ...consensusFields('comps.target'),
   ],
   Extra: CompsTargetExtra,
   extraBelow: true,
@@ -232,6 +299,7 @@ function PeersExtra({ data, setData, company }) {
   const ytd = compsYtd(data);
   const labels = compsLabels(data, company);
   const toggle = comps.settings?.lease === 0 ? 0 : 1;
+  const inv = comps.settings?.inv === 0 ? 0 : 1;
   const [open, setOpen] = useState(null);
   const [pasting, setPasting] = useState(false);
 
@@ -275,14 +343,14 @@ function PeersExtra({ data, setData, company }) {
   const renameTier = (id, name) => setComps((c) => ({ ...c, tiers: c.tiers.map((t) => (t.id === id ? { ...t, name } : t)) }));
   const delTier = (id) => setComps((c) => ({ ...c, tiers: c.tiers.filter((t) => t.id !== id), peers: (c.peers || []).map((p) => (p?.tierId === id ? { ...p, tierId: null } : p)) }));
 
-  const tPage = computePage(comps.target.page, { n, toggle, ytd, market: { price: comps.target.price, shares: comps.target.shares } });
+  const tPage = computePage(comps.target.page, { n, toggle, ytd, inv, market: { price: comps.target.price, shares: tsmShares(comps.target) } });
   const pos = (v) => (isNum(v) && v !== 0 ? v : null);
   const finder = {
     seed: comps.target.ticker || company.name || '',
     inputs: {
       revenue: pos(tPage.v.rev[n - 1]), ebitda: pos(tPage.v.ebitda[n - 1]),
       priorRevenue: n >= 2 ? pos(tPage.v.rev[n - 2]) : null,
-      price: pos(comps.target.price), shares: pos(comps.target.shares),
+      price: pos(comps.target.price), shares: pos(tsmShares(comps.target)),
     },
   };
   const locale = CURRENCIES[company.currency]?.locale;
@@ -324,10 +392,10 @@ function PeersExtra({ data, setData, company }) {
         {slots.length > 0 && (
           <div className="tablewrap">
             <table className="fin compact slot-table">
-              <thead><tr><th /><th>Role</th><th>Company name</th><th>Ticker</th><th>Sector</th><th>Include</th><th>Tier</th><th>Share price</th><th>Diluted shares</th><th>EV / EBITDA ({labels.ltm})</th><th /></tr></thead>
+              <thead><tr><th /><th>Role</th><th>Company name</th><th>Ticker</th><th>Sector</th><th>Include</th><th>Tier</th><th>Share price</th><th>Basic shares</th><th>EV / EBITDA ({labels.ltm})</th><th /></tr></thead>
               <tbody>
                 {slots.map((p, k) => {
-                  const pg = computePage(p.page, { n, toggle, ytd, market: { price: p.price, shares: p.shares } });
+                  const pg = computePage(p.page, { n, toggle, ytd, inv, market: { price: p.price, shares: tsmShares(p) } });
                   const e = pg.v.ebitda[pg.cols.L];
                   return (
                     <React.Fragment key={p.id}>
@@ -358,10 +426,11 @@ function PeersExtra({ data, setData, company }) {
                       </tr>
                       {open === p.id && (
                         <tr className="slot-page"><td colSpan={11}>
+                          <PeerExtras p={p} labels={labels} locale={locale} onChange={(patch) => setPeer(k, (x) => ({ ...x, ...patch }))} />
                           <TemplatePageEditor
                             page={p.page} onChange={(page) => setPeer(k, (x) => ({ ...x, page }))}
-                            n={n} ytd={ytd} labels={labels} toggle={toggle}
-                            market={{ price: p.price, shares: p.shares }} company={company}
+                            n={n} ytd={ytd} labels={labels} toggle={toggle} inv={inv}
+                            market={{ price: p.price, shares: tsmShares(p) }} company={company}
                             notes={p._fetched ? <FetchNote f={p._fetched} /> : null}
                           />
                         </td></tr>
@@ -373,7 +442,7 @@ function PeersExtra({ data, setData, company }) {
             </table>
           </div>
         )}
-        <div className="fld-h">Open a peer (▸) for its full company page. Include = 1 puts the peer in the statistics; the target is never included.</div>
+        <div className="fld-h">Open a peer (▸) for its share data (options, convertibles), consensus forecasts and full company page. Include = 1 puts the peer in the statistics; the target is never included.</div>
       </div>
 
       {pasting && <PasteDialog mode="list" onApply={fromList} onClose={() => setPasting(false)} />}
@@ -570,6 +639,7 @@ export const regressionStep = () => ({
 const precN = (data) => clampYears(data.precedent?.settings?.years);
 const precYtd = (data) => data.precedent?.settings?.ytd !== false;
 const precToggle = (data) => (data.precedent?.settings?.lease === 0 ? 0 : 1);
+const precInv = (data) => (data.precedent?.settings?.inv === 0 ? 0 : 1);
 
 function PrecSettingsExtra({ data, setData }) {
   const s = data.precedent.settings || {};
@@ -586,10 +656,11 @@ function PrecSettingsExtra({ data, setData }) {
 export const precSettingsStep = () => ({
   id: 'precSettings',
   title: 'Settings',
-  blurb: 'Valuation date, the lease toggle (apply the same treatment as your comps), fiscal years per page, YTD columns and the valuation choices.',
+  blurb: 'Valuation date, the lease and investment toggles (apply the same treatment as your comps), fiscal years per page, YTD columns and the valuation choices.',
   fields: () => [
     f.date('precedent.settings.valDate', 'Valuation date'),
     leaseSpec('precedent.settings.lease'),
+    invSpec('precedent.settings.inv'),
     yearsSpec('precedent.settings.years'),
     ytdSpec('precedent.settings.ytd'),
   ],
@@ -617,7 +688,7 @@ function PrecCompanyExtra({ data, setData, company }) {
           page={c.page} onChange={(page) => setCo((cur) => ({ ...cur, page }))}
           n={n} ytd={precYtd(data)} labels={labels}
           onLabels={(lab) => setCo((cur) => ({ ...cur, page: { ...cur.page, labels: lab } }))}
-          toggle={precToggle(data)} market={{ price: c.price, shares: c.shares }} company={company}
+          toggle={precToggle(data)} inv={precInv(data)} market={{ price: c.price, shares: c.shares }} company={company}
         />
       </div>
     </div>
@@ -676,7 +747,7 @@ function DealListExtra({ data, setData, company }) {
                     <td>{txt(k, 'acquirerType', 'sm')}</td>
                     <td>{num(k, 'stakePct')}</td>
                     <td>{num(k, 'consideration')}</td>
-                    <td className="calc">{fmtTpl(impliedEquity100(d), 'n1', locale)}</td>
+                    <td className="calc" title={impliedEquity100(d) === '' ? 'Needs a stake and consideration above 0 — the deal shows NM and stays out of the statistics' : undefined}>{impliedEquity100(d) === '' ? 'NM' : fmtTpl(impliedEquity100(d), 'n1', locale)}</td>
                     <td>{txt(k, 'form', 'sm')}</td>
                     <td>{txt(k, 'status', 'sm')}</td>
                     <td>
@@ -700,7 +771,7 @@ function DealListExtra({ data, setData, company }) {
           </table>
         </div>
         <div className="fld-h">
-          Implied 100% equity value = consideration ÷ stake (grossed up to 100%). Control premium = offer ÷ unaffected price − 1, for listed targets only —
+          Implied 100% equity value = consideration ÷ stake (grossed up to 100%); a deal without both shows NM and stays out of the statistics. Control premium = offer ÷ unaffected price − 1, for listed targets only —
           use an unaffected price from before any deal rumours and be consistent across deals. Minority-stake deals usually carry no control premium; consider Include = 0.
         </div>
       </div>
@@ -762,7 +833,7 @@ function DealPagesExtra({ data, setData, company }) {
                   page={d.page} onChange={(page) => setDeal(k, (x) => ({ ...x, page }))}
                   n={n} ytd={precYtd(data)} labels={labels}
                   onLabels={(lab) => setDeal(k, (x) => ({ ...x, page: { ...x.page, labels: lab } }))}
-                  toggle={precToggle(data)}
+                  toggle={precToggle(data)} inv={precInv(data)}
                   market={{ dealEquity: impliedEquity100(d), stake: d.stakePct, consideration: d.consideration }}
                   company={company}
                   notes={<div className="fld-h">Target financials AS OF THE ANNOUNCEMENT DATE, not today. Edit the period labels in the header — they differ deal to deal.</div>}

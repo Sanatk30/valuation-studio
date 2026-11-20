@@ -89,7 +89,7 @@ function PrecPage({ a, f, set, p }) {
     <div className="qo">
       <Headline
         eyebrow={`Precedent transactions — ${nIncl} of ${nDeals} deals in the statistics`}
-        sub={`Implied value = deal ${STAT_SHORT[sel.low]} / ${STAT_SHORT[sel.mid]} / ${STAT_SHORT[sel.high]} multiple × the company’s LTM metric; EV methods less net debt ${f.money(p.companyMarket.netDebt)} and NCI ${f.money(p.companyMarket.nci)}. Transaction multiples include a control premium — they value a controlling stake.${hasPx ? ` Current price ${f.price(px)}.` : ''}`}
+        sub={`Implied value = deal ${STAT_SHORT[sel.low]} / ${STAT_SHORT[sel.mid]} / ${STAT_SHORT[sel.high]} multiple × the company’s LTM metric; EV methods less net debt ${f.money(p.companyMarket.netDebt)} and NCI ${f.money(p.companyMarket.nci)}${p.companyMarket.nonOp ? `, plus non-operating investments ${f.money(p.companyMarket.nonOp)}` : ''}. Transaction multiples include a control premium — they value a controlling stake.${hasPx ? ` Current price ${f.price(px)}.` : ''}`}
         kpis={[
           hRow && {
             label: `Headline — ${hRow.label} (${STAT_SHORT[sel.mid]})`, value: num(hRow.price.mid), fmt: (v) => f.price(v), hero: true,
@@ -154,7 +154,7 @@ function PrecPage({ a, f, set, p }) {
             </table>
           </div>
           <div className="qo-note">
-            EV methods: equity = multiple × metric − net debt − NCI. P/E, P/B: equity = multiple × metric. The control-premium method applies only to a listed company
+            EV methods: equity = multiple × metric − net debt − NCI + non-operating investments. P/E, P/B: equity = multiple × metric. A negative implied equity value is NM. The control-premium method applies only to a listed company
             (for an unlisted one leave the price blank — that row shows NM). Precedent values are usually higher than trading comps because they include a control premium;
             older deals may reflect different market conditions.
           </div>

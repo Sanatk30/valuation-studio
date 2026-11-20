@@ -249,9 +249,11 @@ export const round1 = (x) => Math.sign(x) * Math.round(Math.abs(x) * 10 + 1e-9) 
  *   ytd      the prior / current YTD columns are on the page (else LTM = latest FY)
  *   market   { price, shares } for a listed company, or
  *            { dealEquity, stake, consideration } for a deal page
+ *   inv      deduct non-current investments from EV (1 / 0) — the revised
+ *            CCA / precedent templates' Inputs toggle (non-operating assets)
  * Columns: 0…n−1 fiscal years, n = prior YTD, n+1 = current YTD, n+2 = LTM.
  */
-export function computePage(page, { n, toggle = 1, ytd = true, market = {} }) {
+export function computePage(page, { n, toggle = 1, ytd = true, market = {}, inv = 0 }) {
   const N = n;
   const P = N, C = N + 1, L = N + 2;
   const cols = N + 3;
@@ -356,17 +358,20 @@ export function computePage(page, { n, toggle = 1, ytd = true, market = {} }) {
   const netDebt = borrowings + leases - cashLike;
   const nci = z(r.nci[L]);
   const bookEquity = r.eqOwners[L];
-  const m = { borrowings, leases, cashLike, netDebt, nci, bookEquity };
+  // non-operating investments (associates, JVs, strategic stakes): their value is not earned through EBITDA
+  const nonOp = z(r.ncInvest[L]) * (inv ? 1 : 0);
+  const m = { borrowings, leases, cashLike, netDebt, nci, bookEquity, nonOp };
   if ('dealEquity' in market) {
-    m.equity = z(market.dealEquity);
+    // a deal with no usable stake or consideration has no implied equity value: EV is NM
+    m.equity = isNum(market.dealEquity) ? market.dealEquity : '';
     m.stake = market.stake;
     m.consideration = market.consideration;
-    m.ev = m.equity + netDebt + nci;
+    m.ev = isNum(m.equity) ? m.equity + netDebt + nci - nonOp : 'NM';
   } else {
     m.price = market.price ?? null;
     m.shares = market.shares ?? null;
     m.equity = z(m.price) * z(m.shares);          // market capitalisation
-    m.ev = m.equity + netDebt + nci;
+    m.ev = m.equity + netDebt + nci - nonOp;
     m.bvps = iferrDiv(bookEquity, m.shares, 0);
   }
 

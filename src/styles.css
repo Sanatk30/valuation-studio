@@ -535,6 +535,7 @@ table.fin td.muted, table.fin th.muted { color: #5A6478; text-decoration: line-t
 .vc-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; font-size: 12.5px; color: var(--muted); }
 .vc-row span { width: 36px; }
 .vc-row select.fld-in { padding: 5px 8px; font-size: 12px; }
+.peer-extras { margin: 4px 0 14px; display: flex; flex-direction: column; gap: 8px; }
 .lab-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
 .lab-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; color: var(--faint); }
 .lab-grid .fld-in.txt { padding: 6px 8px; font-size: 12.5px; }

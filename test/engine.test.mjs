@@ -224,8 +224,11 @@ const comps = computeComps(A);
   // target = the template's Example (Illustrative) page: every figure checked against the template's own results
   const t = comps.target;
   ok(close(t.revLtm, 5470) && close(t.ebitdaLtm, 945) && close(t.patLtm, 556), 'comps: target LTM revenue / EBITDA / PAT = the template example (5,470 / 945 / 556)');
-  ok(close(t.mcap, 12400) && close(t.netDebt, -15) && close(t.ev, 12471), 'comps: market cap 12,400, net debt (15), EV 12,471 as in the template');
-  ok(close(t.mult.evEbitdaLtm, 12471 / 945) && close(t.mult.peFy, 12400 / 523) && close(t.mult.pb, 12400 / 3279), 'comps: target multiples (EV/EBITDA LTM, P/E FY, P/B)');
+  // revised template: EV = market cap + net debt + NCI − non-current investments (Inputs toggle, default 1; the example holds 220)
+  ok(close(t.mcap, 12400) && close(t.netDebt, -15) && close(t.nonOp, 220) && close(t.ev, 12471 - 220), 'comps: market cap 12,400, net debt (15), non-op investments 220, EV 12,251');
+  const t0 = computeComps(withModel({ comps: { ...A.comps, settings: { ...A.comps.settings, inv: 0 } } })).target;
+  ok(close(t0.nonOp, 0) && close(t0.ev, 12471), 'comps: investments toggle 0 → EV 12,471 as in the original template');
+  ok(close(t.mult.evEbitdaLtm, 12251 / 945) && close(t.mult.peFy, 12400 / 523) && close(t.mult.pb, 12400 / 3279), 'comps: target multiples (EV/EBITDA LTM, P/E FY, P/B)');
   ok(close(t.bench.gRev, 5300 / 4750 - 1) && close(t.bench.ebitdaMargin, 945 / 5470), 'comps: target growth (latest FY) and LTM EBITDA margin');
   const incl = comps.peers.filter((p) => p.include === 1);
   ok(incl.length === comps.peers.length - 1, 'comps: the peer flagged 0 is out of the statistics');
@@ -234,7 +237,7 @@ const comps = computeComps(A);
   ok(comps.peers.some((p) => p.mult.peLtm === 'NM'), 'comps: the loss-maker P/E is NM, not negative');
   ok(!ev.includes('NM') && comps.stats1.peLtm.min > 0, 'comps: NM values are excluded from the statistics');
   const r = comps.implied.find((x) => x.key === 'evEbitdaLtm');
-  ok(close(r.equity.mid, r.mults.mid * 945 - (-15) - 86) && close(r.price.mid, r.equity.mid / 20), 'comps: implied equity = multiple × EBITDA − net debt − NCI; price ÷ diluted shares');
+  ok(close(r.equity.mid, r.mults.mid * 945 - (-15) - 86 + 220) && close(r.price.mid, r.equity.mid / 20), 'comps: implied equity = multiple × EBITDA − net debt − NCI + non-op investments; price ÷ diluted shares');
   const pe = comps.implied.find((x) => x.key === 'peLtm');
   ok(close(pe.equity.mid, pe.mults.mid * 556), 'comps: P/E equity = multiple × PAT (no bridge)');
   const mids = comps.implied.map((x) => x.price.mid).filter((x) => typeof x === 'number').sort((x, y) => x - y);
@@ -258,7 +261,7 @@ const comps = computeComps(A);
   ok(close(reg.fit.beta[1], sxy / sxx) && close(reg.fit.beta[0], my - (sxy / sxx) * mx), 'regression: slope and intercept by hand');
   ok(close(reg.fit.r2, sxy ** 2 / (sxx * syy)), `regression: R² = ${reg.fit.r2.toFixed(3)}`);
   ok(close(reg.target.ebitdaMargin, 945 / 5470 * 100), 'regression: target x = its own Comps Summary row (%)');
-  ok(close(reg.price.mid, (reg.pred.yHat * 945 - (-15) - 86) / 20), 'regression: implied price on target LTM EBITDA, less net debt and NCI');
+  ok(close(reg.price.mid, (reg.pred.yHat * 945 - (-15) - 86 + 220) / 20), 'regression: implied price on target LTM EBITDA, less net debt and NCI, plus non-op investments');
   const cleared = targetValues(withModel({ regression: { ...A.regression, targetOverrides: { ebitdaMargin: null } } }));
   ok(close(cleared.values.ebitdaMargin, 945 / 5470 * 100), 'regression: a cleared override falls back (null never reads as 0)');
   const nullCustom = runRegression(withModel({
@@ -272,7 +275,7 @@ const prec = computePrecedent(A);
 for (const d of prec.deals) {
   const n = `${d.role} (${d.deal.target})`;
   ok(close(d.equity, d.deal.consideration / (d.deal.stakePct / 100)), `${n}: implied 100% equity = consideration ÷ stake`);
-  ok(close(d.ev, d.equity + d.page.market.netDebt + d.page.market.nci), `${n}: implied EV = equity + net debt + NCI`);
+  ok(close(d.ev, d.equity + d.page.market.netDebt + d.page.market.nci - d.page.market.nonOp), `${n}: implied EV = equity + net debt + NCI − non-op investments`);
   ok(d.ebitdaLtm <= 0 ? d.mult.evEbitda === 'NM' : close(d.mult.evEbitda, d.ev / d.ebitdaLtm), `${n}: EV / LTM EBITDA`);
   const prem = d.deal.listed === 'Yes' && d.deal.unaffectedPrice > 0 && d.deal.offerPrice > 0 ? d.deal.offerPrice / d.deal.unaffectedPrice - 1 : '';
   ok(prem === '' ? d.premium === '' : close(d.premium, prem), `${n}: control premium only for listed targets`);
@@ -285,7 +288,7 @@ for (const d of prec.deals) {
   const noPx = computePrecedent(withModel({ precedent: { ...A.precedent, company: { ...A.precedent.company, price: null } } }));
   ok(noPx.implied.find((r) => r.key === 'premium').price.mid === 'NM', 'precedent: unlisted company → control-premium row NM');
   const r = prec.implied.find((x) => x.key === 'evEbitda');
-  ok(close(r.equity.mid, r.mults.mid * 945 - (-15) - 86), 'precedent: deal EV/EBITDA median × company LTM EBITDA − net debt − NCI');
+  ok(close(r.equity.mid, r.mults.mid * 945 - (-15) - 86 + 220), 'precedent: deal EV/EBITDA median × company LTM EBITDA − net debt − NCI + non-op investments');
 }
 
 /* ---- IPO ---- */

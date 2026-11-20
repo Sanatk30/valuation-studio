@@ -15,6 +15,13 @@ export const colLetter = (n) => {
   return s;
 };
 
+/**
+ * HyperFormula has no INTERCEPT. The comps Regression sheet only ever passes
+ * it two paired ranges (x and y blank together), where
+ * INTERCEPT(y, x) = AVERAGE(y) − SLOPE(y, x) × AVERAGE(x) exactly.
+ */
+const hfCompat = (f) => f.replace(/INTERCEPT\(([^,()]+),([^,()]+)\)/g, '(AVERAGE($1)-SLOPE($1,$2)*AVERAGE($2))');
+
 export function recalc(wb) {
   const sheets = {};
   wb.eachSheet((ws) => {
@@ -25,7 +32,7 @@ export function recalc(wb) {
       row.eachCell({ includeEmpty: true }, (cell, cn) => {
         while (arr.length < cn - 1) arr.push(null);
         let v = cell.value;
-        if (v && typeof v === 'object' && v.formula) v = '=' + v.formula;
+        if (v && typeof v === 'object' && v.formula) v = '=' + hfCompat(v.formula);
         else if (v instanceof Date) v = (v.getTime() / 86400000) + 25569;   // Excel serial
         arr.push(v === undefined ? null : v);
       });

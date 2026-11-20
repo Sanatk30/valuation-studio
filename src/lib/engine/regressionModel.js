@@ -97,11 +97,13 @@ export function runRegression(a) {
   if (pred?.ok && yDef?.multiple) {
     const m = yDef.spec;
     const pg = comps.target.page;
-    const metric = m.metric === 'book' ? pg.market.bookEquity : pg.v[m.metric][m.period === 'fy' ? pg.n - 1 : pg.cols.L];
+    // a forward multiple divides by the target's own consensus figure (blank reads 0 → no price)
+    const metric = m.cons ? (num(comps.target.cons?.[m.metric]) || 0) : m.metric === 'book' ? pg.market.bookEquity : pg.v[m.metric][m.period === 'fy' ? pg.n - 1 : pg.cols.L];
     const { netDebt, nci, shares } = comps.targetMarket;
-    const toPrice = (mult) => (shares > 0 && metric > 0 ? (m.ev ? mult * metric - netDebt - nci : mult * metric) / shares : NaN);
+    const nonOp = comps.targetMarket.nonOp || 0;
+    const toPrice = (mult) => (shares > 0 && metric > 0 ? (m.ev ? mult * metric - netDebt - nci + nonOp : mult * metric) / shares : NaN);
     price = {
-      metric, metricLabel: yDef.label, netDebt, nci, shares,
+      metric, metricLabel: yDef.label, netDebt, nci, nonOp, shares,
       mid: toPrice(pred.yHat), lo: toPrice(pred.lo), hi: toPrice(pred.hi),
     };
   }

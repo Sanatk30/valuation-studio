@@ -74,6 +74,7 @@ export function pageCols(n, ytd) {
  *   o.subtitle  A2 note
  *   o.labels    { link: { fy: [refs], p, c, ltm } } or { input: { fy: [], p, c, ltm } }
  *   o.lease     the lease-toggle cell ref (e.g. Inputs!$B$7)
+ *   o.inv       the non-operating-investments toggle ref (e.g. Inputs!$B$8)
  *   o.market    { kind: 'listed', price, shares, heading, priceLabel, evLabel } refs
  *               or { kind: 'deal', equity, stake, consideration }
  *   o.unitLabel e.g. "₹ Cr"; o.sym, o.unitWord for labels
@@ -242,10 +243,17 @@ export function writeCompanySheet(ws, o) {
   row(10, '(−) Cash, Bank Balances & Current Investments', fx(`${L}39+${L}40+${L}41`), NF.n1);
   row(11, 'Net Debt / (Net Cash)', fx(`${V}8+${V}9-${V}10`), NF.n1, { bold: true, fill: T.sub, top: true });
   row(12, '(+) Non-controlling Interest', fx(`${L}50`), NF.n1);
-  row(13, m.kind === 'deal' ? 'Implied Enterprise Value' : m.evLabel || 'Enterprise Value', fx(m.kind === 'deal' ? `${V}5+${V}11+${V}12` : `${V}7+${V}11+${V}12`), NF.n1, { bold: true, fill: T.sub, top: true });
-  row(14, 'Book Value of Equity (owners)', fx(`${L}49`), NF.n1);
-  if (m.kind !== 'deal' && m.bvps !== false) row(15, `Book Value per Share (${o.sym})`, fx(`IFERROR(${V}14/${V}6,0)`), NF.n2);
-  note(ws, `${Lb}${m.kind !== 'deal' && m.bvps !== false ? 17 : 16}`, m.kind === 'deal' ? 'Balance sheet items use the LTM column (last balance sheet before announcement).' : 'Balance sheet items use the LTM (latest) column.');
+  // revised templates: non-operating (non-current) investments come out of EV, per the Inputs toggle
+  row(13, '(−) Non-operating investments (per Inputs toggle)', fx(`${L}33*${o.inv || 0}`), NF.n1);
+  row(14, m.kind === 'deal' ? 'Implied Enterprise Value' : m.evLabel || 'Enterprise Value',
+    fx(m.kind === 'deal' ? `IF(ISNUMBER(${V}5),${V}5+${V}11+${V}12-${V}13,"NM")` : `${V}7+${V}11+${V}12-${V}13`), NF.n1, { bold: true, fill: T.sub, top: true });
+  row(15, 'Book Value of Equity (owners)', fx(`${L}49`), NF.n1);
+  const bvps = m.kind !== 'deal' && m.bvps !== false;
+  if (bvps) row(16, `Book Value per Share (${o.sym})`, fx(`IFERROR(${V}15/${V}6,0)`), NF.n2);
+  note(ws, `${Lb}${bvps ? 18 : 17}`, m.kind === 'deal' ? 'Balance sheet items use the LTM column (last balance sheet before announcement).' : 'Balance sheet items use the LTM (latest) column.');
+  note(ws, `${Lb}${bvps ? 19 : 18}`, m.kind === 'deal'
+    ? 'EV = Equity value (100%) + Net debt + NCI − Non-operating investments (toggle on Inputs).'
+    : 'EV = Market cap + Net debt + NCI − Non-operating investments (toggle on Inputs).');
 
   const q = `'${ws.name.replace(/'/g, "''")}'!`;
   const abs = (col, r) => `${q}$${col}$${r}`;

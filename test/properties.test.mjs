@@ -225,11 +225,12 @@ for (let it = 0; it < RUNS; it++) {
     const r = computeComps(A);
     clean({ s1: r.stats1, s2: r.stats2, implied: r.implied, summary: r.summary, tiers: r.tiers.map((t) => [t.stats1, t.stats2]) }, 'comps');
     for (const s of [...Object.values(r.stats1), ...Object.values(r.stats2)]) if (!ordered(s)) flag('comps statistics out of order', JSON.stringify(s));
-    const { netDebt, nci, shares } = r.targetMarket;
+    const { netDebt, nci, nonOp, shares } = r.targetMarket;
     for (const row of r.implied) {
-      const want = isNum(row.mults.mid) && isNum(row.metric) && row.metric > 0 ? (row.ev ? row.mults.mid * row.metric - netDebt - nci : row.mults.mid * row.metric) : 'NM';
-      if (want === 'NM' ? row.equity.mid !== 'NM' : !near(row.equity.mid, want)) flag('implied equity ≠ multiple × metric (− net debt − NCI)', row.key);
-      if (isNum(row.equity.mid) && shares > 0 && !near(row.price.mid, row.equity.mid / shares)) flag('implied price ≠ equity ÷ shares', row.key);
+      const want = isNum(row.mults.mid) && isNum(row.metric) && row.metric > 0 ? (row.ev ? row.mults.mid * row.metric - netDebt - nci + nonOp : row.mults.mid * row.metric) : 'NM';
+      if (want === 'NM' ? row.equity.mid !== 'NM' : !near(row.equity.mid, want)) flag('implied equity ≠ multiple × metric (− net debt − NCI + non-op investments)', row.key);
+      // a negative (or zero) implied equity value gives an NM price, as the revised template
+      if (isNum(row.equity.mid) && shares > 0 && (row.equity.mid > 0 ? !near(row.price.mid, row.equity.mid / shares) : row.price.mid !== 'NM')) flag('implied price ≠ equity ÷ shares (NM when equity ≤ 0)', row.key);
     }
     const p = computePrecedent(A);
     clean({ s1: p.stats1, s2: p.stats2, implied: p.implied, summary: p.summary }, 'prec');

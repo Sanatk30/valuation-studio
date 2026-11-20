@@ -28,7 +28,7 @@ function sectionHeader(ws, row, text, span) {
  *   peerCell(id, key)   formula for a built-in variable of that peer (null → typed)
  *   targetCell(key)     formula for the target's value of a built-in variable
  *   metric(spec)        formula for the target metric a multiple divides by
- *   netDebt, nci, shares  the target's EV-bridge cells
+ *   netDebt, nci, shares  the target's EV-bridge cells (nonOp: non-operating investments, added back)
  * Returns the implied-price refs, or null when the model is not estimable / y
  * is not a valuation multiple.
  */
@@ -268,9 +268,9 @@ export function writeRegressionSheet(ws, a, F, links) {
     sectionHeader(ws, rr++, 'IMPLIED SHARE PRICE', 4);
     pVal('metric', 'Target metric', links.metric(regRun.yDef.spec), F.money, regRun.yDef.label, { color: C_LINK });
     const toPrice = (mult) => na(`IF(AND(${links.shares}>0,B${P.metric}>0),${regRun.yDef.multiple === 'ev'
-      ? `(${mult}*B${P.metric}-${links.netDebt}-${links.nci})/${links.shares}`
+      ? `(${mult}*B${P.metric}-${links.netDebt}-${links.nci}${links.nonOp ? `+${links.nonOp}` : ''})/${links.shares}`
       : `${mult}*B${P.metric}/${links.shares}`},"NA")`);
-    pVal('px', 'Implied share price', toPrice(`B${P.pred}`), F.price, regRun.yDef.multiple === 'ev' ? 'EV less net debt and NCI, over diluted shares' : 'Equity value over diluted shares', { bold: true });
+    pVal('px', 'Implied share price', toPrice(`B${P.pred}`), F.price, regRun.yDef.multiple === 'ev' ? 'EV less net debt and NCI, plus non-operating investments, over diluted shares' : 'Equity value over diluted shares', { bold: true });
     pVal('pxLo', '−1 SE', toPrice(`B${P.predLo}`), F.price);
     pVal('pxHi', '+1 SE', toPrice(`B${P.predHi}`), F.price);
     refs = { px: `'${ws.name}'!$B$${P.px}`, lo: `'${ws.name}'!$B$${P.pxLo}`, hi: `'${ws.name}'!$B$${P.pxHi}` };

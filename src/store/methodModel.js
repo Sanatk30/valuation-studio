@@ -61,7 +61,7 @@ const blankIpo = () => ({
  * values are shown as hints, never assumed).
  */
 const blankComps = () => ({
-  settings: { priceDate: '', lease: null, years: null, ytd: null, labels: null, stats: null, multiples: null },
+  settings: { priceDate: '', lease: null, inv: null, years: null, ytd: null, labels: null, stats: null, multiples: null },
   peerCount: null,
   target: blankTargetCo(),
   peers: [],
@@ -75,7 +75,7 @@ const blankRegression = () => ({
 
 /** Precedent transactions (the Precedent Transactions template). */
 const blankPrecedent = () => ({
-  settings: { valDate: '', lease: null, years: null, ytd: null, stats: null, multiples: null },
+  settings: { valDate: '', lease: null, inv: null, years: null, ytd: null, stats: null, multiples: null },
   dealCount: null,
   company: blankValuedCo(),
   deals: [],

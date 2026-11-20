@@ -50,6 +50,7 @@ export const DEAL_BENCH = [
 export const blankPrecSettings = () => ({
   valDate: '',
   lease: 1,
+  inv: 1,                        // deduct non-current investments from EV (1 / 0) — template default
   years: 3,
   ytd: true,
   stats: null,
@@ -89,14 +90,12 @@ const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
 const z = (v) => (isNum(v) ? v : 0);
 
 /** Inputs!H = IFERROR(Consideration ÷ Stake, 0). */
-export const impliedEquity100 = (d) => {
-  const stake = z(d.stakePct) / 100;
-  return stake === 0 ? 0 : z(d.consideration) / stake;
-};
+/** Inputs H = IF(AND(ISNUMBER(stake), stake>0, ISNUMBER(consideration), consideration>0), consideration ÷ stake, "") — a deal without both shows NM. */
+export const impliedEquity100 = (d) => (isNum(d.stakePct) && d.stakePct > 0 && isNum(d.consideration) && d.consideration > 0 ? d.consideration / (d.stakePct / 100) : '');
 /** Inputs!N = IF(AND(Listed="Yes", Unaffected>0, Offer>0), Offer/Unaffected − 1, "") — Excel's "=" ignores case. */
 export const controlPremium = (d) => (String(d.listed ?? '').toLowerCase() === 'yes' && z(d.unaffectedPrice) > 0 && z(d.offerPrice) > 0 ? d.offerPrice / d.unaffectedPrice - 1 : '');
 
-const multipleOf = (base, metric) => (z(metric) <= 0 ? 'NM' : z(base) / z(metric));
+const multipleOf = (base, metric) => (!isNum(base) || z(metric) <= 0 ? 'NM' : base / z(metric));
 
 /** Full precedent transactions analysis. */
 export function computePrecedent(a) {
@@ -105,10 +104,11 @@ export function computePrecedent(a) {
   const n = clampYears(s.years);
   const statSel = statsSettings(s.stats || {});
   const toggle = s.lease === 0 ? 0 : 1;
+  const inv = s.inv === 0 ? 0 : 1;
   const ytd = s.ytd !== false;
 
   const co = pr.company || blankValuedCo();
-  const cPage = computePage(co.page, { n, toggle, ytd, market: { price: co.price, shares: co.shares } });
+  const cPage = computePage(co.page, { n, toggle, ytd, inv, market: { price: co.price, shares: co.shares } });
   const company = {
     name: a.company?.name || '', ticker: co.ticker || '', page: cPage,
     labels: periodLabels(co.page?.labels, n, null),
@@ -117,7 +117,7 @@ export function computePrecedent(a) {
 
   const deals = dealSlots(pr).map((d, i) => {
     const equity = impliedEquity100(d);
-    const pg = computePage(d.page, { n, toggle, ytd, market: { dealEquity: equity, stake: d.stakePct, consideration: d.consideration } });
+    const pg = computePage(d.page, { n, toggle, ytd, inv, market: { dealEquity: equity, stake: d.stakePct, consideration: d.consideration } });
     const { L } = pg.cols;
     const fy = pg.n - 1;
     const metric = (m) => (m.metric === 'book' ? pg.market.bookEquity : pg.v[m.metric][L]);
@@ -147,7 +147,7 @@ export function computePrecedent(a) {
   /* ---- implied valuation of the company being valued ---- */
   const { L } = cPage.cols;
   const sel = usedMultiples(PREC_METHODS, s.multiples);
-  const tgt = { netDebt: cPage.market.netDebt, nci: cPage.market.nci, shares: co.shares };
+  const tgt = { netDebt: cPage.market.netDebt, nci: cPage.market.nci, nonOp: cPage.market.nonOp, shares: co.shares };
   const multRows = impliedRows(
     sel.filter((m) => !m.premium).map((m) => ({ ...m, metricKey: m.metric, metric: m.metric === 'book' ? cPage.market.bookEquity : cPage.v[m.metric][L] })),
     stats1, tgt, statSel,
@@ -158,7 +158,7 @@ export function computePrecedent(a) {
     // F = IF(AND(ISNUMBER(prem), price>0, shares>0), price × (1 + prem) × shares, "NM")
     const px = co.price;
     const eq = (p) => (isNum(p) && z(px) > 0 && z(co.shares) > 0 ? px * (1 + p) * co.shares : 'NM');
-    const per = (e) => (isNum(e) && z(co.shares) > 0 ? e / co.shares : 'NM');
+    const per = (e) => (isNum(e) && z(co.shares) > 0 ? (e > 0 ? e / co.shares : 'NM') : 'NM');
     const mults = { low: stats1.premium[statSel.low], mid: stats1.premium[statSel.mid], high: stats1.premium[statSel.high] };
     const equity = { low: eq(mults.low), mid: eq(mults.mid), high: eq(mults.high) };
     rows.push({ ...m, metric: px, mults, equity, price: { low: per(equity.low), mid: per(equity.mid), high: per(equity.high) } });
@@ -166,8 +166,8 @@ export function computePrecedent(a) {
   const summary = impliedSummary(rows, co.price);
 
   return {
-    n, ytd, toggle, statSel, settings: s, defaultLabels: defaultLabels(n, null),
+    n, ytd, toggle, inv, statSel, settings: s, defaultLabels: defaultLabels(n, null),
     company, deals, stats1, stats2, implied: rows, summary,
-    companyMarket: { price: co.price, shares: co.shares, mcap: cPage.market.equity, netDebt: cPage.market.netDebt, nci: cPage.market.nci, ev: cPage.market.ev },
+    companyMarket: { price: co.price, shares: co.shares, mcap: cPage.market.equity, netDebt: cPage.market.netDebt, nci: cPage.market.nci, nonOp: cPage.market.nonOp, ev: cPage.market.ev },
   };
 }

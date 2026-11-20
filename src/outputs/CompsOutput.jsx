@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import FootballField from '../components/FootballField.jsx';
 import * as COMPS from '../lib/engine/comps.js';
 import * as REG from '../lib/engine/regressionModel.js';
+import { simpleRegression, simpleRegressionCodes } from '../lib/engine/simpleRegression.js';
 import { STAT_LABELS, STAT_SHORT } from '../lib/engine/templateStats.js';
 import { fmtTpl, fmtDate } from '../lib/format.js';
 import Headline from './parts/Headline.jsx';
@@ -114,7 +115,7 @@ function CompsPage({ a, f, set, c, R, showReg }) {
     <div className="qo">
       <Headline
         eyebrow={`Comparable companies — ${nIncl} of ${nPeers} peers in the statistics`}
-        sub={`Implied value = peer ${STAT_SHORT[sel.low]} / ${STAT_SHORT[sel.mid]} / ${STAT_SHORT[sel.high]} multiple × the target’s metric; EV methods less net debt ${f.money(c.targetMarket.netDebt)} and NCI ${f.money(c.targetMarket.nci)}, over ${f.shares(c.targetMarket.shares)} ${f.unit} diluted shares.${hasPx ? ` Current price ${f.price(px)}.` : ''}`}
+        sub={`Implied value = peer ${STAT_SHORT[sel.low]} / ${STAT_SHORT[sel.mid]} / ${STAT_SHORT[sel.high]} multiple × the target’s metric; EV methods less net debt ${f.money(c.targetMarket.netDebt)} and NCI ${f.money(c.targetMarket.nci)}${c.targetMarket.nonOp ? `, plus non-operating investments ${f.money(c.targetMarket.nonOp)}` : ''}, over ${f.shares(c.targetMarket.shares)} ${f.unit} diluted shares (treasury stock method). Forward multiples use the Consensus figures.${hasPx ? ` Current price ${f.price(px)}.` : ''}`}
         kpis={[
           hRow && {
             label: `Headline — ${hRow.label} (${STAT_SHORT[sel.mid]})`, value: num(hRow.price.mid), fmt: (v) => f.price(v), hero: true,
@@ -179,7 +180,7 @@ function CompsPage({ a, f, set, c, R, showReg }) {
               </tbody>
             </table>
           </div>
-          <div className="qo-note">EV-based methods: equity value = multiple × metric − net debt − non-controlling interest. Equity-based methods (P/E, P/B): equity value = multiple × metric. NM = not meaningful (no peer statistic, or a zero / negative target metric).</div>
+          <div className="qo-note">EV-based methods: equity value = multiple × metric − net debt − non-controlling interest + non-operating investments{c.inv ? '' : ' (0 — the investments toggle is off)'}. Equity-based methods (P/E, P/B): equity value = multiple × metric. NM = not meaningful (no peer statistic, a zero / negative target metric, a blank consensus figure, or a negative implied equity value).</div>
         </Collapsible>
 
         <Collapsible title="Table 1: Market data & valuation multiples" tag="TABLE 1" defaultOpen>
@@ -192,6 +193,8 @@ function CompsPage({ a, f, set, c, R, showReg }) {
           <div className="qo-note">Growth and cash-flow quality use the latest fiscal year (LTM growth needs prior-LTM data).</div>
         </Collapsible>
 
+        <SimpleRegressionSection a={a} c={c} f={f} locale={locale} lab={lab} />
+
         {showReg && <RegressionSections a={a} f={f} R={R} px={px} />}
       </Sections>
     </div>
@@ -199,3 +202,34 @@ function CompsPage({ a, f, set, c, R, showReg }) {
 }
 
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : NaN);
+
+const Y_NAMES = ['EV / Revenue LTM', 'EV / EBITDA LTM', 'P / E LTM', 'EV / EBITDA', 'P / E'];
+const X_NAMES = ['Revenue growth', 'EBITDA growth', 'PAT growth', 'EBITDA margin', 'PAT margin', 'ROE', 'ROCE'];
+
+/** The workbook's single-driver 'Regression' sheet, as the app computes it. */
+function SimpleRegressionSection({ a, c, f, locale, lab }) {
+  const R = useMemo(() => simpleRegression(c, simpleRegressionCodes(a.regression)), [a, c]);
+  if (!c.peers.length) return null;
+  const yName = R.codes.y >= 4 ? `${Y_NAMES[R.codes.y - 1]} ${lab.f1}` : Y_NAMES[R.codes.y - 1];
+  const xName = X_NAMES[R.codes.x - 1];
+  const n3 = (v) => (fin(v) ? v.toFixed(3) : 'NA');
+  const rows = [
+    ['Observations (n)', R.n],
+    ['Slope (β1)', n3(R.slope)], ['Intercept (β0)', n3(R.intercept)], ['R²', n3(R.r2)],
+    ['t-stat of slope', fin(R.t) ? R.t.toFixed(2) : 'NA'], ['p-value of slope (two-tailed)', n3(R.p)],
+    [`Target ${xName.toLowerCase()}`, fmtTpl(fin(R.targetX) ? R.targetX : 'NA', 'pct', locale)],
+    ['Predicted multiple ŷ (−1 SE / +1 SE)', `${fmtTpl(R.yhat, 'x', locale)} (${fmtTpl(R.lo, 'x', locale)} / ${fmtTpl(R.hi, 'x', locale)})`],
+    [`Implied price (${f.sym}) (−1 SE / +1 SE)`, `${fmtTpl(R.price.mid, 'n2', locale)} (${fmtTpl(R.price.lo, 'n2', locale)} / ${fmtTpl(R.price.hi, 'n2', locale)})`],
+  ];
+  return (
+    <Collapsible title={`Single-driver regression: ${yName} vs ${xName}`} tag="REGRESSION SHEET">
+      <div className="tablewrap"><table className="fin compact"><tbody>
+        {rows.map(([k, v]) => <tr key={k}><td>{k}</td><td>{v}</td></tr>)}
+      </tbody></table></div>
+      <div className="qo-note">
+        The Excel export's 'Regression' sheet: ordinary least squares over the included peers whose two values are both numbers (needs at least 3).
+        Change the variable codes in the workbook (cells B4 / B5) to try another pair. R² below about 0.5 or a p-value above about 0.10 means the driver explains little — fall back on the median multiple.
+      </div>
+    </Collapsible>
+  );
+}

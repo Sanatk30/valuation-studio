@@ -7,6 +7,7 @@
  * subset of multiples, no tiers, no / one / all-excluded peers, blank pages,
  * an unlisted company, no deals. Also checks the template's structure and look.
  */
+import { MULTI_REG_SHEET } from '../src/lib/excel/templateWorkbooks.js';
 import { withModel } from './fixtures/model.mjs';
 import { checkCompsWorkbook, checkPrecedentWorkbook } from './helpers/templateChecks.mjs';
 import { blankPeer, computeComps } from '../src/lib/engine/comps.js';
@@ -30,7 +31,7 @@ console.log('=== comparable companies ===');
 const base = run('sample (3 years, YTD on, 7 peers, 2 tiers + unassigned, regression)', checkCompsWorkbook(withModel(), {}));
 {
   const names = base.wb.worksheets.map((w) => w.name);
-  ok(names.slice(0, 4).join('|') === 'Instructions|Inputs|Comps Summary|Implied Valuation', `template tab order (${names.slice(0, 6).join(', ')})`);
+  ok(names.slice(0, 6).join('|') === 'Instructions|Inputs|Consensus|Comps Summary|Implied Valuation|Regression', `template tab order (${names.slice(0, 7).join(', ')})`);
   ok(names.includes('Target') && names.includes('Peer 7') && !names.includes('Peer 8'), 'one sheet per chosen peer slot');
   const t = base.wb.getWorksheet('Target');
   const inCell = t.getCell('B7');
@@ -75,8 +76,8 @@ const pb = run('sample (5 deals, one excluded, interim BS, one without YTD)', ch
   ok(d1.getCell('B4').fill?.fgColor?.argb === 'FFFFF2CC' && d1.getCell('B4').value === 'FY21', 'deal period labels are inputs on each sheet (they differ deal to deal)');
   // (HyperFormula's TEXT() renders "mmm" as a number; Excel prints 15-Mar-2021)
   ok(/^Deal 1: Target 1 Ltd acquired by Acquirer 1 \(15-.+-2021\)$/.test(pb.X.get('Deal 1', 'A1')), `deal title (${pb.X.get('Deal 1', 'A1')})`);
-  ok(pb.wb.getWorksheet('Deal 1').getCell('A1').value.formula.includes('TEXT(Inputs!$B$17,"dd-mmm-yyyy")'), 'deal title formats the date as dd-mmm-yyyy');
-  ok(pb.X.get('Company Being Valued', 'A1').startsWith('Company Being Valued: '), 'company title reads the name (Inputs!C10)');
+  ok(pb.wb.getWorksheet('Deal 1').getCell('A1').value.formula.includes('TEXT(Inputs!$B$18,"dd-mmm-yyyy")'), 'deal title formats the date as dd-mmm-yyyy');
+  ok(pb.X.get('Company Being Valued', 'A1').startsWith('Company Being Valued: '), 'company title reads the name (Inputs!C11)');
 }
 run('YTD off, 1 year', checkPrecedentWorkbook(prec((p) => { p.settings.ytd = false; p.settings.years = 1; }), {}));
 run('10 years', checkPrecedentWorkbook(prec((p) => { p.settings.years = 10; }), {}));
@@ -114,7 +115,7 @@ run('precedent: Listed typed "yes"', checkPrecedentWorkbook(prec((p) => { p.deal
   ok(runRegression(a).fit?.ok === false, 'the engine finds the collinear model not estimable');
   const res = run('regression: collinear regressors', checkCompsWorkbook(a, {}));
   const txt = [];
-  res.wb.getWorksheet('Regression').eachRow((r) => r.eachCell((c) => { if (typeof c.value === 'string') txt.push(c.value); }));
+  res.wb.getWorksheet(MULTI_REG_SHEET).eachRow((r) => r.eachCell((c) => { if (typeof c.value === 'string') txt.push(c.value); }));
   ok(txt.some((t) => /not estimable: design matrix is singular/.test(t)), 'the Regression sheet says the model is not estimable');
 }
 

@@ -20,12 +20,12 @@ import PasteDialog from './PasteDialog.jsx';
  *            YTD or LTM column, no Total Income row, no market block, no ratios
  */
 export default function TemplatePageEditor({
-  page, onChange, n, ytd: ytdIn = true, labels, onLabels, toggle = 1, market = {}, company, notes, actions, historicals = false,
+  page, onChange, n, ytd: ytdIn = true, labels, onLabels, toggle = 1, inv = 0, market = {}, company, notes, actions, historicals = false,
 }) {
   const ytd = historicals ? false : ytdIn;
   const [open, setOpen] = useState({ is: true, bs: false, cf: false, ratios: false });
   const [pasting, setPasting] = useState(false);
-  const r = useMemo(() => computePage(page, { n, toggle, ytd, market }), [page, n, toggle, ytd, market]);
+  const r = useMemo(() => computePage(page, { n, toggle, ytd, market, inv }), [page, n, toggle, ytd, market, inv]);
   const locale = CURRENCIES[company?.currency]?.locale || 'en-IN';
   const sym = CURRENCIES[company?.currency]?.symbol || '';
   const unit = UNITS[company?.unit] || '';
@@ -118,7 +118,7 @@ export default function TemplatePageEditor({
     ]
     : [
       [`Share Price (${sym})`, fmtTpl(market.price, 'n2', locale)],
-      [`Diluted Shares Outstanding (${unit})`, fmtTpl(market.shares, 'n2', locale)],
+      [`Diluted Shares Outstanding (${unit}) – TSM`, fmtTpl(market.shares, 'n2', locale)],
       ['Market Capitalisation', money(m.equity)],
     ];
   const bridge = [
@@ -127,6 +127,7 @@ export default function TemplatePageEditor({
     ['(−) Cash, Bank Balances & Current Investments', money(m.cashLike)],
     ['Net Debt / (Net Cash)', money(m.netDebt), true],
     ['(+) Non-controlling Interest', money(m.nci)],
+    [`(−) Non-operating investments (${inv ? 'deducted' : 'kept in EV'} by the investments toggle)`, money(m.nonOp)],
     [deal ? 'Implied Enterprise Value' : 'Enterprise Value', money(m.ev), true],
     ['Book Value of Equity (owners)', money(m.bookEquity)],
     ...(deal ? [] : [[`Book Value per Share (${sym})`, fmtTpl(m.bvps, 'n2', locale)]]),

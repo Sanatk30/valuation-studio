@@ -56,7 +56,7 @@ export function sampleCompsData() {
   });
   return {
     settings: {
-      priceDate: '2026-06-30', lease: 1, years: 3, ytd: true,
+      priceDate: '2026-06-30', lease: 1, inv: 1, years: 3, ytd: true,
       labels: { fy: ['FY24', 'FY25', 'FY26'], p: 'Q1 FY26', c: 'Q1 FY27', ltm: 'LTM Jun-26' },
       stats: null, multiples: null,
     },
@@ -89,7 +89,7 @@ export function samplePrecedentData() {
     };
   };
   return {
-    settings: { valDate: '2026-06-30', lease: 1, years: 3, ytd: true, stats: null, multiples: null },
+    settings: { valDate: '2026-06-30', lease: 1, inv: 1, years: 3, ytd: true, stats: null, multiples: null },
     dealCount: 5,
     company: { ticker: 'EXMFG', price: 620, shares: 20, page: derivedPage() },
     deals: [

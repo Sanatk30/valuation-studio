@@ -11,6 +11,8 @@ import { IS_LINES, BS_LINES, CF_LINES, RATIO_LINES } from '../../src/lib/engine/
 import { computeComps, COMPS_MULTIPLES, COMPS_BENCH } from '../../src/lib/engine/comps.js';
 import { computePrecedent, DEAL_MULTIPLES, DEAL_BENCH } from '../../src/lib/engine/precedent.js';
 import { runRegression } from '../../src/lib/engine/regressionModel.js';
+import { simpleRegression, simpleRegressionCodes } from '../../src/lib/engine/simpleRegression.js';
+import { MULTI_REG_SHEET } from '../../src/lib/excel/templateWorkbooks.js';
 import { STAT_LABELS } from '../../src/lib/engine/templateStats.js';
 import { recalc } from './recalc.mjs';
 
@@ -50,10 +52,10 @@ function checkPage(X, T, sheet, pg, ytd) {
   }
   const m = pg.market;
   const V = K.valCol;
-  const mk = [[8, m.borrowings], [9, m.leases], [10, m.cashLike], [11, m.netDebt], [12, m.nci], [13, m.ev], [14, m.bookEquity]];
+  const mk = [[8, m.borrowings], [9, m.leases], [10, m.cashLike], [11, m.netDebt], [12, m.nci], [13, m.nonOp], [14, m.ev], [15, m.bookEquity]];
   if ('bvps' in m) {
     mk.push([7, m.equity]);
-    if (String(X.get(sheet, `${K.labelCol}15`) || '').startsWith('Book Value per Share')) mk.push([15, m.bvps]);
+    if (String(X.get(sheet, `${K.labelCol}16`) || '').startsWith('Book Value per Share')) mk.push([16, m.bvps]);
   } else mk.push([5, m.equity]);
   for (const [r, v] of mk) T.ok(same(v, X.get(sheet, `${V}${r}`)), `${sheet}!${V}${r} market: engine ${v} vs sheet ${X.get(sheet, `${V}${r}`)}`);
 }
@@ -73,9 +75,10 @@ function checkStats(X, T, sheet, startRow, show, cols, stats, label) {
   });
 }
 
-function checkImplied(X, T, rows, summary) {
+function checkImplied(X, T, rows, summary, skip = new Set()) {
   const S = 'Implied Valuation';
   rows.forEach((r, i) => {
+    if (skip.has(r.key)) return;
     const rr = 13 + i;
     const cells = [['B', r.metric], ['C', r.mults.low], ['D', r.mults.mid], ['E', r.mults.high],
       ['F', r.equity.low], ['G', r.equity.mid], ['H', r.equity.high], ['I', r.price.low], ['J', r.price.mid], ['K', r.price.high]];
@@ -89,6 +92,7 @@ function checkImplied(X, T, rows, summary) {
     for (let r = 13; r < 60; r++) { const v = X.get(S, `A${r}`); if (typeof v === 'string' && re.test(v)) return r; }
     return -1;
   };
+  if (!summary) return;
   const pairs = [[find(/^Lowest implied price/), summary.lowest], [find(/^Median of/), summary.medianMid], [find(/^Highest implied price/), summary.highest], [find(/^(Upside|Premium)/), summary.upside]];
   for (const [r, v] of pairs) T.ok(r > 0 && same(v, X.get(S, `B${r}`)), `${S} summary row ${r}: engine ${JSON.stringify(v)} vs sheet ${JSON.stringify(X.get(S, `B${r}`))}`);
   void at;
@@ -137,17 +141,44 @@ export function checkCompsWorkbook(a, opts = {}) {
   }
   checkImplied(X, T, c.implied, c.summary);
 
+  const names = wb.worksheets.map((w) => w.name);
+  // the template's single-driver Regression sheet: always there (with at least one peer slot)
+  if (c.peers.length) {
+    T.ok(names.includes('Regression'), 'template Regression sheet present');
+    checkSimpleRegression(X, T, simpleRegression(c, simpleRegressionCodes(a.regression)), c.peers.length);
+  }
   if (!opts.skipped?.regression && a.regression?.yVar) {
     const R = runRegression(a);
-    const names = wb.worksheets.map((w) => w.name);
-    T.ok(names.includes('Regression'), 'Regression sheet present');
-    if (R.price && names.includes('Regression')) {
-      const r = X.row('Regression', 'Implied share price');
-      T.ok(r > 0 && near(X.get('Regression', `B${r}`), R.price.mid), `regression price: engine ${R.price.mid} vs sheet ${X.get('Regression', `B${r}`)}`);
-      T.ok(near(X.get('Regression', `B${r + 1}`), R.price.lo) && near(X.get('Regression', `B${r + 2}`), R.price.hi), 'regression ±1 SE prices');
+    const RS = MULTI_REG_SHEET;
+    T.ok(names.includes(RS), 'multi-variable regression sheet present');
+    if (R.price && names.includes(RS)) {
+      const r = X.row(RS, 'Implied share price');
+      T.ok(r > 0 && near(X.get(RS, `B${r}`), R.price.mid), `regression price: engine ${R.price.mid} vs sheet ${X.get(RS, `B${r}`)}`);
+      T.ok(near(X.get(RS, `B${r + 1}`), R.price.lo) && near(X.get(RS, `B${r + 2}`), R.price.hi), 'regression ±1 SE prices');
     }
-  }
+  } else T.ok(!names.includes(MULTI_REG_SHEET), 'no multi-variable regression sheet when skipped');
   return { ...T.st, wb, X, c };
+}
+
+/** The template Regression sheet vs simpleRegression: every row, statistic, prediction and price. */
+function checkSimpleRegression(X, T, R, peers) {
+  const S = 'Regression';
+  T.ok(X.get(S, 'B4') === R.codes.y && X.get(S, 'B5') === R.codes.x, `regression codes ${R.codes.y} / ${R.codes.x}`);
+  R.rows.forEach((r, k) => {
+    const rr = 8 + k;
+    for (const [col, v] of [['E', r.used ? r.x : ''], ['F', r.used ? r.y : ''], ['G', r.fitted], ['H', r.resid]]) {
+      T.ok(same(v, X.get(S, `${col}${rr}`)), `${S}!${col}${rr} ${r.name}: engine ${JSON.stringify(v)} vs sheet ${JSON.stringify(X.get(S, `${col}${rr}`))}`);
+    }
+  });
+  const s0 = 10 + peers;
+  const cells = [[s0 + 1, R.n], [s0 + 2, R.slope], [s0 + 3, R.intercept], [s0 + 4, R.r2], [s0 + 5, R.se], [s0 + 6, R.seSlope], [s0 + 7, R.t], [s0 + 8, R.p], [s0 + 19, R.isEv]];
+  // a target x of "" (blank target page): Excel's arithmetic on "" is #VALUE! → NA (the engine); HyperFormula reads 0
+  if (isNum(R.targetX)) cells.push([s0 + 12, R.yhat], [s0 + 13, R.seMean], [s0 + 14, R.lo], [s0 + 15, R.hi], [s0 + 20, R.price.mid], [s0 + 21, R.price.lo], [s0 + 22, R.price.hi]);
+  for (const [r, v] of cells) {
+    const cell = X.get(S, `B${r}`);
+    const okv = isNum(v) ? isNum(cell) && Math.abs(cell - v) <= 1e-7 * Math.max(1, Math.abs(v)) : same(v, cell);
+    T.ok(okv, `${S}!B${r} ${X.get(S, `A${r}`)}: engine ${JSON.stringify(v)} vs sheet ${JSON.stringify(cell)}`);
+  }
 }
 
 /** The precedent workbook against computePrecedent. */
@@ -163,8 +194,8 @@ export function checkPrecedentWorkbook(a, opts = {}) {
   p.deals.forEach((d, k) => checkPage(X, T, `Deal ${k + 1}`, d.page, p.ytd));
   // inputs sheet: implied 100% equity and control premium
   p.deals.forEach((d, k) => {
-    T.ok(same(d.equity, X.get('Inputs', `H${17 + k}`)), `Inputs!H${17 + k} implied 100% equity`);
-    T.ok(same(d.premium, X.get('Inputs', `N${17 + k}`)), `Inputs!N${17 + k} control premium: engine ${JSON.stringify(d.premium)} vs ${JSON.stringify(X.get('Inputs', `N${17 + k}`))}`);
+    T.ok(same(d.equity, X.get('Inputs', `H${18 + k}`)), `Inputs!H${18 + k} implied 100% equity`);
+    T.ok(same(d.premium, X.get('Inputs', `N${18 + k}`)), `Inputs!N${18 + k} control premium: engine ${JSON.stringify(d.premium)} vs ${JSON.stringify(X.get('Inputs', `N${18 + k}`))}`);
   });
 
   const S = 'Transaction Summary';
@@ -177,14 +208,19 @@ export function checkPrecedentWorkbook(a, opts = {}) {
     { col: 'S', key: 'premium', get: (d) => d.premium },
   ];
   const t2 = DEAL_BENCH.map((b) => ({ col: b.col, key: b.key, get: (d) => d.bench[b.key] }));
+  // A deal with no implied equity: Excel computes ""/x as #VALUE! → IFERROR → NM (as the engine), but
+  // HyperFormula (like Google Sheets) reads "" as 0, so the template's P/E and P/B show 0 there and
+  // enter the statistics. Those two columns are left out of the comparison for such a workbook.
+  const blankEq = p.deals.some((d) => d.equity === '' && d.include === 1);
+  const sheetsOnly = (col) => blankEq && (col.key === 'pe' || col.key === 'pb');
   p.deals.forEach((d, i) => {
-    for (const col of t1) T.ok(same(col.get(d), X.get(S, `${col.col}${h1 + 1 + i}`)), `${S}!${col.col}${h1 + 1 + i} T1 ${d.role}: engine ${JSON.stringify(col.get(d))} vs sheet ${JSON.stringify(X.get(S, `${col.col}${h1 + 1 + i}`))}`);
+    for (const col of t1) if (!sheetsOnly(col)) T.ok(same(col.get(d), X.get(S, `${col.col}${h1 + 1 + i}`)), `${S}!${col.col}${h1 + 1 + i} T1 ${d.role}: engine ${JSON.stringify(col.get(d))} vs sheet ${JSON.stringify(X.get(S, `${col.col}${h1 + 1 + i}`))}`);
     for (const col of t2) T.ok(same(col.get(d), X.get(S, `${col.col}${h2 + 1 + i}`)), `${S}!${col.col}${h2 + 1 + i} T2 ${d.role}: engine ${JSON.stringify(col.get(d))} vs sheet ${JSON.stringify(X.get(S, `${col.col}${h2 + 1 + i}`))}`);
   });
   if (p.deals.length) {
-    checkStats(X, T, S, h1 + 1 + p.deals.length + 1, p.statSel.show, t1.filter((x) => x.key), p.stats1, 'T1');
+    checkStats(X, T, S, h1 + 1 + p.deals.length + 1, p.statSel.show, t1.filter((x) => x.key && !sheetsOnly(x)), p.stats1, 'T1');
     checkStats(X, T, S, h2 + 1 + p.deals.length + 1, p.statSel.show, t2, p.stats2, 'T2');
   }
-  checkImplied(X, T, p.implied, p.summary);
+  checkImplied(X, T, p.implied, blankEq ? null : p.summary, blankEq ? new Set(['pe', 'pb']) : undefined);
   return { ...T.st, wb, X, p };
 }
