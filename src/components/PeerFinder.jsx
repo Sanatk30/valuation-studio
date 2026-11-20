@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { findPeers, WEIGHTS, times } from '../lib/peerFinder.js';
+import { findPeers, WEIGHTS, times, resultStale } from '../lib/peerFinder.js';
 import { UNIT_FACTOR } from '../lib/yahoo.js';
 import { fmtMoney, fmtPct } from '../lib/format.js';
 import { YF_HINT } from '../lib/yfBase.js';
@@ -74,7 +74,12 @@ export default function PeerFinder({ company, inputs, defaultSeed = '', exclude 
       {running && <div className="fld-h pf-progress">{progress || 'Starting…'}</div>}
       {err && <div className="fld-e" style={{ marginTop: 6 }}>{err}</div>}
 
-      {res && ref && (
+      {resultStale(res, company.currency) && (
+        <div className="fld-e" style={{ marginTop: 6 }}>
+          The valuation currency changed to {company.currency} after this search (its sizes and FX were in {res.currency}) — press Find to rank again.
+        </div>
+      )}
+      {res && ref && !resultStale(res, company.currency) && (
         <>
           <div className="pf-ref">
             <b>Compared with {ref.name || ref.symbol}</b> ({ref.symbol}) · {ref.industry || 'industry not reported'}

@@ -368,5 +368,13 @@ export async function findPeers({
   }));
   const cv = makeConvert(currency, fx);
   candidates.forEach((c) => { c.marketCapV = cv(c.snap?.marketCap); c.revenueV = cv(c.snap?.revenue); });
-  return { seed: { ...seed, snap: seedSnap }, ref, candidates, screened: equities.length, compared: withSnap.length, dropped, fx };
+  return { seed: { ...seed, snap: seedSnap }, ref, candidates, screened: equities.length, compared: withSnap.length, dropped, fx, currency };
 }
+
+/**
+ * A finder result whose sizes are in another currency than the company's now
+ * (the valuation currency was changed after the search): its sizes, size
+ * ratios and FX were worked out in `res.currency` and must not be shown as
+ * the new currency — the search has to run again.
+ */
+export const resultStale = (res, currency) => !!res && res.currency !== currency;
