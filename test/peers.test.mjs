@@ -8,6 +8,7 @@ import { parseListing, ltmPeriod, parseSearch } from '../src/lib/yahoo.js';
 import { parseRateResponse } from '../src/lib/fx.js';
 import {
   parseSnapshot, scoreCandidate, buildReference, rankCandidates, findPeers, makeConvert, WEIGHTS, SNAPSHOT_TYPES, mapLimit, resultStale,
+  groupOf, normName, dedupeListings, searchTerms, marketOf, secondaryListing, popularityOf,
 } from '../src/lib/peerFinder.js';
 import { computePage, setCell } from '../src/lib/engine/companyPage.js';
 import { blankPeer } from '../src/lib/engine/comps.js';
@@ -29,17 +30,23 @@ function mixedTs(sym, types) {
 }
 
 const PROFILES = {
-  'RELIANCE.NS': { exchange: 'NSI', exchDisp: 'NSE', sector: 'Energy', industry: 'Oil & Gas Refining & Marketing', longname: 'Reliance Industries Limited' },
-  AAPL: { exchange: 'NMS', exchDisp: 'NASDAQ', sector: 'Technology', industry: 'Consumer Electronics', longname: 'Apple Inc.' },
-  TSM: { exchange: 'NYQ', exchDisp: 'NYSE', sector: 'Technology', industry: 'Semiconductors', longname: 'Taiwan Semiconductor Manufacturing Company Limited' },
-  'VOD.L': { exchange: 'LSE', exchDisp: 'LSE', sector: 'Communication Services', industry: 'Telecom Services', longname: 'Vodafone Group Public Limited Company' },
-  'ONGC.NS': { exchange: 'NSI', exchDisp: 'NSE', sector: 'Energy', industry: 'Oil & Gas Integrated', longname: 'Oil and Natural Gas Corporation Limited' },
-  'BPCL.NS': { exchange: 'NSI', exchDisp: 'NSE', sector: 'Energy', industry: 'Oil & Gas Refining & Marketing', longname: 'Bharat Petroleum Corporation Limited' },
+  'RELIANCE.NS': { exchange: 'NSI', exchDisp: 'NSE', sector: 'Energy', industry: 'Oil & Gas Refining & Marketing', longname: 'Reliance Industries Limited', pop: 90000 },
+  AAPL: { exchange: 'NMS', exchDisp: 'NASDAQ', sector: 'Technology', industry: 'Consumer Electronics', longname: 'Apple Inc.', pop: 500000 },
+  TSM: { exchange: 'NYQ', exchDisp: 'NYSE', sector: 'Technology', industry: 'Semiconductors', longname: 'Taiwan Semiconductor Manufacturing Company Limited', pop: 300000 },
+  'VOD.L': { exchange: 'LSE', exchDisp: 'LSE', sector: 'Communication Services', industry: 'Telecom Services', longname: 'Vodafone Group Public Limited Company', pop: 40000 },
+  'ONGC.NS': { exchange: 'NSI', exchDisp: 'NSE', sector: 'Energy', industry: 'Oil & Gas Integrated', longname: 'Oil and Natural Gas Corporation Limited', pop: 30000 },
+  'BPCL.NS': { exchange: 'NSI', exchDisp: 'NSE', sector: 'Energy', industry: 'Oil & Gas Refining & Marketing', longname: 'Bharat Petroleum Corporation Limited', pop: 5000 },
+  'BPCL.BO': { exchange: 'BSE', exchDisp: 'BSE', sector: 'Energy', industry: 'Oil & Gas Refining & Marketing', longname: 'Bharat Petroleum Corporation Limited', pop: 900 },
+  'HINDPETRO.NS': { exchange: 'NSI', exchDisp: 'NSE', sector: 'Energy', industry: 'Oil & Gas Refining & Marketing', longname: 'Hindustan Petroleum Corporation Limited', pop: 3000 },
+  'MRPL.NS': { exchange: 'NSI', exchDisp: 'NSE', sector: 'Energy', industry: 'Oil & Gas Refining & Marketing', longname: 'Mangalore Oil Processing Limited', pop: 800 },
+  'GAIL.NS': { exchange: 'NSI', exchDisp: 'NSE', sector: 'Energy', industry: 'Oil & Gas Midstream', longname: 'GAIL (India) Limited', pop: 2000 },
+  'BPCL.F': { exchange: 'FRA', exchDisp: 'Frankfurt', sector: 'Energy', industry: 'Oil & Gas Refining & Marketing', longname: 'Bharat Petroleum Corp Ltd (Frankfurt)', pop: 10 },
 };
 const ETFS = new Set(['NIFTYBEES.NS']);
 const RECS = {
   'RELIANCE.NS': ['BPCL.NS', 'ONGC.NS', 'NIFTYBEES.NS', 'AAPL', 'TSM', 'TCS.NS'],
-  'BPCL.NS': ['RELIANCE.NS', 'ONGC.NS', 'VOD.L'],
+  'BPCL.NS': ['RELIANCE.NS', 'ONGC.NS', 'VOD.L', 'GAIL.NS'],
+  'HINDPETRO.NS': ['MRPL.NS', 'BPCL.NS', 'BPCL.F'],
   'ONGC.NS': ['BPCL.NS', 'VOD.L'],
   AAPL: ['TSM'],
 };
@@ -55,7 +62,8 @@ function fakeFetch({ recsFor = RECS } = {}) {
       const quotes = [];
       for (const [sym, p] of Object.entries(PROFILES)) {
         if (sym === q || p.longname.toUpperCase().includes(q)) {
-          quotes.push({ symbol: sym, longname: p.longname, exchange: p.exchange, exchDisp: p.exchDisp, quoteType: 'EQUITY', sector: p.sector, sectorDisp: p.sector, industry: p.industry, industryDisp: p.industry });
+          // Yahoo: an exact-symbol hit scores 10,000,000 + popularity; a word hit only its relevance
+          quotes.push({ symbol: sym, longname: p.longname, exchange: p.exchange, exchDisp: p.exchDisp, quoteType: 'EQUITY', sector: p.sector, sectorDisp: p.sector, industry: p.industry, industryDisp: p.industry, score: sym === q ? 1e7 + p.pop : 20000 });
         }
       }
       if (ETFS.has(q)) quotes.push({ symbol: q, longname: 'Nifty BeES', exchange: 'NSI', exchDisp: 'NSE', quoteType: 'ETF' });
@@ -123,47 +131,88 @@ for (const sym of Object.keys(FIX)) {
   }
 }
 ok(snaps.TSM.adr === true && snaps.AAPL.adr === false && snaps['RELIANCE.NS'].adr === false, 'only the receipt is flagged');
+ok(snaps['VOD.L'].financialCurrency !== snaps['VOD.L'].priceCurrency && snaps['VOD.L'].adr === false && snaps['VOD.L'].marketCap, 'a home listing reporting in another currency (VOD.L: GBP price, EUR accounts) is ordinary shares, with a market cap');
 ok(snaps['VOD.L'].priceCurrency === 'GBP', 'pence quote normalised to pounds before any comparison');
 
 /* ------------------------------------------------------------ scoring */
-console.log('\n=== scoring ===');
+console.log('\n=== groups and fit ===');
 {
-  const ref = { industry: 'Semis', sector: 'Tech', exchangeCode: 'NMS', homeCurrency: 'USD', marketCap: 1000, revenue: 500, margin: 0.30, growth: 0.10 };
-  const full = { industry: 'Semis', sector: 'Tech', exchangeCode: 'NMS', exchange: 'NASDAQ', snap: { financialCurrency: 'USD', marketCap: { value: 1000, currency: 'USD' }, revenue: { value: 500, currency: 'USD' }, margin: 0.30, growth: 0.10 } };
-  const a = scoreCandidate(ref, full, 'USD');
-  ok(a.score === 100 && a.coverage === 5 && a.max === 100, 'identical company scores 100 on 5 of 5 signals');
-
-  const b = scoreCandidate(ref, { ...full, industry: 'Software', exchangeCode: 'NYQ', exchange: 'NYSE',
-    snap: { ...full.snap, marketCap: { value: 10000, currency: 'USD' }, margin: 0.40, growth: 0.35 } }, 'USD');
+  const ref = { industry: 'Semis', sector: 'Tech', market: 'US', homeCurrency: 'USD', marketCap: 1000, revenue: 500, margin: 0.30, growth: 0.10 };
+  const full = { symbol: 'X', industry: 'Semis', sector: 'Tech', exchange: 'NASDAQ', snap: { financialCurrency: 'USD', marketCap: { value: 1000, currency: 'USD' }, revenue: { value: 500, currency: 'USD' }, margin: 0.30, growth: 0.10 } };
   const pt = (r, k) => r.parts.find((p) => p.key === k);
-  ok(pt(b, 'industry').pts === 15, 'same sector, other industry = 15 of 30');
-  ok(pt(b, 'market').pts === 10, 'other exchange, same reporting currency = 10 of 15');
-  ok(near(pt(b, 'size').pts, 0), '10× the market cap = 0 of 25');
-  ok(near(pt(b, 'margin').pts, 15 * 0.5), '10 pts margin gap = half of 15');
+  const a = scoreCandidate(ref, full, 'USD');
+  ok(a.group === 1 && a.score === 100 && a.coverage === 4 && a.max === 100, 'identical company: same industry, fit 100 on 4 of 4 signals');
+  ok(!a.parts.some((p) => p.key === 'industry'), 'industry is not part of the fit — it decides the group');
+
+  ok(groupOf(ref, { industry: 'Software', sector: 'Tech' }) === 2, 'same sector, other industry → group 2');
+  ok(groupOf(ref, { industry: 'Banks', sector: 'Financials' }) === 3, 'other sector → group 3');
+  ok(groupOf(ref, { industry: null, sector: 'Tech' }) === 2 && groupOf(ref, { industry: null, sector: null }) === 0, 'sector only → 2; nothing reported → 0 (not guessed)');
+  ok(groupOf({ industry: null, sector: null }, full) === 0, 'target with no classification → 0');
+
+  const b = scoreCandidate(ref, { ...full, symbol: 'X.L', exchange: 'LSE',
+    snap: { ...full.snap, marketCap: { value: 10000, currency: 'USD' }, margin: 0.40, growth: 0.35 } }, 'USD');
+  ok(pt(b, 'market').pts === 12, 'other home market, same reporting currency = 12 of 20');
+  ok(near(pt(b, 'size').pts, 0), '10× the market cap = 0 of 40');
+  ok(near(pt(b, 'margin').pts, 25 * 0.5), '10 pts margin gap = half of 25');
   ok(near(pt(b, 'growth').pts, 0), '25 pts growth gap = 0 of 15');
-  ok(b.score === Math.round((15 + 10 + 0 + 7.5 + 0) / 100 * 100), `score = points ÷ available (${b.score})`);
+  ok(b.score === Math.round((12 + 0 + 12.5 + 0) / 100 * 100), `fit = points ÷ available (${b.score})`);
+  const b2 = scoreCandidate(ref, { ...full, symbol: 'X.NS', snap: { ...full.snap, financialCurrency: 'INR' } }, 'USD');
+  ok(pt(b2, 'market').pts === 0 && /India/.test(pt(b2, 'market').text), 'other market and currency = 0, named');
+  ok(pt(scoreCandidate(ref, full, 'USD'), 'market').pts === 20, 'same home market = 20');
 
   const c = scoreCandidate(ref, { ...full, snap: { ...full.snap, marketCap: { value: 316.227766, currency: 'USD' } } }, 'USD');
-  ok(near(pt(c, 'size').pts, 25 * 0.5, 1e-6), '√10 smaller = half of the size points (log scale)');
+  ok(near(pt(c, 'size').pts, 40 * 0.5, 1e-6), '√10 smaller = half of the size points (log scale)');
 
   const d = scoreCandidate({ ...ref, marketCap: null }, { ...full, snap: { ...full.snap, marketCap: null, revenue: { value: 250, currency: 'USD' } } }, 'USD');
-  ok(/revenue/.test(pt(d, 'size').text) && near(pt(d, 'size').pts, 25 * (1 - Math.log10(2))), 'no market cap → size on revenue');
+  ok(/revenue/.test(pt(d, 'size').text) && near(pt(d, 'size').pts, 40 * (1 - Math.log10(2))), 'no market cap → size on revenue');
 
-  const e = scoreCandidate(ref, { industry: null, sector: null, exchangeCode: 'NMS', exchange: 'NASDAQ', snap: null }, 'USD');
-  ok(e.coverage === 1 && e.max === 15 && e.score === 100 && pt(e, 'margin').pts === null, 'missing signals are NA and excluded — never counted as 0 or guessed');
+  const e = scoreCandidate(ref, { symbol: 'Y', industry: 'Semis', sector: 'Tech', exchange: 'NASDAQ', snap: null }, 'USD');
+  ok(e.coverage === 1 && e.max === 20 && e.score === 100 && pt(e, 'margin').pts === null, 'missing signals are NA and excluded — never counted as 0 or guessed');
 
   const f = scoreCandidate(ref, { ...full, snap: { ...full.snap, financialCurrency: 'EUR', marketCap: { value: 900, currency: 'EUR' }, revenue: { value: 450, currency: 'EUR' } } }, 'USD', {});
   ok(pt(f, 'size').pts === null && /FX/.test(pt(f, 'size').text), 'a foreign size with no FX rate is NA, not compared unconverted');
   const g = scoreCandidate(ref, { ...full, snap: { ...full.snap, financialCurrency: 'EUR', marketCap: { value: 900, currency: 'EUR' } } }, 'USD', { EUR: { rate: 1.1 } });
-  ok(near(pt(g, 'size').pts, 25 * (1 - Math.abs(Math.log10(990 / 1000)))), 'a foreign size converts at the live rate');
+  ok(near(pt(g, 'size').pts, 40 * (1 - Math.abs(Math.log10(990 / 1000)))), 'a foreign size converts at the live rate');
+  const adr = scoreCandidate({ ...ref, marketCap: 1000, revenue: 500 }, { ...full, snap: { ...full.snap, adr: true, marketCap: null, revenue: { value: 400, currency: 'USD' } } }, 'USD');
+  ok(adr.sizeBasis === 'revenue', 'a receipt (no market cap) is sized on revenue');
 
   const ranked = rankCandidates([
-    { symbol: 'A', score: 60, coverage: 3, order: 0 }, { symbol: 'B', score: 80, coverage: 2, order: 1 },
-    { symbol: 'C', score: 60, coverage: 5, order: 2 }, { symbol: 'D', score: null, coverage: 0, order: 3 },
+    { symbol: 'A', group: 1, score: 60, coverage: 3, order: 0 }, { symbol: 'B', group: 1, score: 80, coverage: 2, order: 1 },
+    { symbol: 'C', group: 1, score: 60, coverage: 4, order: 2 }, { symbol: 'D', group: 1, score: null, coverage: 0, order: 3 },
+    { symbol: 'E', group: 2, score: 99, coverage: 4, order: 4 }, { symbol: 'F', group: 0, score: 99, coverage: 4, order: 5 },
   ]);
-  ok(ranked.map((x) => x.symbol).join('') === 'BCAD', 'ranked by score, then coverage, then co-watch order');
+  ok(ranked.map((x) => x.symbol).join('') === 'BCADEF', 'same industry first (whatever the fit elsewhere), then fit, coverage, pool order');
 
-  ok(Object.values(WEIGHTS).reduce((s, w) => s + w, 0) === 100, 'weights sum to 100');
+  ok(Object.values(WEIGHTS).reduce((sum, w) => sum + w, 0) === 100, 'weights sum to 100');
+}
+
+console.log('\n=== names, listings and search words ===');
+{
+  ok(normName('HDFC Bank Limited') === 'hdfc bank' && normName('HDFC BANK LTD.') === 'hdfc bank', 'one company however a venue spells it');
+  ok(normName('Procter & Gamble Co') === 'procter and gamble', '& and legal words');
+  ok(marketOf('INFY.NS') === 'IN' && marketOf('INFY.BO') === 'IN' && marketOf('INFY') === 'US' && marketOf('7203.T') === 'JP' && marketOf('VOD.L') === 'GB', 'home market from the exchange suffix');
+  ok(secondaryListing('MTLA.F', 'AAPL') && secondaryListing('0TDG.L', 'AAPL') && secondaryListing('HHPD.IL', 'AAPL'), 'Frankfurt, London IOB and international lines are secondary quotes');
+  ok(!secondaryListing('SAP.DE', 'AAPL') && !secondaryListing('VOD.L', 'AAPL') && !secondaryListing('X.F', 'Y.F'), 'home listings are not; nor a venue the seed itself trades on');
+  ok(popularityOf({ score: 1e7 + 516500 }) === 516500 && popularityOf({ score: 20000 }) === null && popularityOf(null) === null, 'popularity only from an exact-symbol hit');
+
+  const seed = { symbol: 'TCS.NS', exchangeCode: 'NSI' };
+  const d = dedupeListings([
+    { symbol: 'INFY', name: 'Infosys Limited', exchangeCode: 'NYQ', order: 0, sources: ['co-watched'] },
+    { symbol: 'INFY.BO', name: 'Infosys Ltd', exchangeCode: 'BSE', order: 1, sources: ['industry crawl'] },
+    { symbol: 'INFY.NS', name: 'INFOSYS LIMITED', exchangeCode: 'NSI', order: 2, sources: ['industry search'] },
+    { symbol: 'WIT', name: 'Wipro Limited', exchangeCode: 'NYQ', order: 3, sources: ['co-watched'] },
+  ], seed);
+  const inf = d.find((c) => /infosys/i.test(c.name));
+  ok(d.length === 2 && inf.symbol === 'INFY.NS', 'three Infosys listings → one, on the seed’s exchange');
+  ok(inf.order === 0 && inf.sources.length === 3, 'it keeps the earliest pool place and every source');
+  ok(d.find((c) => c.symbol === 'WIT'), 'a company listed only abroad is kept');
+
+  const t = searchTerms('Information Technology Services', ['HCL Technologies Limited', 'Tech Mahindra Limited', 'Mphasis Limited', 'KPIT Technologies Limited'], 'Tata Consultancy Services Limited');
+  ok(t[0] === 'technologies', `a word two industry names share comes first (${t.join(', ')})`);
+  ok(t.includes('infotech') && t.includes('consultancy') && !t.includes('services') && !t.includes('limited'), 'industry words added; generic and legal words never searched');
+  ok(searchTerms('Banks—Regional', [], 'HDFC Bank Limited').includes('bank'), 'Banks—Regional → "bank"');
+  ok(searchTerms('Some New Industry', [], '').every((w) => w.length >= 4), 'unknown industry → its own words');
+  ok(searchTerms('Information Technology Services', [], '', 3).length === 3, 'capped');
 }
 
 /* ------------------------------------------------------------ reference */
@@ -185,29 +234,32 @@ console.log('\n=== reference: target inputs first, seed figures second ===');
 console.log('\n=== findPeers end to end ===');
 {
   const stages = [];
+  calls.length = 0;
   const out = await findPeers({
     seed: 'RELIANCE.NS', currency: 'INR', unit: 'Cr', exclude: ['ONGC.NS'],
     fetchImpl: fakeFetch(), onProgress: (t) => stages.push(t),
   });
   const syms = out.candidates.map((c) => c.symbol);
-  ok(!syms.includes('RELIANCE.NS'), 'the seed is not its own peer');
-  ok(!syms.includes('ONGC.NS'), 'peers already in the set are skipped');
+  const g = (k) => out.candidates.filter((c) => c.group === k).map((c) => c.symbol);
+  ok(!syms.includes('RELIANCE.NS') && !out.others.some((c) => c.symbol === 'RELIANCE.NS'), 'the seed is not its own peer');
+  ok(!syms.includes('ONGC.NS') && !calls.some((u) => /q=ONGC\.NS/.test(u)), 'peers already in the set are skipped (not even profiled)');
   ok(!syms.includes('NIFTYBEES.NS') && !syms.includes('TCS.NS') && out.dropped === 2, 'ETFs and names Yahoo cannot profile drop out (2)');
-  ok(syms.includes('VOD.L'), 'second-hop names join the pool');
-  ok(syms[0] === 'BPCL.NS', `same industry + exchange ranks first (${syms.join(', ')})`);
-  const bp = out.candidates[0];
-  ok(bp.snap === null && bp.coverage === 2 && bp.score === 100, 'a candidate with no figures keeps its profile signals, figures NA');
-  const tsm = out.candidates.find((c) => c.symbol === 'TSM');
-  ok(/revenue/.test(tsm.parts.find((p) => p.key === 'size').text), 'receipt (TSM) is sized on revenue');
-  const twdInr = parseRateResponse(load('fx/TWDINR.json'), 'TWD', 'INR').rate;
-  ok(near(tsm.revenueV, tsm.snap.revenue.value * twdInr), 'TWD revenue converts at the live TWD→INR rate');
+  ok(g(1).join() === ['BPCL.NS', 'HINDPETRO.NS', 'MRPL.NS'].join() || new Set(g(1)).size === 3 && ['BPCL.NS', 'HINDPETRO.NS', 'MRPL.NS'].every((x) => g(1).includes(x)), `same industry: co-watched, searched and crawled (${g(1).join(', ')})`);
+  ok(out.candidates.find((c) => c.symbol === 'HINDPETRO.NS').sources.includes('industry search'), 'HINDPETRO came from the industry search ("petroleum")');
+  ok(out.candidates.find((c) => c.symbol === 'MRPL.NS').sources.includes('industry crawl'), 'MRPL came from the crawl (co-watched with HINDPETRO)');
+  ok(g(2).join() === 'GAIL.NS', 'same sector, other industry is its own group');
+  ok(out.others.map((c) => c.symbol).sort().join() === 'AAPL,TSM,VOD.L', 'other sectors are listed apart, never ranked as peers');
+  ok(!syms.includes('BPCL.BO') && syms.includes('BPCL.NS'), 'BPCL on BSE and NSE → once, on the seed’s exchange');
+  ok(!syms.includes('BPCL.F') && !out.others.some((c) => c.symbol === 'BPCL.F'), 'a Frankfurt quote is left out');
+  ok(out.candidates.every((c, i, a) => i === 0 || a[i - 1].group === c.group ? (i === 0 || (a[i - 1].score ?? -1) >= (c.score ?? -1)) : true), 'sorted best first inside each group');
+  ok(out.candidates.find((c) => c.symbol === 'BPCL.NS').popularity === 5000, 'popularity read from the exact-symbol profile');
   for (const c of out.candidates) {
     const re = scoreCandidate(out.ref, c, 'INR', out.fx);
-    ok(re.score === c.score, `${c.symbol}: ${c.score ?? 'NA'} (${c.coverage}/5) — ${c.parts.map((p) => p.text).join('; ')}`);
+    ok(re.score === c.score && re.group === c.group, `${c.symbol}: group ${c.group}, fit ${c.score ?? 'NA'} (${c.coverage}/4) — ${c.parts.map((p) => p.text).join('; ')}`);
   }
-  ok(out.candidates.every((c, i, a) => i === 0 || (a[i - 1].score ?? -1) >= (c.score ?? -1)), 'list is sorted best first');
-  ok(stages.some((s) => /profiles/.test(s)) && stages.some((s) => /figures/.test(s)), 'progress reported per stage');
-  ok(out.ref.from.revenue === 'seed' && out.ref.industry === 'Oil & Gas Refining & Marketing', 'reference = seed profile and figures');
+  ok(stages.some((x) => /profiles/.test(x)) && stages.some((x) => /Searching the industry/.test(x)) && stages.some((x) => /Following names/.test(x)), 'progress reported per stage');
+  ok(out.ref.from.revenue === 'seed' && out.ref.industry === 'Oil & Gas Refining & Marketing' && out.ref.market === 'IN', 'reference = seed profile, market and figures');
+  ok(out.sources['co-watched'] >= 1 && out.sources['industry search'] >= 1 && out.sources['industry crawl'] >= 1, `source counts reported (${JSON.stringify(out.sources)})`);
   // the company's currency changed after the search: the INR sizes / FX must not be shown as USD
   ok(out.currency === 'INR' && !resultStale(out, 'INR') && resultStale(out, 'USD') && !resultStale(null, 'USD'), 'a result is stale once the valuation currency differs from the one it was ranked in');
 
@@ -215,14 +267,19 @@ console.log('\n=== findPeers end to end ===');
   ok(withInputs.ref.from.revenue === 'inputs' && near(withInputs.ref.margin, 0.2) && withInputs.ref.from.marketCap === 'seed', 'typed target figures override the seed’s, per figure');
 
   const small = await findPeers({ seed: 'RELIANCE.NS', currency: 'INR', unit: 'Cr', compareSize: 2, fetchImpl: fakeFetch() });
-  ok(small.compared === 2 && small.screened === out.screened + 1, 'only the best-profiled candidates get the figures fetch');
+  ok(small.compared === 2 && small.candidates.length === 2 && small.notCompared === 3, 'only the closest by profile get the figures fetch (3 of 5 not: ONGC is no longer excluded here)');
+  ok(small.candidates.every((c) => c.group === 1), 'the figures budget goes to the same industry first');
+
+  // a big target: a peer under 1% of its size is listed apart
+  const tiny = await findPeers({ seed: 'RELIANCE.NS', currency: 'INR', unit: 'Cr', inputs: { revenue: 1e12 }, fetchImpl: fakeFetch() });
+  ok(tiny.tooSmall.every((c) => c.sizeRatio < 0.01) && !tiny.candidates.some((c) => c.sizeRatio !== null && c.sizeRatio < 0.01), 'under 1% of the target → "too small", not ranked');
 
   let msg = '';
   try { await findPeers({ seed: 'NOPE', currency: 'INR', unit: 'Cr', fetchImpl: fakeFetch() }); } catch (e) { msg = e.message; }
   ok(/No listed company found/.test(msg), 'unknown seed → clear message');
   msg = '';
   try { await findPeers({ seed: 'VOD.L', currency: 'INR', unit: 'Cr', fetchImpl: fakeFetch() }); } catch (e) { msg = e.message; }
-  ok(/no co-watched names/.test(msg), 'no co-watched names → clear message');
+  ok(/no co-watched names/.test(msg), 'no co-watched names and nothing found → clear message');
 
   const order = await mapLimit([30, 10, 20], 2, (ms) => new Promise((r) => setTimeout(() => r(ms), ms)));
   ok(order.join() === '30,10,20', 'mapLimit keeps input order');

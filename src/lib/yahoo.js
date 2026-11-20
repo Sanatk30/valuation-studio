@@ -51,7 +51,7 @@ export async function searchSymbols(q, opts = {}) {
 }
 
 /**
- * Search response → [{ symbol, name, exchange, exchangeCode, sector, industry }]
+ * Search response → [{ symbol, name, exchange, exchangeCode, sector, industry, score }]
  * (equities only). Sector / industry are Yahoo's classification, null when the
  * response carries none.
  */
@@ -65,6 +65,9 @@ export function parseSearch(d) {
       exchangeCode: x.exchange || '',
       sector: x.sectorDisp || x.sector || null,
       industry: x.industryDisp || x.industry || null,
+      // Yahoo's search rank: an exact-symbol hit scores 10,000,000 + the listing's
+      // popularity (INFY.NS ≈ 516,000, a micro-cap ≈ 500) — the peer finder's size proxy
+      score: Number.isFinite(Number(x.score)) ? Number(x.score) : null,
     }));
 }
 

@@ -1,10 +1,16 @@
 import React, { useState } from 'react';
-import { findPeers, WEIGHTS, times, resultStale } from '../lib/peerFinder.js';
+import { findPeers, WEIGHTS, GROUP_LABEL, MIN_SIZE_RATIO, times, resultStale } from '../lib/peerFinder.js';
 import { UNIT_FACTOR } from '../lib/yahoo.js';
 import { fmtMoney, fmtPct } from '../lib/format.js';
 import { YF_HINT } from '../lib/yfBase.js';
 
-const SIGNAL_LABEL = { industry: 'Industry', market: 'Market', size: 'Size', margin: 'EBITDA margin', growth: 'Growth' };
+const SIGNAL_LABEL = { market: 'Market', size: 'Size', margin: 'EBITDA margin', growth: 'Growth' };
+const N_SIGNALS = Object.keys(WEIGHTS).length;
+const GROUP_NOTE = {
+  1: 'Yahoo classifies these in the same industry as the target — the comparable set.',
+  2: 'Same sector, other industry: related businesses, not direct peers. Tick one only if you know it competes.',
+  0: 'Yahoo reports no industry for these (or for the target), so they cannot be grouped.',
+};
 const FROM_LABEL = { inputs: 'your inputs', seed: 'the seed listing' };
 const fin = (v) => typeof v === 'number' && Number.isFinite(v);
 const pctOrNA = (x) => (fin(x) ? fmtPct(x * 100, 1) : 'NA');
@@ -16,11 +22,14 @@ const sourceText = (from) => {
 };
 
 /**
- * Peer finder panel (comps Peer step): ranks Yahoo candidates against the
- * target on industry, market, size, margin and growth (lib/peerFinder.js),
- * shows why for each, and hands the ticked symbols to `onFetch` — which runs
- * the normal peer fetch with its rate confirmation. Nothing here writes to
- * the model.
+ * Peer finder panel (comps Peer step): candidates from Yahoo (co-watched
+ * names, an industry crawl and an industry search — lib/peerFinder.js),
+ * grouped by Yahoo's own industry classification. Same-industry names are
+ * ranked by fit (size, margin, growth, market) with the reason for each;
+ * same-sector names sit in their own section, closed; other sectors and
+ * names under 1% of the target's size are only listed. The ticked symbols go
+ * to `onFetch`, which runs the normal peer fetch with its rate confirmation.
+ * Nothing here writes to the model.
  */
 export default function PeerFinder({ company, inputs, defaultSeed = '', exclude = [], onFetch, onClose }) {
   const [seed, setSeed] = useState(defaultSeed);
@@ -30,17 +39,19 @@ export default function PeerFinder({ company, inputs, defaultSeed = '', exclude 
   const [res, setRes] = useState(null);
   const [ticked, setTicked] = useState(() => new Set());
   const [open, setOpen] = useState(null);
+  const [shown, setShown] = useState(() => new Set([1]));   // groups whose rows are shown
   const uf = UNIT_FACTOR[company.unit];
 
   const run = async () => {
     if (!seed.trim() || running) return;
-    setRunning(true); setErr(''); setRes(null); setTicked(new Set()); setOpen(null); setProgress('');
+    setRunning(true); setErr(''); setRes(null); setTicked(new Set()); setOpen(null); setProgress(''); setShown(new Set([1]));
     try {
       const out = await findPeers({
         seed: seed.trim(), inputs, currency: company.currency, unit: company.unit, exclude, onProgress: setProgress,
       });
       setRes(out);
-      if (!out.candidates.length) setErr('Every co-watched name is already in the set, or none is a listed company.');
+      if (!out.candidates.length) setErr('No listed company in the target’s industry or sector was found that is not already in the set — add peers by ticker.');
+      else if (!out.candidates.some((c) => c.group === 1)) setShown(new Set([1, 2, 0]));
     } catch (e) {
       setErr(`${e?.message || 'Peer search failed'}${/Yahoo returned|fetch/i.test(e?.message || '') ? ` — ${YF_HINT}.` : ''}`);
     } finally {
@@ -53,7 +64,10 @@ export default function PeerFinder({ company, inputs, defaultSeed = '', exclude 
     if (n.has(sym)) n.delete(sym); else n.add(sym);
     return n;
   });
-  const tickTop = (k) => setTicked(new Set(res.candidates.slice(0, k).map((c) => c.symbol)));
+  const sameInd = res ? res.candidates.filter((c) => c.group === 1) : [];
+  const tickTop = (k) => setTicked(new Set(sameInd.slice(0, k).map((c) => c.symbol)));
+  const toggleGroup = (g) => setShown((s0) => { const n = new Set(s0); if (n.has(g)) n.delete(g); else n.add(g); return n; });
+  const groups = res ? [1, 2, 0].map((g) => ({ g, rows: res.candidates.filter((c) => c.group === g) })).filter((x) => x.rows.length) : [];
   const money = (v) => (fin(v) && fin(uf) ? fmtMoney(v / uf, company, 0) : 'NA');
   const ref = res?.ref;
 
@@ -96,11 +110,21 @@ export default function PeerFinder({ company, inputs, defaultSeed = '', exclude 
               <table className="fin">
                 <thead>
                   <tr>
-                    <th>Company</th><th>Score</th><th>Industry · exchange</th><th title="Candidate ÷ target: market cap, or revenue when a market cap is missing">Size ÷ target</th><th title="EBITDA margin (LTM, or the latest fiscal year when LTM EBITDA is not reported)">Margin</th><th title="Revenue growth, last fiscal year">Growth</th>
+                    <th>Company</th><th title="Fit inside the group: size, EBITDA margin, growth and market">Fit</th><th>Industry · exchange</th><th title="Candidate ÷ target: market cap, or revenue when a market cap is missing">Size ÷ target</th><th title="EBITDA margin (LTM, or the latest fiscal year when LTM EBITDA is not reported)">Margin</th><th title="Revenue growth, last fiscal year">Growth</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {res.candidates.map((c) => {
+                  {groups.map(({ g, rows }) => (
+                  <React.Fragment key={g}>
+                  <tr className="pf-group">
+                    <td colSpan={6}>
+                      <button className="pf-group-btn" onClick={() => toggleGroup(g)} aria-expanded={shown.has(g)}>
+                        {shown.has(g) ? '▾' : '▸'} {GROUP_LABEL[g]} — {rows.length}
+                      </button>
+                      <small>{GROUP_NOTE[g]}</small>
+                    </td>
+                  </tr>
+                  {shown.has(g) && rows.map((c) => {
                     const size = fin(c.sizeRatio) ? `${times(c.sizeRatio)}${c.sizeBasis === 'revenue' ? ' rev.' : ''}` : 'NA';
                     const isOpen = open === c.symbol;
                     return (
@@ -113,9 +137,9 @@ export default function PeerFinder({ company, inputs, defaultSeed = '', exclude 
                             </label>
                           </td>
                           <td>
-                            <button className="pf-score" onClick={() => setOpen(isOpen ? null : c.symbol)} title="Why this score">
+                            <button className="pf-score" onClick={() => setOpen(isOpen ? null : c.symbol)} title="Why this fit">
                               <span className={`pf-badge ${c.score === null ? 'na' : c.score >= 70 ? 'hi' : c.score >= 40 ? 'mid' : 'lo'}`}>{c.score ?? 'NA'}</span>
-                              <small>{c.coverage}/5 {isOpen ? '▾' : '▸'}</small>
+                              <small>{c.coverage}/{N_SIGNALS} {isOpen ? '▾' : '▸'}</small>
                             </button>
                           </td>
                           <td className="pf-txt">{c.industry || 'Industry NA'}<small>{c.exchange || 'exchange NA'}</small></td>
@@ -142,29 +166,45 @@ export default function PeerFinder({ company, inputs, defaultSeed = '', exclude 
                                 </div>
                               )}
                               {c.snap === null && <div className="na"><b>Figures</b><span />Yahoo returned no figures for this listing — only its profile is scored.</div>}
+                              {c.sources?.length > 0 && <div className="na"><b>Found via</b><span />{c.sources.join(', ')}{fin(c.popularity) ? ` · Yahoo popularity ${Math.round(c.popularity).toLocaleString('en-US')}` : ''}</div>}
                             </td>
                           </tr>
                         )}
                       </React.Fragment>
                     );
                   })}
+                  </React.Fragment>
+                  ))}
                 </tbody>
               </table>
             </div>
           )}
 
+          {res.tooSmall?.length > 0 && (
+            <div className="fld-h pf-list">
+              <b>Too small to compare</b> (under {Math.round(MIN_SIZE_RATIO * 100)}% of the target’s size): {res.tooSmall.map((c) => `${c.name} (${c.symbol}, ${times(c.sizeRatio)})`).join(' · ')}
+            </div>
+          )}
+          {res.others?.length > 0 && (
+            <div className="fld-h pf-list">
+              <b>Other sectors, left out</b> — co-watched on Yahoo but in another sector: {res.others.slice(0, 40).map((c) => `${c.name} (${c.industry || c.sector || 'NA'})`).join(' · ')}{res.others.length > 40 ? ` · and ${res.others.length - 40} more` : ''}
+            </div>
+          )}
+
           <div className="row-btns pf-actions">
-            <button className="btn sm" onClick={() => tickTop(5)} disabled={!res.candidates.length}>Tick top 5</button>
+            <button className="btn sm" onClick={() => tickTop(5)} disabled={!sameInd.length} title="The five best fits in the target's industry">Tick top 5 in the industry</button>
             <button className="btn sm ghost" onClick={() => setTicked(new Set())} disabled={!ticked.size}>Clear ticks</button>
             <button className="btn sm primary" disabled={!ticked.size} onClick={() => onFetch(res.candidates.filter((c) => ticked.has(c.symbol)).map((c) => c.symbol))}>
               Fetch ticked ({ticked.size})
             </button>
           </div>
           <div className="fld-h">
-            {res.screened} listed candidates screened{res.dropped ? ` (${res.dropped} dropped: funds, indices or no Yahoo profile)` : ''}; the best {res.compared} by
-            profile compared on figures. Score = points ÷ points available, out of 100: industry {WEIGHTS.industry}, market {WEIGHTS.market},
-            size {WEIGHTS.size}, margin {WEIGHTS.margin}, growth {WEIGHTS.growth}. A signal either side lacks is NA and not scored — check
-            the coverage (x/5) beside each score. Foreign sizes use live FX for this ranking only; ticked peers are fetched and converted at the rates you confirm.
+            {res.screened} listed companies found ({Object.entries(res.sources || {}).map(([k, v]) => `${v} ${k}`).join(', ')}){res.dropped ? `; ${res.dropped} dropped (funds, indices or no Yahoo profile)` : ''}.
+            A company listed on several exchanges is shown once. Peers are grouped by Yahoo’s industry classification; inside a group
+            the fit = points ÷ points available, out of 100: size {WEIGHTS.size}, EBITDA margin {WEIGHTS.margin}, growth {WEIGHTS.growth},
+            market {WEIGHTS.market}. A signal either side lacks is NA and not scored — check the coverage (x/{N_SIGNALS}) beside each fit.
+            The {res.compared} closest by profile were compared on figures{res.notCompared ? ` (${res.notCompared} more in the industry or sector were not)` : ''}.
+            Foreign sizes use live FX for this ranking only; ticked peers are fetched and converted at the rates you confirm.
           </div>
         </>
       )}
