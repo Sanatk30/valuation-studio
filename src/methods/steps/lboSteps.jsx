@@ -5,7 +5,7 @@ import TemplatePageEditor from '../../components/TemplatePageEditor.jsx';
 import DriversGrid from '../../components/DriversGrid.jsx';
 import { YahooSearch, mergeFetch } from '../../components/PeerYahoo.jsx';
 import { FetchNote } from './templateSteps.jsx';
-import { PeriodLabelsCard } from './dcfSteps.jsx';
+import { PeriodLabelsCard, emptyHistYears, latestYearErrors } from './dcfSteps.jsx';
 import { toEngineInput } from '../../store/methodModel.js';
 import { REPAY_KINDS, repayKind, LBO_DRIVERS, TRANCHES, computeLboT } from '../../lib/engine/lboTemplate.js';
 import { clampN, dcfLabels } from '../../lib/engine/dcfTemplate.js';
@@ -100,6 +100,7 @@ export const lboCompanyStep = () => ({
   fields: () => [],
   Extra: CompanyExtra,
   extraBelow: true,
+  validate: (data, ctx) => latestYearErrors(resultOf(ctx.company, data), ctx.company, 'entry EBITDA and the projections'),
 });
 
 /* ============================ Assumptions ============================ */
@@ -119,7 +120,7 @@ function AssumptionsExtra({ data, setData, company }) {
       <div className="tool-card">
         <div className="tool-h">Operating drivers</div>
         <DriversGrid defs={LBO_DRIVERS} drivers={data.lbo.drivers} onChange={(drivers) => setData((d) => ({ ...d, lbo: { ...d.lbo, drivers } }))}
-          m={r.m} labels={r.labels} refs={r.ref} locale={locale} unitLabel={unit} />
+          m={r.m} labels={r.labels} refs={r.ref} locale={locale} unitLabel={unit} emptyHist={emptyHistYears(r)} />
       </div>
       <div className="tool-card">
         <div className="tool-h">What the drivers give <span className="fld-opt">{unit}</span></div>

@@ -22,15 +22,19 @@ import { fmtTpl } from '../lib/format.js';
 const fin = Number.isFinite;
 const round = (v, fmt) => (fmt === 'pct' ? Math.round(v * 100) / 100 : Math.round(v * 10) / 10);
 
-/** Historical average of a driver in stored units (pct ×100), or NaN. */
-export function histAverage(refRow, fmt) {
-  const v = (refRow || []).filter((x) => typeof x === 'number' && fin(x));
+/**
+ * Historical average of a driver in stored units (pct ×100), or NaN. Years with
+ * no figures (`skip[i]` true: no revenue) are left out — a blank year would
+ * otherwise count as −100 % growth or a 0 % ratio.
+ */
+export function histAverage(refRow, fmt, skip = []) {
+  const v = (refRow || []).filter((x, i) => !skip[i] && typeof x === 'number' && fin(x));
   if (!v.length) return NaN;
   const avg = v.reduce((s, x) => s + x, 0) / v.length;
   return fmt === 'pct' ? avg * 100 : avg;
 }
 
-export default function DriversGrid({ drivers, onChange, m, labels, refs, locale, unitLabel, defs = DRIVERS }) {
+export default function DriversGrid({ drivers, onChange, m, labels, refs, locale, unitLabel, defs = DRIVERS, emptyHist = [] }) {
   const row = (key) => {
     const arr = Array.isArray(drivers?.[key]) ? drivers[key] : [];
     return Array.from({ length: m }, (_, j) => (fin(arr[j]) ? arr[j] : null));
@@ -46,11 +50,11 @@ export default function DriversGrid({ drivers, onChange, m, labels, refs, locale
     if (!fin(r[0]) || !fin(r[m - 1]) || m < 3) return;
     setRow(d.key, r.map((_, j) => round(r[0] + ((r[m - 1] - r[0]) * j) / (m - 1), d.fmt)));
   };
-  const avgFill = (d) => { const a = histAverage(refs[d.key], d.fmt); if (fin(a)) setRow(d.key, row(d.key).map(() => round(a, d.fmt))); };
+  const avgFill = (d) => { const a = histAverage(refs[d.key], d.fmt, emptyHist); if (fin(a)) setRow(d.key, row(d.key).map(() => round(a, d.fmt))); };
   const fillBlanks = () => {
     const next = { ...drivers };
     for (const d of defs.filter((x) => x.key)) {
-      const a = histAverage(refs[d.key], d.fmt);
+      const a = histAverage(refs[d.key], d.fmt, emptyHist);
       if (!fin(a)) continue;
       const r = row(d.key).map((v) => (v === null ? round(a, d.fmt) : v));
       const old = Array.isArray(drivers?.[d.key]) ? drivers[d.key] : [];
@@ -67,7 +71,7 @@ export default function DriversGrid({ drivers, onChange, m, labels, refs, locale
     <div className="dg">
       <div className="row-btns" style={{ marginTop: 0, marginBottom: 8 }}>
         <button className="btn sm" onClick={fillBlanks}>Fill blanks from history</button>
-        <span className="fld-h" style={{ margin: 0 }}>Each blank forecast cell gets its row’s historical average; cells you typed stay. A blank cell counts as 0, as in the template.</span>
+        <span className="fld-h" style={{ margin: 0 }}>Each blank forecast cell gets its row’s historical average (years with no figures are left out); cells you typed stay. A blank cell counts as 0, as in the template.</span>
       </div>
       <div className="tablewrap tp-grid">
         <table className="fin compact dg-table">
@@ -93,7 +97,7 @@ export default function DriversGrid({ drivers, onChange, m, labels, refs, locale
               return (
                 <tr key={d.key}>
                   <td>{d.label}</td>
-                  {refs[d.key].map((x, i) => <td key={i} className={`dg-hist${x === 'n.a.' ? ' tp-mute' : ''}`}>{fmtTpl(x, refFmt(d), locale)}</td>)}
+                  {refs[d.key].map((x, i) => <td key={i} className={`dg-hist${x === 'n.a.' || emptyHist[i] ? ' tp-mute' : ''}`} title={emptyHist[i] ? `${labels.hist[i]} has no figures — left out of the averages` : undefined}>{fmtTpl(x, refFmt(d), locale)}</td>)}
                   {r.map((v, j) => (
                     <td key={j} className="tp-in">
                       <NumBox small value={v} onChange={(x) => setCell(d.key, j, x)} placeholder={suffix(d)} />
@@ -102,7 +106,7 @@ export default function DriversGrid({ drivers, onChange, m, labels, refs, locale
                   <td className="dg-fill">
                     <button className="btn xs" title="Copy the first forecast year across" onClick={() => fillRight(d)} disabled={!fin(r[0])}>→</button>
                     <button className="btn xs" title="Straight line from the first to the last forecast year" onClick={() => straight(d)} disabled={!(fin(r[0]) && fin(r[m - 1]) && m >= 3)}>⟋</button>
-                    <button className="btn xs" title="Historical average in every year" onClick={() => avgFill(d)} disabled={!fin(histAverage(refs[d.key], d.fmt))}>avg</button>
+                    <button className="btn xs" title="Historical average in every year" onClick={() => avgFill(d)} disabled={!fin(histAverage(refs[d.key], d.fmt, emptyHist))}>avg</button>
                   </td>
                   <td className="dg-note">{d.example}{d.note ? ` · ${d.note}` : ''}</td>
                 </tr>

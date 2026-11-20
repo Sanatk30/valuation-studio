@@ -70,7 +70,7 @@ export function NewCompanyForm({ onDone, onCancel }) {
         </div>
         <div className={`fld${tried && errs.startYear ? ' bad' : ''}`}>
           <div className="fld-l"><label>First forecast year (Year 1)</label></div>
-          <NumBox value={startYear} onChange={(v) => setStartYear(v)} placeholder="e.g. 2027" />
+          <NumBox plain value={startYear} onChange={(v) => setStartYear(v)} placeholder="e.g. 2027" />
           <div className="fld-h">The LTM / base year is the year before it.</div>
           <E k="startYear" />
         </div>
@@ -139,7 +139,7 @@ export function CompanySettings({ record, onClose }) {
           <h3>Basics</h3>
           <div className="fld-grid c3">
             <div className="fld"><div className="fld-l"><label>Name</label></div><input className="fld-in txt" value={name} onChange={(e) => setName(e.target.value)} /></div>
-            <div className="fld"><div className="fld-l"><label>First forecast year</label></div><NumBox value={startYear} onChange={setStartYear} /></div>
+            <div className="fld"><div className="fld-l"><label>First forecast year</label></div><NumBox plain value={startYear} onChange={setStartYear} /></div>
             <div className="fld"><div className="fld-l"><label>Fiscal year</label></div>
               <select className="fld-in" value={fy} onChange={(e) => setFy(Number(e.target.value))}>{FY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
             </div>

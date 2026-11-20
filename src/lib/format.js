@@ -150,3 +150,16 @@ export function parseInputNumber(s) {
   const v = Number(sign + plain);
   return Number.isFinite(v) ? (neg ? -v : v) : NaN;
 }
+
+/**
+ * How a number box shows its value when you are not typing in it: grouped in
+ * the company's style (Indian lakh / crore for INR), whole numbers from 1,000
+ * up, otherwise up to 2 decimals (4 below 1). The stored value is not rounded;
+ * the box shows it in full while you edit.
+ */
+export function fmtBox(v, locale = 'en-US') {
+  if (v === null || v === undefined || !Number.isFinite(v)) return '';
+  const a = Math.abs(v);
+  const dp = a >= 1000 ? 0 : a >= 1 ? 2 : 4;
+  return v.toLocaleString(locale, { minimumFractionDigits: 0, maximumFractionDigits: dp });
+}

@@ -268,6 +268,7 @@ export function FetchNote({ f: fx }) {
   return (
     <div className="fld-h" style={{ marginTop: 6 }}>
       Filled from <b>{fx.symbol}</b> ({fx.financialCurrency}{fx.fyDates?.length ? `, ${fx.fyDates[0]} → ${fx.fyDates[fx.fyDates.length - 1]}` : ''}).
+      {fx.conv && <> Converted from <b>{fx.conv.from}</b> to <b>{fx.conv.to}</b> at <b>{+fx.conv.rate.toFixed(4)} {fx.conv.to} per {fx.conv.from}</b>{fx.conv.source === 'live' ? ` (live rate${fx.conv.at ? `, ${new Date(fx.conv.at).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}` : ''})` : ' (typed rate)'} for every year.</>}
       Cost of Materials = cost of revenue, Employee Benefits = salaries (when reported), Other Expenses and Other Income balance to Yahoo’s EBITDA and pre-tax income,
       and the “Other” balance-sheet and cash-flow lines take the difference to Yahoo’s totals. YTD columns are left for you.
       {fx.shareBasis === 'basic' && ' Shares = basic shares outstanding at the latest balance sheet; add options / convertibles for the treasury stock method.'}
@@ -760,7 +761,7 @@ function DealListExtra({ data, setData, company }) {
                     <td>{num(k, 'unaffectedPrice')}</td>
                     <td className="calc">{prem === '' ? '' : fmtTpl(prem, 'pct', locale)}</td>
                     <td>
-                      <select className="fld-in" value={d.include === 0 ? '0' : '1'} onChange={(e) => setDeal(k, { include: Number(e.target.value) })}>
+                      <select className="fld-in" value={d.include === 0 || isBlankDeal(d) ? '0' : '1'} onChange={(e) => setDeal(k, { include: Number(e.target.value) })} title={isBlankDeal(d) ? 'An empty slot is left out of the statistics until you fill it in' : undefined}>
                         <option value="1">1</option><option value="0">0</option>
                       </select>
                     </td>

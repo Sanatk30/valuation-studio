@@ -33,6 +33,28 @@ function resultOf(company, data) {
   try { return computeDcfT(toEngineInput(company, data)); } catch { return null; }
 }
 
+/** Historical years with no revenue (blank or 0): they hold no figures. */
+export const emptyHistYears = (r) => (r ? r.F.rev.slice(0, r.n).map((v) => !(fin(v) && v !== 0)) : []);
+
+/**
+ * The latest actual year is the base the forecast grows from (DCF) or the entry
+ * year (LBO). With no revenue there, every forecast year starts from 0 and the
+ * value comes out as 0 — stop on the step and say how to fix it.
+ */
+export function latestYearErrors(r, company, what) {
+  if (!r) return [];
+  const empty = emptyHistYears(r);
+  if (!empty.length || !empty[empty.length - 1]) return [];
+  const lab = r.labels.hist;
+  const last = lab[lab.length - 1];
+  const k = empty.lastIndexOf(false);
+  if (k < 0) return [`No historical year has revenue yet — fill the historicals (or use Yahoo) before continuing.`];
+  const blank = lab.slice(k + 1);
+  const year1 = Number.isInteger(company?.startYear) ? company.startYear - (lab.length - 1 - k) : null;
+  return [`${blank.join(', ')} ${blank.length === 1 ? 'has' : 'have'} no figures, but ${last} is the latest actual year — ${what} would start from 0 and the result would be 0. `
+    + `The latest year with figures is ${lab[k]}: ${year1 ? `set Year 1 to ${year1} in Company settings (so ${lab[k]} becomes the latest actual year)` : `move Year 1 earlier in Company settings`}, or fill ${blank.join(' and ')}.`];
+}
+
 /* ============================== Settings ============================== */
 
 /** Period-label editor for the DCF / LBO templates (historical + forecast labels). */
@@ -142,6 +164,7 @@ export const dcfCompanyStep = () => ({
   ],
   Extra: CompanyExtra,
   extraBelow: true,
+  validate: (data, ctx) => latestYearErrors(resultOf(ctx.company, data), ctx.company, 'the forecast'),
 });
 
 /* ============================ Assumptions ============================ */
@@ -163,7 +186,7 @@ function AssumptionsExtra({ data, setData, company }) {
     <div className="step-tools">
       <div className="tool-card">
         <div className="tool-h">Forecast drivers</div>
-        <DriversGrid drivers={data.dcf.drivers} onChange={setDrivers} m={m} labels={r.labels} refs={r.ref} locale={locale} unitLabel={unit} defs={dcfDriverDefs(r.cf)} />
+        <DriversGrid drivers={data.dcf.drivers} onChange={setDrivers} m={m} labels={r.labels} refs={r.ref} locale={locale} unitLabel={unit} defs={dcfDriverDefs(r.cf)} emptyHist={emptyHistYears(r)} />
       </div>
       <div className="tool-card">
         <div className="tool-h">What the drivers give <span className="fld-opt">{unit}</span></div>
@@ -315,7 +338,7 @@ function TerminalReadout({ data, company }) {
   const locale = CURRENCIES[company.currency]?.locale;
   const sym = CURRENCIES[company.currency]?.symbol || '';
   if (r.tv === 'gordon' && !(v.rate > v.g)) {
-    return <div className="readout warn">The discount rate ({pct2(v.rate)}) is not above the terminal growth ({pct2(v.g)}) — the terminal value is NM, as in the template.</div>;
+    return <div className="readout warn">The discount rate ({pct2(v.rate)}) is not above the terminal growth ({pct2(v.g)}) — lower the growth below it to continue (the template shows NM here).</div>;
   }
   return (
     <div className="readout">
@@ -343,4 +366,13 @@ export const dcfTerminalStep = () => ({
     ];
   },
   Readout: TerminalReadout,
+  // the user's choice: a Gordon growth at or above the discount rate is stopped here, not carried
+  // to an NM output (the template's own NM handling stays in the engine and the workbook)
+  validate: (data, ctx) => {
+    if (S(data).tv !== 'gordon') return [];
+    const r = resultOf(ctx.company, data);
+    const v = r?.valuation;
+    if (!v || !fin(v.rate) || !fin(v.g) || v.rate > v.g) return [];
+    return [`Terminal growth (${pct2(v.g)}) must be below the ${S(data).cf === 'fcff' ? 'WACC' : 'cost of equity'} (${pct2(v.rate)}) — lower it to continue.`];
+  },
 });

@@ -21,6 +21,7 @@
  */
 import { blankPage, computePage } from './companyPage.js';
 import { clampN, dcfLabels } from './dcfTemplate.js';
+import { xlPow } from './xlPow.js';
 
 export const REPAY_KINDS = [
   { value: 'mandatory', label: 'Mandatory repayment only', file: 'LBO_Mandatory_Repayment_Only', note: 'Senior A and Senior B pay scheduled (mandatory) amortisation and any balance left at maturity (balloon). Excess cash above the minimum balance repays the revolver, then accumulates and is added to equity value at exit. Mezzanine is a bullet repaid at exit.' },
@@ -360,11 +361,12 @@ export function computeLboT(a) {
   };
 }
 
-/** IFERROR((to / from)^(1/years) − 1, 0) — Excel's power of a negative base to a fraction is #NUM!. */
+/** IFERROR((to / from)^(1/years) − 1, 0) as real Excel computes it: a negative ratio over an odd
+ *  number of years gives the signed root, over an even number #NUM! → the 0 fallback (xlPow). */
 function cagr(to, from, years) {
   if (z(from) === 0) return 0;
   const ratio = to / from;
-  const x = ratio ** (1 / years) - 1;
+  const x = xlPow(ratio, 1 / years) - 1;
   return Number.isFinite(x) ? x : 0;
 }
 /** A finite number or 'NM' (IFERROR(…, "NM")). */

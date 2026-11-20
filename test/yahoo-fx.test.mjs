@@ -8,7 +8,7 @@
  * = the latest completed fiscal year before a TTM.
  */
 import fs from 'node:fs';
-import {
+import { adrRatio,
   parseListing, mapListing, fetchListing, timeseriesWindow, searchSymbols, yahooBusy, ltmPeriod, balanceSheetDate, templateFromListing, requiredCurrencies, parseSearch, UNIT_FACTOR, ebitdaSuspect,
 } from '../src/lib/yahoo.js';
 import {
@@ -170,7 +170,10 @@ for (const [sym, company, pairs] of [
   const px = raw.price;
   const pxRate = px.currency === company.currency ? 1 : rates[px.currency].rate;
   ok(near(m.company.currentPrice, px.value * pxRate), `${sym}: price converts at the ${px.currency} rate only (no unit)`);
-  ok(near(m.company.sharesOut, bs('OrdinarySharesNumber').value / uf), `${sym}: shares scale by the unit only`);
+  // an ADR's ordinary count is restated per ADR (adrRatio: TSM 5, ordinary listings 1)
+  const adrN = adrRatio(raw).ratio;
+  ok(near(m.company.sharesOut, bs('OrdinarySharesNumber').value / uf / adrN), `${sym}: shares scale by the unit only (÷ ADR ratio ${adrN})`);
+  if (sym === 'TSM') ok(adrN === 5, 'TSM: one ADR = 5 ordinary shares');
 
   ok(m.listing.symbol === raw.symbol && m.listing.rates && m.listing.ltmLabel === L.label, `${sym}: listing metadata recorded`);
   ok(!('growthStart' in m.drivers) && !('marginStart' in m.drivers) && !('daPct' in m.drivers), `${sym}: no growth / margin / cost-ratio prefill`);

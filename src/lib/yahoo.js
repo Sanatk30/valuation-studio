@@ -400,6 +400,31 @@ export function balanceSheetDate(raw) {
 }
 const bsPoint = (raw, base, date) => pointAt(raw.quarterly, base, date) || pointAt(raw.annual, base, date);
 
+/**
+ * Depositary receipts (ADRs such as TSM, BABA, HDB): Yahoo's balance-sheet
+ * share count is in ORDINARY shares, while its diluted weighted-average count
+ * (and the price) are per ADR. The ratio of the two, rounded, is the number of
+ * ordinary shares one ADR represents (TSM 5, BABA 8, HDB 3; 1 for INFY and for
+ * ordinary listings). Only a listing priced in another currency than it reports
+ * in is tested, and only a near-whole ratio of 2 or more is taken — anything
+ * else is 1, so ordinary stocks are never restated. The user's choice (b).
+ * Returns { ratio, ordinary, diluted } (ratio 1 when not an ADR).
+ */
+export function adrRatio(raw) {
+  const px = raw?.price || {};
+  const q = px.currency, fc = raw?.financialCurrency;
+  const none = { ratio: 1, ordinary: null, diluted: null };
+  if (!q || !fc || q === fc) return none;
+  const latest = (base) => ['trailing', 'quarterly', 'annual']
+    .map((b) => lastPoint(raw[b], base)).filter((x) => x && Number.isFinite(x.value) && x.value > 0)
+    .sort((a, b) => (a.date < b.date ? 1 : -1))[0] || null;
+  const ord = latest('OrdinarySharesNumber'), dil = latest('DilutedAverageShares');
+  if (!ord || !dil) return none;
+  const r = ord.value / dil.value, n = Math.round(r);
+  return n >= 2 && Math.abs(r - n) / n < 0.08 ? { ratio: n, ordinary: ord.value, diluted: dil.value } : none;
+}
+const fmtCount = (v) => `${(v / 1e6).toLocaleString('en-US', { maximumFractionDigits: 0 })}M`;
+
 /* The core history grid lines (lib/historyModel.js) → Yahoo lines. Outflow
  * lines Yahoo reports negative (capex, dividends) are flipped so every core
  * line is the positive magnitude its label says. */
@@ -568,8 +593,12 @@ function mapCore(raw, company, rates, opts) {
   const nwc0 = nwcParts.every((v) => v !== null) ? (nwcParts[0] - nwcParts[1]) - (nwcParts[2] - nwcParts[3]) : null;
 
   /* ---- share count ---- */
+  // an ADR's balance-sheet count is in ordinary shares: restate it per ADR (see adrRatio)
+  const adr = adrRatio(raw);
+  const outVal = pOut ? (adr.ratio > 1 ? conv.shares({ ...pOut, value: pOut.value / adr.ratio }) : conv.shares(pOut)) : null;
+  if (adr.ratio > 1 && pOut) warnings.push(`${raw.symbol} looks like a depositary receipt: one ADR = ${adr.ratio} ordinary shares (Yahoo's ${fmtCount(adr.ordinary)} ordinary shares ÷ ${fmtCount(adr.diluted)} diluted ADR-equivalent shares, rounded). The balance-sheet share count is restated per ADR: ${fmtCount(pOut.value)} ÷ ${adr.ratio} = ${fmtCount(pOut.value / adr.ratio)}.`);
   const shareOptions = [
-    pOut && { id: 'outstanding', label: `Shares outstanding (balance sheet, ${bsDate})`, value: conv.shares(pOut), reported: pOut.value },
+    pOut && { id: 'outstanding', label: `Shares outstanding (balance sheet, ${bsDate})${adr.ratio > 1 ? ` ÷ ${adr.ratio} per ADR` : ''}`, value: outVal, reported: pOut.value },
     pDil && { id: 'diluted', label: `Diluted weighted-average shares (${ltm.label.replace(' used as LTM', '')})`, value: conv.shares(pDil), reported: pDil.value },
   ].filter(Boolean);
   let shareBasis = opts.shareBasis && shareOptions.some((o) => o.id === opts.shareBasis) ? opts.shareBasis : null;
@@ -832,6 +861,9 @@ export function templateFromListing(raw, company, rates = {}, { n = 3, before = 
   const bsD = balanceSheetDate(raw);
   const basic = (bsD && bsPoint(raw, 'OrdinarySharesNumber', bsD))
     || [lastPoint(raw.quarterly, 'OrdinarySharesNumber'), lastPoint(raw.annual, 'OrdinarySharesNumber')].filter(Boolean).sort((p, q) => (p.date < q.date ? 1 : -1))[0] || null;
+  // an ADR's ordinary share count is restated per ADR (see adrRatio); the diluted count already is
+  const adr = adrRatio(raw);
+  if (adr.ratio > 1 && basic) warnings.push(`${raw.symbol} looks like a depositary receipt: one ADR = ${adr.ratio} ordinary shares, so basic shares are restated per ADR (${fmtCount(basic.value)} ÷ ${adr.ratio} = ${fmtCount(basic.value / adr.ratio)}).`);
   const sector = [raw.sector, raw.industry].filter(Boolean).join(' / ');
   return {
     name: raw.name,
@@ -839,7 +871,7 @@ export function templateFromListing(raw, company, rates = {}, { n = 3, before = 
     sector,
     price: conv.perShareIn(px.value, px.currency),
     shares: conv.shares(latestShares),
-    basicShares: conv.shares(basic),
+    basicShares: basic ? conv.shares(adr.ratio > 1 ? { ...basic, value: basic.value / adr.ratio } : basic) : null,
     lastFyEnd: dates.length ? dates[dates.length - 1] : null,
     page,
     fyDates: dates,

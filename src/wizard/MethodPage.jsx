@@ -6,7 +6,8 @@ import { methodFigures } from '../methods/figures.js';
 import { CombinedOutput, combinedResult } from '../methods/combined.jsx';
 import { toEngineInput } from '../store/methodModel.js';
 import { updateMethod, resetMethod, setPath } from '../store/store.js';
-import { FieldGrid } from './Field.jsx';
+import { FieldGrid, NumLocaleContext } from './Field.jsx';
+import { CURRENCIES } from '../lib/format.js';
 import FillAllDialog from './FillAllDialog.jsx';
 
 /** Shared context the steps and Combined need about the whole company. */
@@ -84,10 +85,12 @@ export default function MethodPage({ record, methodId, onHome }) {
   const skip = () => { setSkip(step.id, true); go(fromOutput ? methodProgress(def, { ...mstate, skipped: { ...mstate.skipped, [step.id]: true } }, ctx).reachable : view + 1); };
 
   const preview = previewRows(def, company, mstate.data, prog.states);
+  const numLocale = CURRENCIES[company.currency]?.locale || 'en-US';
   const Extra = step.Extra;
   const Readout = step.Readout;
 
   return (
+    <NumLocaleContext.Provider value={numLocale}>
     <div className="method">
       <div className="method-head">
         <button className="crumb" onClick={onHome}>← All methods</button>
@@ -157,6 +160,7 @@ export default function MethodPage({ record, methodId, onHome }) {
         />
       )}
     </div>
+    </NumLocaleContext.Provider>
   );
 }
 

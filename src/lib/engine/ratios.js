@@ -3,6 +3,7 @@ import { computeThreeStatement } from './threeStatement.js';
 import { nolSchedule, openingNol } from './tax.js';
 import { periodLabels } from '../period.js';
 import { hasHistory, historyLine, fyLabel } from '../historyModel.js';
+import { xlPow } from './xlPow.js';
 
 /**
  * Ratio analysis — Future (the annual forecast, off the linked 3-statement
@@ -153,7 +154,7 @@ export function computeRatios(pm) {
     ]),
     sec('Growth', [
       // compound annual growth from the LTM (Year-0) revenue — replaces a duplicate of the YoY row
-      row('Revenue CAGR since Year 0', 'pct', idx.map((i) => (m === 1 && pm.rev0 !== undefined ? (Math.pow(g(pm.rev[i], pm.rev0), 1 / (i + 1)) - 1) * 100 : NaN))),
+      row('Revenue CAGR since Year 0', 'pct', idx.map((i) => (m === 1 && pm.rev0 !== undefined ? (xlPow(g(pm.rev[i], pm.rev0), 1 / (i + 1)) - 1) * 100 : NaN))),
       row('Revenue growth (YoY)', 'pct', yoy(pm.rev, pm.rev0)),
       row('EBITDA growth (YoY)', 'pct', yoy(pm.ebitda, pm.ebitda0)),
       row('Net income growth (YoY)', 'pct', yoy(pm.ni)),
