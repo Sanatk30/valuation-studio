@@ -30,6 +30,7 @@ export function sampleLboData(over = {}) {
     payDays: [75, 75, 75, 74, 74],
     oca: [3.2, 3.2, 3.2, 3.2, 3.2],
     ocl: [7.7, 7.7, 7.7, 7.7, 7.7],
+    leasePay: [0.6, 0.6, 0.6, 0.6, 0.6],
   };
   d.deal = { entryMultiple: 10, cashUsed: 250, txnFeePct: 2, exitMultiple: 10 };
   d.debt = {
@@ -37,6 +38,6 @@ export function sampleLboData(over = {}) {
     senB: { x: 1.5, rate: 10, amort: 1, tenor: 7, feePct: 2 },
     mezz: { x: 1, rate: 12, pik: 3, tenor: 8, feePct: 2.5 },
   };
-  d.cash = { sweepPct: 100, minCash: 150 };
+  d.cash = { sweepPct: 100, minCash: 150, rcf: 300, rcfRate: 9, rcfFee: 0.5 };
   return d;
 }

@@ -23,13 +23,13 @@ import { blankPage, computePage } from './companyPage.js';
 import { clampN, dcfLabels } from './dcfTemplate.js';
 
 export const REPAY_KINDS = [
-  { value: 'mandatory', label: 'Mandatory repayment only', file: 'LBO_Mandatory_Repayment_Only', note: 'Senior A and Senior B pay only scheduled (mandatory) amortisation. Any excess cash accumulates on the balance sheet and is added to equity value at exit. Mezzanine is a bullet repaid at exit.' },
-  { value: 'both', label: 'Mandatory repayment + cash sweep', file: 'LBO_Mandatory_Plus_CashSweep', note: 'Senior A and Senior B pay scheduled (mandatory) amortisation. Excess cash above the minimum balance is then swept – Senior A first, then Senior B. Mezzanine is a bullet repaid at exit.' },
-  { value: 'sweep', label: 'Cash sweep only', file: 'LBO_CashSweep_Only', note: 'No scheduled amortisation. Excess cash above the minimum balance is swept to prepay Senior A first, then Senior B. Mezzanine is a bullet repaid at exit.' },
+  { value: 'mandatory', label: 'Mandatory repayment only', file: 'LBO_Mandatory_Repayment_Only', note: 'Senior A and Senior B pay scheduled (mandatory) amortisation and any balance left at maturity (balloon). Excess cash above the minimum balance repays the revolver, then accumulates and is added to equity value at exit. Mezzanine is a bullet repaid at exit.' },
+  { value: 'both', label: 'Mandatory repayment + cash sweep', file: 'LBO_Mandatory_Plus_CashSweep', note: 'Senior A and Senior B pay scheduled (mandatory) amortisation and any balance left at maturity (balloon). Excess cash above the minimum balance first repays the revolver, then is swept – Senior A first, then Senior B. Mezzanine is a bullet repaid at exit.' },
+  { value: 'sweep', label: 'Cash sweep only', file: 'LBO_CashSweep_Only', note: "No scheduled amortisation: excess cash above the minimum balance first repays the revolver, then is swept – Senior A first, then Senior B. Any balance still outstanding at a tranche's maturity is repaid in full (balloon). Mezzanine is a bullet repaid at exit." },
 ];
 export const repayKind = (v) => REPAY_KINDS.find((k) => k.value === v) || REPAY_KINDS[1];
 
-/** Operating drivers (the Assumptions sheet, rows 6–20). */
+/** Operating drivers (the Assumptions sheet, rows 6–23). */
 export const LBO_DRIVERS = [
   { section: 'P&L DRIVERS', row: 6 },
   { key: 'gRev', row: 7, label: 'Revenue growth', fmt: 'pct', example: '12.0%', note: 'YoY growth' },
@@ -45,6 +45,8 @@ export const LBO_DRIVERS = [
   { key: 'payDays', row: 18, label: 'Payable days (on cost of materials)', fmt: 'days', example: '75' },
   { key: 'oca', row: 19, label: 'Other current assets (% of revenue)', fmt: 'pct', example: '3.2%' },
   { key: 'ocl', row: 20, label: 'Other current liabilities (% of revenue)', fmt: 'pct', example: '7.7%' },
+  { section: 'LEASES (Ind AS 116)', row: 22 },
+  { key: 'leasePay', row: 23, label: 'Lease cash payments (% of revenue)', fmt: 'pct', example: '0.6%', note: 'Principal + interest. Deducted from free cash flow; lease liability held constant (new leases replace expiring ones)' },
 ];
 export const LBO_DRIVER_KEYS = LBO_DRIVERS.filter((d) => d.key).map((d) => d.key);
 
@@ -73,7 +75,7 @@ export const blankLboT = () => ({
     senB: { x: null, rate: null, amort: null, tenor: null, feePct: null },
     mezz: { x: null, rate: null, pik: null, tenor: null, feePct: null },
   },
-  cash: { sweepPct: null, minCash: null },
+  cash: { sweepPct: null, minCash: null, rcf: null, rcfRate: null, rcfFee: null },   // revolver: commitment, rate on drawn, fee on undrawn
 });
 
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
@@ -117,50 +119,65 @@ function runModel(ctx, shift) {
   const Y = Array.from({ length: m }, (_, j) => j);
   const at = (j) => n + j;
   const S = {
-    intA: [], intB: [], intMezz: [], pik: [], feeAmort: [], pbt: [], tax: [], ni: [],
-    fcf: [], cashOpen: [], mand: [], minCash: [], avail: [], sweep: [], cashClose: [],
+    intA: [], intB: [], intMezz: [], intRcf: [], pik: [], feeAmort: [], pbt: [], tax: [], ni: [], leasePay: [],
+    fcf: [], cashOpen: [], mand: [], cashAfter: [], rcfDraw: [], rcfRepay: [], minCash: [], avail: [], sweep: [], cashClose: [],
+    rOpen: [], rClose: [], rUndrawn: [],
     aOpen: [], aMand: [], aSweep: [], aClose: [], bOpen: [], bMand: [], bSweep: [], bClose: [],
     mOpen: [], mPik: [], mClose: [],
   };
-  let cash = entry.cashAfter, a = tr.senA.amount, b = tr.senB.amount, mz = tr.mezz.amount;
+  const { rcf } = ctx;
+  /**
+   * Mandatory repayment of a senior tranche in year t: nothing after its
+   * maturity; the whole opening balance (balloon) in a maturity year inside
+   * the hold; otherwise the scheduled amortisation (none when sweep-only).
+   */
+  const mandOf = (x, open, t) => {
+    if (x.tenorSet && repay !== 'sweep' && t > x.tenor) return 0;
+    if (x.tenorSet && x.tenor < m && t === x.tenor) return open;
+    return repay === 'sweep' ? 0 : Math.min(open, x.amount * x.amort);
+  };
+  let cash = entry.cashAfter, a = tr.senA.amount, b = tr.senB.amount, mz = tr.mezz.amount, rv = 0;
   for (const j of Y) {
     const t = j + 1;
-    S.aOpen[j] = a; S.bOpen[j] = b; S.mOpen[j] = mz; S.cashOpen[j] = cash;
+    S.aOpen[j] = a; S.bOpen[j] = b; S.mOpen[j] = mz; S.cashOpen[j] = cash; S.rOpen[j] = rv;
+    S.rUndrawn[j] = Math.max(0, rcf.commit - rv);
     S.intA[j] = a * tr.senA.rate;
     S.intB[j] = b * tr.senB.rate;
     S.intMezz[j] = mz * tr.mezz.rate;
+    S.intRcf[j] = rv * rcf.rate + S.rUndrawn[j] * rcf.fee;        // drawn × rate + undrawn × commitment fee
     S.pik[j] = mz * tr.mezz.pik;
     // IFERROR(IF(t <= tenor, fee / tenor, 0), 0) per tranche
     S.feeAmort[j] = TRANCHES.reduce((s, k) => s + (t <= tr[k.key].tenor ? q(tr[k.key].fee, tr[k.key].tenor, 0) : 0), 0);
-    S.pbt[j] = F.ebit[at(j)] - S.intA[j] - S.intB[j] - S.intMezz[j] - S.pik[j] - S.feeAmort[j];
+    S.pbt[j] = F.ebit[at(j)] - S.intA[j] - S.intB[j] - S.intMezz[j] - S.intRcf[j] - S.pik[j] - S.feeAmort[j];
     S.tax[j] = Math.max(0, S.pbt[j]) * D.tax[j];
     S.ni[j] = S.pbt[j] - S.tax[j];
-    S.fcf[j] = S.ni[j] + F.da[at(j)] + S.pik[j] + S.feeAmort[j] - F.capex[at(j)] - F.dNwc[at(j)];
-    S.aMand[j] = repay === 'sweep' ? 0 : Math.min(a, tr.senA.amount * tr.senA.amort);
-    S.bMand[j] = repay === 'sweep' ? 0 : Math.min(b, tr.senB.amount * tr.senB.amort);
+    S.leasePay[j] = F.rev[at(j)] * D.leasePay[j];
+    S.fcf[j] = S.ni[j] + F.da[at(j)] + S.pik[j] + S.feeAmort[j] - F.capex[at(j)] - F.dNwc[at(j)] - S.leasePay[j];
+    S.aMand[j] = mandOf(tr.senA, a, t);
+    S.bMand[j] = mandOf(tr.senB, b, t);
     S.mand[j] = S.aMand[j] + S.bMand[j];
-    if (repay === 'mandatory') {
-      S.aSweep[j] = 0; S.bSweep[j] = 0; S.sweep[j] = 0;
-      S.cashClose[j] = cash + S.fcf[j] - S.mand[j];
-    } else {
-      S.minCash[j] = minCash;
-      S.avail[j] = Math.max(0, cash + S.fcf[j] - S.mand[j] - minCash) * sweepPct;
-      S.aSweep[j] = Math.min(S.avail[j], a - S.aMand[j]);
-      S.bSweep[j] = Math.min(S.avail[j] - S.aSweep[j], b - S.bMand[j]);
-      S.sweep[j] = S.aSweep[j] + S.bSweep[j];
-      S.cashClose[j] = cash + S.fcf[j] - S.mand[j] - S.sweep[j];
-    }
+    S.cashAfter[j] = cash + S.fcf[j] - S.mand[j];
+    // the revolver draws to keep cash at the minimum and is repaid first from cash above it
+    S.rcfDraw[j] = Math.min(Math.max(0, rcf.commit - rv), Math.max(0, minCash - S.cashAfter[j]));
+    S.rcfRepay[j] = Math.min(rv, Math.max(0, S.cashAfter[j] - minCash));
+    S.minCash[j] = minCash;
+    S.avail[j] = repay === 'mandatory' ? 0 : Math.max(0, S.cashAfter[j] + S.rcfDraw[j] - S.rcfRepay[j] - minCash) * sweepPct;
+    S.aSweep[j] = repay === 'mandatory' ? 0 : Math.min(S.avail[j], a - S.aMand[j]);
+    S.bSweep[j] = repay === 'mandatory' ? 0 : Math.min(S.avail[j] - S.aSweep[j], b - S.bMand[j]);
+    S.sweep[j] = S.aSweep[j] + S.bSweep[j];
+    S.cashClose[j] = S.cashAfter[j] + S.rcfDraw[j] - S.rcfRepay[j] - S.sweep[j];
+    S.rClose[j] = rv + S.rcfDraw[j] - S.rcfRepay[j];
     S.aClose[j] = a - S.aMand[j] - S.aSweep[j];
     S.bClose[j] = b - S.bMand[j] - S.bSweep[j];
     S.mPik[j] = S.pik[j];
     S.mClose[j] = mz + S.pik[j];
-    cash = S.cashClose[j]; a = S.aClose[j]; b = S.bClose[j]; mz = S.mClose[j];
+    cash = S.cashClose[j]; a = S.aClose[j]; b = S.bClose[j]; mz = S.mClose[j]; rv = S.rClose[j];
   }
   /* credit statistics: index 0 = entry (Year 0), then the hold years */
   const E0 = F.ebitda[n - 1];
   const debt0 = tr.senA.amount + tr.senB.amount + tr.mezz.amount;
   const C = {
-    totalDebt: [debt0, ...Y.map((j) => S.aClose[j] + S.bClose[j] + S.mClose[j])],
+    totalDebt: [debt0, ...Y.map((j) => S.aClose[j] + S.bClose[j] + S.mClose[j] + S.rClose[j])],   // incl. the revolver
     leases: [entry.leases, ...Y.map(() => entry.leases)],
   };
   const cashCol = [entry.cashAfter, ...S.cashClose];
@@ -168,9 +185,10 @@ function runModel(ctx, shift) {
   const ebitdaCol = [E0, ...Y.map((j) => F.ebitda[at(j)])];
   C.debtEbitda = C.totalDebt.map((d, k) => q(d, ebitdaCol[k], 0));
   C.ndEbitda = C.netDebt.map((d, k) => q(d, ebitdaCol[k], 0));
-  C.intCover = Y.map((j) => q(F.ebitda[at(j)], S.intA[j] + S.intB[j] + S.intMezz[j], 0));
+  C.intCover = Y.map((j) => q(F.ebitda[at(j)], S.intA[j] + S.intB[j] + S.intMezz[j] + S.intRcf[j], 0));
   C.seniorRepaid = Y.map((j) => (tr.senA.amount + tr.senB.amount === 0 ? 0 : 1 - (S.aClose[j] + S.bClose[j]) / (tr.senA.amount + tr.senB.amount)));
   C.shortfall = Y.map((j) => (S.cashClose[j] < -0.001 ? 'SHORTFALL' : 'OK'));
+  C.headroom = Y.map((j) => (S.rClose[j] > rcf.commit + 0.001 ? 'OVER LIMIT' : rcf.commit > 0 && S.rClose[j] >= 0.999 * rcf.commit ? 'FULLY DRAWN' : 'OK'));
   return { F, S, C };
 }
 
@@ -202,6 +220,7 @@ export function computeLboT(a) {
     payDays: r1((i) => qq(h('payables', i), h('materials', i)) * 365),
     oca: r1((i) => qq(h('otherCa', i), h('rev', i))),
     ocl: r1((i) => qq(h('otherCl', i), h('rev', i))),
+    leasePay: r1((i) => qq(-z(h('leasePay', i)), h('rev', i))),
   };
   ref.gRev[0] = 'n.a.';
 
@@ -240,7 +259,7 @@ export function computeLboT(a) {
     const amount = z(x.x) * ebitda0;
     tr[t.key] = {
       x: z(x.x), amount, rate: pc(x.rate), pik: t.key === 'mezz' ? pc(x.pik) : 0,
-      amort: t.key === 'mezz' ? 0 : pc(x.amort), tenor: z(x.tenor), feePct: pc(x.feePct), fee: amount * pc(x.feePct),
+      amort: t.key === 'mezz' ? 0 : pc(x.amort), tenor: z(x.tenor), tenorSet: isNum(x.tenor), feePct: pc(x.feePct), fee: amount * pc(x.feePct),
     };
   }
   const totalDebt = { x: tr.senA.x + tr.senB.x + tr.mezz.x, amount: tr.senA.amount + tr.senB.amount + tr.mezz.amount, fee: tr.senA.fee + tr.senB.fee + tr.mezz.fee };
@@ -269,7 +288,8 @@ export function computeLboT(a) {
 
   /* the model */
   const cashM = d.cash || {};
-  const ctx = { n, m, H, D, entry, tr, repay, sweepPct: pc(cashM.sweepPct), minCash: z(cashM.minCash) };
+  const rcf = { commit: z(cashM.rcf), rate: pc(cashM.rcfRate), fee: pc(cashM.rcfFee) };
+  const ctx = { n, m, H, D, entry, tr, repay, sweepPct: pc(cashM.sweepPct), minCash: z(cashM.minCash), rcf };
   const base = runModel(ctx, 0);
   const { F, S, C } = base;
 
@@ -280,9 +300,9 @@ export function computeLboT(a) {
   const exitEv = exitEbitda * exitMult;
   const w = {
     ebitda: exitEbitda, multiple: exitMult, ev: exitEv,
-    senA: S.aClose[m - 1], senB: S.bClose[m - 1], mezz: S.mClose[m - 1], leases, nci, cash: S.cashClose[m - 1],
+    senA: S.aClose[m - 1], senB: S.bClose[m - 1], mezz: S.mClose[m - 1], rcf: S.rClose[m - 1], leases, nci, cash: S.cashClose[m - 1],
   };
-  w.equity = exitEv - w.senA - w.senB - w.mezz - w.leases - w.nci + w.cash;
+  w.equity = exitEv - w.senA - w.senB - w.mezz - w.rcf - w.leases - w.nci + w.cash;
   const flows = [-sponsor, ...Array.from({ length: m - 1 }, () => 0), w.equity];
   const moic = sponsor > 0 ? w.equity / sponsor : 'NM';
   const irr = sponsor > 0 && w.equity > 0 ? (w.equity / sponsor) ** (1 / m) - 1 : 'NM';
@@ -327,7 +347,8 @@ export function computeLboT(a) {
 
   return {
     settings: s, repay, n, m, labels, toggle, hist: H, ref, drivers: D,
-    entry, tranches: tr, totalDebt, su, F, S, C,
+    entry, tranches: tr, totalDebt, su, F, S, C, rcf,
+    mezzWarn: tr.mezz.tenorSet && tr.mezz.tenor < m && tr.mezz.amount > 0 ? `⚠ Mezzanine tenor is shorter than the ${m}-year hold – it is repaid at exit in this model` : '',
     exit: w, flows, moic, irr, bridge, summary,
     sens: {
       exitRows, entryRows, cases: cases.map(({ shift, ebitdaCagr, exitEbitda: ee, exitNetDebt }) => ({ shift, ebitdaCagr, exitEbitda: ee, exitNetDebt })),

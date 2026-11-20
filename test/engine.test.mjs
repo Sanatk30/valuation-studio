@@ -177,7 +177,9 @@ ok(close(ts.closeDebt[0], 1200 * 0.9), '3s: 10% mandatory repayment');
     ok(close(feeTotal, l.tranches.senA.fee + l.tranches.senB.fee * 5 / 7 + l.tranches.mezz.fee * 5 / 8), `${tag}: financing fees amortise over each tranche's tenor`);
     if (repay === 'sweep') ok(l.S.aMand.every((x) => x === 0) && l.S.bMand.every((x) => x === 0), `${tag}: no scheduled amortisation`);
     else ok(close(l.S.aMand[0], l.tranches.senA.amount * 0.1) && close(l.S.bMand[0], l.tranches.senB.amount * 0.01), `${tag}: scheduled amortisation = % of original`);
-    if (repay === 'mandatory') ok(l.S.sweep.every((x) => x === 0) && l.S.cashClose.every((x, j) => close(x, l.S.cashOpen[j] + l.S.fcf[j] - l.S.mand[j])), `${tag}: no sweep — excess cash stays on the balance sheet`);
+    ok(l.S.fcf.every((x, j) => close(x, l.S.ni[j] + l.F.da[l.n + j] + l.S.pik[j] + l.S.feeAmort[j] - l.F.capex[l.n + j] - l.F.dNwc[l.n + j] - l.F.rev[l.n + j] * 0.006)), `${tag}: free cash flow deducts lease payments (0.6% of revenue)`);
+    ok(l.S.cashClose.every((x, j) => close(x, l.S.cashOpen[j] + l.S.fcf[j] - l.S.mand[j] + l.S.rcfDraw[j] - l.S.rcfRepay[j] - l.S.sweep[j])), `${tag}: closing cash = opening + FCF − mandatory + revolver draw − revolver repayment − sweep`);
+    if (repay === 'mandatory') ok(l.S.sweep.every((x) => x === 0) && l.S.avail.every((x) => x === 0), `${tag}: no sweep — excess cash stays on the balance sheet`);
     else {
       ok(l.S.cashClose.every((x, j) => l.S.avail[j] === 0 || l.S.aClose[j] + l.S.bClose[j] < 1e-9 || close(x, 150, 1e-6)), `${tag}: the sweep leaves exactly the minimum cash while senior debt is outstanding`);
       ok(l.S.aSweep.every((x, j) => l.S.bSweep[j] === 0 || l.S.aClose[j] < 1e-9), `${tag}: Senior A is swept before Senior B`);
@@ -188,8 +190,24 @@ ok(close(ts.closeDebt[0], 1200 * 0.9), '3s: 10% mandatory repayment');
   ok(lboBoth.C.netDebt[lboBoth.m] < lboBoth.C.netDebt[0], 'lbo: net debt falls over the hold');
   ok(lboBoth.C.intCover[4] > lboBoth.C.intCover[0], 'lbo: interest cover improves');
   ok(close(lboBoth.C.netDebt[0], lboMand.C.netDebt[0]), 'lbo: the repayment type does not change entry net debt');
-  const short = L({ repay: 'mandatory' }, (d) => { d.debt.senA.amort = 60; d.deal.cashUsed = 600; });
-  ok(short.C.shortfall.includes('SHORTFALL'), 'lbo: a cash shortfall is flagged');
+  const short = L({ repay: 'mandatory' }, (d) => { d.debt.senA.amort = 60; d.deal.cashUsed = 600; d.cash.rcf = 0; });
+  ok(short.C.shortfall.includes('SHORTFALL'), 'lbo: with no revolver, a cash shortfall is flagged');
+  // the revolver: draws to keep cash at the minimum, repaid first from excess cash, interest + commitment fee
+  const rv = L({ repay: 'mandatory' }, (d) => { d.debt.senA.amort = 40; d.deal.cashUsed = 600; d.cash.rcf = 5000; });
+  const drew = rv.S.rcfDraw.findIndex((x) => x > 0);
+  ok(drew >= 0 && close(rv.S.cashClose[drew], 150, 1e-9) && !rv.C.shortfall.includes('SHORTFALL'), 'lbo: the revolver draws exactly enough to hold the minimum cash');
+  ok(rv.S.intRcf.every((x, j) => close(x, rv.S.rOpen[j] * 0.09 + Math.max(0, 5000 - rv.S.rOpen[j]) * 0.005)), 'lbo: revolver cost = 9% on the opening drawn balance + 0.5% on the undrawn');
+  ok(rv.S.rcfRepay.every((x, j) => close(x, Math.min(rv.S.rOpen[j], Math.max(0, rv.S.cashAfter[j] - 150)))), 'lbo: the revolver is repaid first from cash above the minimum');
+  ok(rv.C.totalDebt.every((x, k) => k === 0 || close(x, rv.S.aClose[k - 1] + rv.S.bClose[k - 1] + rv.S.mClose[k - 1] + rv.S.rClose[k - 1])) && close(rv.exit.equity, rv.exit.ev - rv.exit.senA - rv.exit.senB - rv.exit.mezz - rv.exit.rcf - rv.exit.leases - rv.exit.nci + rv.exit.cash), 'lbo: the revolver counts in total debt and the exit waterfall');
+  const tight = L({ repay: 'mandatory' }, (d) => { d.debt.senA.amort = 60; d.deal.cashUsed = 600; d.cash.rcf = 50; });
+  ok(tight.C.headroom.includes('FULLY DRAWN') && tight.C.shortfall.includes('SHORTFALL'), 'lbo: a revolver too small is FULLY DRAWN and the shortfall still flags');
+  // balloon: a tranche maturing inside the hold is repaid in full in its maturity year
+  for (const repay of ['mandatory', 'both', 'sweep']) {
+    const bl = L({ repay }, (d) => { d.debt.senA.tenor = 3; d.cash.rcf = 5000; });
+    ok(close(bl.S.aMand[2], bl.S.aOpen[2]) && bl.S.aClose[2] < 1e-9 && bl.S.aMand[3] === 0 && bl.S.aClose[4] < 1e-9, `lbo ${repay}: Senior A maturing in Year 3 is repaid in full (balloon)`);
+  }
+  const mw = L({}, (d) => { d.debt.mezz.tenor = 3; });
+  ok(/shorter than the 5-year hold/.test(mw.mezzWarn) && L().mezzWarn === '', 'lbo: mezzanine tenor shorter than the hold is flagged');
   const over = L({}, (d) => { d.debt.senA.x = 9; d.debt.senB.x = 4; });
   ok(over.su.sponsor < 0 && over.su.equityFlag === 'CHECK' && over.irr === 'NM' && over.moic === 'NM', 'lbo: negative sponsor equity → CHECK and NM returns');
   const loss = L({}, (d) => { d.drivers.materials = [80, 80, 80, 80, 80]; });

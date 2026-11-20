@@ -16,20 +16,21 @@ import { recalc } from './recalc.mjs';
 import { same } from './templateChecks.mjs';
 
 /** LBO Model rows, laid out independently of the writer (template rows). */
-export function lboRows(repay) {
-  const sweep = repay !== 'mandatory';
+export function lboRows() {
+  // the revised templates: one layout for every repayment structure (revolver rows, lease payments, balloon at maturity)
   const R = {
-    F: { rev: 7, growth: 8, materials: 9, employee: 10, otherExp: 11, ebitda: 12, margin: 13, da: 14, ebit: 15, inv: 25, rec: 26, oca: 27, pay: 28, ocl: 29, nwc: 30, dNwc: 31, capex: 32 },
-    S: { intA: 16, intB: 17, intMezz: 18, pik: 19, feeAmort: 20, pbt: 21, tax: 22, ni: 23, fcf: 40 },
+    F: { rev: 7, growth: 8, materials: 9, employee: 10, otherExp: 11, ebitda: 12, margin: 13, da: 14, ebit: 15, inv: 26, rec: 27, oca: 28, pay: 29, ocl: 30, nwc: 31, dNwc: 32, capex: 33 },
+    S: {
+      intA: 16, intB: 17, intMezz: 18, intRcf: 19, pik: 20, feeAmort: 21, pbt: 22, tax: 23, ni: 24, leasePay: 41, fcf: 42,
+      cashOpen: 45, mand: 47, cashAfter: 48, rcfDraw: 49, rcfRepay: 50, minCash: 51, avail: 52, sweep: 53, cashClose: 54,
+      rOpen: 56, rClose: 59, rUndrawn: 60,
+      aOpen: 62, aMand: 63, aSweep: 64, aClose: 65, bOpen: 67, bMand: 68, bSweep: 69, bClose: 70, mOpen: 72, mPik: 73, mClose: 74,
+    },
   };
-  const s = sweep
-    ? { cashOpen: 43, mand: 45, minCash: 46, avail: 47, sweep: 48, cashClose: 49, aOpen: 51, aMand: 52, aSweep: 53, aClose: 54, bOpen: 56, bMand: 57, bSweep: 58, bClose: 59, mOpen: 61, mPik: 62, mClose: 63 }
-    : { cashOpen: 43, mand: 45, cashClose: 46, aOpen: 48, aMand: 49, aClose: 50, bOpen: 52, bMand: 53, bClose: 54, mOpen: 56, mPik: 57, mClose: 58 };
-  Object.assign(R.S, s);
-  const c0 = sweep ? 65 : 60;
-  R.C = { totalDebt: c0, leases: c0 + 1, netDebt: c0 + 2, debtEbitda: c0 + 3, ndEbitda: c0 + 4 };
-  R.H = { intCover: c0 + 5, seniorRepaid: c0 + 6, shortfall: c0 + 7 };
-  R.last = c0 + 7;
+  R.C = { totalDebt: 76, leases: 77, netDebt: 78, debtEbitda: 79, ndEbitda: 80 };
+  R.H = { intCover: 81, seniorRepaid: 82, shortfall: 83, headroom: 84 };
+  R.last = 84;
+  R.stride = 84;                                   // Sensitivity Engine: one block every 84 rows, as the revised template
   return R;
 }
 
@@ -48,7 +49,7 @@ export function checkLboWorkbook(a, opts = {}) {
   const errs = X.errors();
   ok(errs.length === 0, `no error cells (${errs.slice(0, 3).map((e) => `${e.sheet}!${e.addr} ${e.err} ${e.formula}`).join(' | ')})`);
   const { n, m, repay } = r;
-  const R = lboRows(repay);
+  const R = lboRows();
   const col = (k) => colL(2 + k);                 // 0…n−1 actual, n…n+m−1 hold
   const E0 = col(n - 1), XL = col(n + m - 1);
   const dl = n + m - 8;
@@ -74,6 +75,7 @@ export function checkLboWorkbook(a, opts = {}) {
   cmp(r.totalDebt.x, 'Inputs', `B${IN(38)}`, 'total x');
   cmp(r.totalDebt.amount, 'Inputs', `C${IN(38)}`, 'total debt');
   cmp(r.totalDebt.fee, 'Inputs', `I${IN(38)}`, 'total fees');
+  cmp(r.mezzWarn, 'Inputs', `F${IN(39)}`, 'mezzanine tenor warning');
 
   /* Sources & Uses */
   const su = r.su;
@@ -113,23 +115,23 @@ export function checkLboWorkbook(a, opts = {}) {
   };
   model('LBO Model', r, 0, false);
   r.sens.runs.forEach((run, i) => {
-    const base = 4 + i * (R.last + 1);
+    const base = 4 + i * R.stride;
     cmp(r.sens.cases[i].shift, 'Sensitivity Engine', `B${base}`, `case ${i + 1} shift`);
-    model('Sensitivity Engine', run, 1 + i * (R.last + 1), true);
+    model('Sensitivity Engine', run, 1 + i * R.stride, true);
   });
 
   /* Returns */
   const w = r.exit;
-  [w.ebitda, w.multiple, w.ev, w.senA, w.senB, w.mezz, w.leases, w.nci, w.cash, w.equity].forEach((v, i) => cmp(v, 'Returns', `B${5 + i}`, `waterfall ${i}`));
-  r.flows.forEach((v, j) => cmp(v, 'Returns', `${colL(2 + j)}19`, `flow ${j}`));
-  cmp(r.moic, 'Returns', 'B23', 'MOIC');
-  cmp(r.irr, 'Returns', 'B24', 'IRR (Excel IRR vs closed form)');
-  cmp(r.bridge.entry, 'Returns', 'B28', 'bridge entry');
-  r.bridge.parts.forEach((v, i) => { cmp(v, 'Returns', `B${29 + i}`, `bridge ${i}`); cmp(r.bridge.pct[i], 'Returns', `C${29 + i}`, `bridge % ${i}`); });
-  cmp(r.bridge.exit, 'Returns', 'B33', 'bridge exit');
-  cmp(r.bridge.check, 'Returns', 'B35', 'bridge check');
+  [w.ebitda, w.multiple, w.ev, w.senA, w.senB, w.mezz, w.rcf, w.leases, w.nci, w.cash, w.equity].forEach((v, i) => cmp(v, 'Returns', `B${5 + i}`, `waterfall ${i}`));
+  r.flows.forEach((v, j) => cmp(v, 'Returns', `${colL(2 + j)}20`, `flow ${j}`));
+  cmp(r.moic, 'Returns', 'B24', 'MOIC');
+  cmp(r.irr, 'Returns', 'B25', 'IRR (Excel IRR vs closed form)');
+  cmp(r.bridge.entry, 'Returns', 'B29', 'bridge entry');
+  r.bridge.parts.forEach((v, i) => { cmp(v, 'Returns', `B${30 + i}`, `bridge ${i}`); cmp(r.bridge.pct[i], 'Returns', `C${30 + i}`, `bridge % ${i}`); });
+  cmp(r.bridge.exit, 'Returns', 'B34', 'bridge exit');
+  cmp(r.bridge.check, 'Returns', 'B36', 'bridge check');
   const sm = r.summary;
-  [sm.entryEv, sm.exitEv, sm.ebitdaCagr, sm.ndEbitdaEntry, sm.ndEbitdaExit].forEach((v, i) => cmp(v, 'Returns', `B${39 + i}`, `summary ${i}`));
+  [sm.entryEv, sm.exitEv, sm.ebitdaCagr, sm.ndEbitdaEntry, sm.ndEbitdaExit].forEach((v, i) => cmp(v, 'Returns', `B${40 + i}`, `summary ${i}`));
 
   /* Sensitivity */
   const sn = r.sens;

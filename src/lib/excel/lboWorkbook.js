@@ -51,9 +51,9 @@ export function buildLboWorkbook(a) {
     bsHead: 23 + dl, borrow: 24 + dl, leases: 25 + dl, cash: 26 + dl, nci: 27 + dl, eqPrice: 28 + dl,
     cashUsed: 29 + dl, feePct: 30 + dl, fees: 31 + dl,
     debtHead: 33 + dl, trHead: 34 + dl, senA: 35 + dl, senB: 36 + dl, mezz: 37 + dl, total: 38 + dl, trEg: 39 + dl,
-    cashHead: 41 + dl, sweep: 42 + dl, minCash: 43 + dl,
+    cashHead: 41 + dl, sweep: 42 + dl, minCash: 43 + dl, rcf: 44 + dl, rcfRate: 45 + dl, rcfFee: 46 + dl,
   };
-  IN.exitHead = (sweepOn ? 45 : 44) + dl;
+  IN.exitHead = 48 + dl;
   IN.exitMult = IN.exitHead + 1;
   IN.stepHead = IN.exitHead + 3;
   IN.exitStep = IN.stepHead + 1;
@@ -65,27 +65,22 @@ export function buildLboWorkbook(a) {
   /* ---------------- LBO Model rows ---------------- */
   const R = {
     rev: 7, growth: 8, materials: 9, employee: 10, otherExp: 11, ebitda: 12, margin: 13, da: 14, ebit: 15,
-    intA: 16, intB: 17, intM: 18, pik: 19, fee: 20, pbt: 21, tax: 22, ni: 23,
-    inv: 25, rec: 26, oca: 27, pay: 28, ocl: 29, nwc: 30, dNwc: 31, capex: 32,
-    fNi: 34, fDa: 35, fPik: 36, fFee: 37, fCapex: 38, fNwc: 39, fcf: 40, cashTitle: 42,
+    intA: 16, intB: 17, intM: 18, intR: 19, pik: 20, fee: 21, pbt: 22, tax: 23, ni: 24,
+    inv: 26, rec: 27, oca: 28, pay: 29, ocl: 30, nwc: 31, dNwc: 32, capex: 33,
+    fNi: 35, fDa: 36, fPik: 37, fFee: 38, fCapex: 39, fNwc: 40, fLease: 41, fcf: 42, cashTitle: 44,
+    cashOpen: 45, cashFcf: 46, cashMand: 47, cashAfter: 48, rDraw: 49, rRepay: 50, minCash: 51, avail: 52, cashSweep: 53, cashClose: 54,
+    rHead: 55, rOpen: 56, rDraw2: 57, rRepay2: 58, rClose: 59, rUndrawn: 60,
+    aHead: 61, aOpen: 62, aMand: 63, aSweep: 64, aClose: 65,
+    bHead: 66, bOpen: 67, bMand: 68, bSweep: 69, bClose: 70,
+    mHead: 71, mOpen: 72, mPik: 73, mClose: 74,
+    credit: 75, totalDebt: 76, leaseRow: 77, nd: 78, dE: 79, ndE: 80, cover: 81, repaid: 82, shortfall: 83, headroom: 84,
   };
-  {
-    let x = 43;
-    R.cashOpen = x++; R.cashFcf = x++; R.cashMand = x++;
-    if (sweepOn) { R.minCash = x++; R.avail = x++; R.cashSweep = x++; }
-    R.cashClose = x++;
-    R.aHead = x++; R.aOpen = x++; R.aMand = x++; if (sweepOn) R.aSweep = x++; R.aClose = x++;
-    R.bHead = x++; R.bOpen = x++; R.bMand = x++; if (sweepOn) R.bSweep = x++; R.bClose = x++;
-    R.mHead = x++; R.mOpen = x++; R.mPik = x++; R.mClose = x++;
-    R.credit = x++; R.totalDebt = x++; R.leaseRow = x++; R.nd = x++; R.dE = x++; R.ndE = x++;
-    R.cover = x++; R.repaid = x++; R.shortfall = x;
-  }
-  const LAST = R.shortfall;
+  const LAST = R.headroom;
   const X = (k) => colL(2 + k);            // model column k: 0…n−1 actual (n−1 = entry), n…n+m−1 the hold
   const E0 = X(n - 1);                     // entry column (Year 0)
   const XL = X(n + m - 1);                 // exit column (Year m)
-  const blockBase = (k) => 4 + k * (LAST + 1);          // Sensitivity Engine: first row of case k (0…4)
-  const engRow = (row, k) => row + 1 + k * (LAST + 1);  // Sensitivity Engine row of an LBO Model row
+  const blockBase = (k) => 4 + k * LAST;                // Sensitivity Engine: first row of case k (0…4), as the revised template
+  const engRow = (row, k) => row + 1 + k * LAST;        // Sensitivity Engine row of an LBO Model row
 
   /* ============================== Instructions ============================== */
   {
@@ -103,7 +98,7 @@ export function buildLboWorkbook(a) {
     const pair = ([k, v]) => { w(ws, `B${row}`, k, { bold: true }); w(ws, `C${row}`, v, { wrap: true }); row++; };
     head('Order of work');
     [
-      ['1. Inputs', `Company name, period labels, entry multiple, fees, debt tranches (size, rates, amortisation, tenor, fees), ${sweepOn ? 'cash sweep %, minimum cash, ' : ''}exit multiple, sensitivity steps.`],
+      ['1. Inputs', `Company name, period labels, entry multiple, fees, debt tranches (size, rates, amortisation, tenor, fees), ${sweepOn ? 'cash sweep %, minimum cash, revolver, ' : ''}exit multiple, sensitivity steps.`],
       ['2. Historicals', `${n} year${n === 1 ? '' : 's'} of consolidated P&L, balance sheet and cash flow (same layout as the CCA and DCF workbooks).`],
       ['3. Assumptions', `${m}-year operating drivers. Historical ratios on the left of each row as a guide.`],
       ['4. Sources & Uses', 'Calculated. Sponsor equity is the balancing figure. Check must show 0.'],
@@ -116,14 +111,14 @@ export function buildLboWorkbook(a) {
     head('Structure & conventions');
     [
       ['Debt repayment', repayKind(repay).note],
-      ['Interest', "Calculated on each tranche's opening balance (no circular reference)."],
+      ['Interest', "Calculated on each tranche's opening balance (no circular reference). Revolver: interest on the opening drawn balance plus a commitment fee on the opening undrawn amount."],
       ['Mezzanine', 'Cash interest plus PIK interest. PIK accrues to the mezzanine balance and is repaid at exit. Set either rate to 0% if not used.'],
       ['Fees', "Transaction (deal) fees are paid at entry and funded in Sources & Uses. Financing fees are also funded at entry and amortised straight-line over each tranche's tenor in the P&L (non-cash, tax-deductible)."],
       ['Entry price', 'Entry EV = Latest actual EBITDA × Entry multiple. Equity purchase price = Entry EV − Existing borrowings − Lease liabilities (per toggle) + Existing cash − NCI. Existing borrowings are refinanced.'],
-      ['Leases & NCI', 'Held constant at the latest balance sheet level and deducted at both entry and exit.'],
+      ['Leases & NCI', 'Lease liabilities and NCI are held constant at the latest balance sheet and deducted at entry and exit. Lease cash payments (Assumptions row 23) are deducted from free cash flow every year, because Ind AS 116 EBITDA excludes rent.'],
       ['Other income', 'Not forecast in the LBO (existing treasury income largely disappears once cash is used in the deal).'],
       ['IRR / MOIC', `Single sponsor investment at entry and single exit proceeds at the end of Year ${m}; no interim dividends.`],
-      ['Shortfall check', 'If cash goes negative (mandatory repayments exceed cash available), the LBO Model flags it – the structure would need a revolver or lower leverage.'],
+      ['Shortfall check', 'A revolving credit facility (Inputs) draws automatically to keep cash at the minimum balance and is repaid first from excess cash. The model flags SHORTFALL only if the revolver is fully drawn and cash still goes negative.'],
     ].forEach(pair);
     row++;
     head('Value creation bridge');
@@ -183,7 +178,7 @@ export function buildLboWorkbook(a) {
     w(ws, `B${IN.fees}`, fx(`B${IN.ev}*B${IN.feePct}`), { fmt: NF.n1 });
 
     w(ws, `A${IN.debtHead}`, 'Debt financing', { bold: true });
-    ['Tranche', 'x Entry EBITDA', 'Amount', 'Cash Interest', 'PIK Interest', 'Mandatory Amort. (% of original p.a.)', 'Tenor (years)', 'Financing Fee %', `Financing Fee (${unitShort})`]
+    ['Tranche', 'x Entry EBITDA', 'Amount', 'Cash Interest', 'PIK Interest', 'Mandatory Amort. (% of original p.a.)', 'Tenor (years) – repaid at maturity', 'Financing Fee %', `Financing Fee (${unitShort})`]
       .forEach((h, i) => hdr(ws, `${colL(1 + i)}${IN.trHead}`, h));
     const NAN = (addr, text) => w(ws, addr, text, { italic: true, size: 9, color: T.grey, fill: T.na, align: 'center' });
     const S11 = { size: 11, fmt: NF.n1 };
@@ -209,14 +204,19 @@ export function buildLboWorkbook(a) {
     note(ws, `A${IN.trEg}`, repay === 'sweep'
       ? 'e.g. Senior A 2.5x, 9.0%, 5 yrs, 1.5% | Senior B 1.5x, 10.0%, 7 yrs, 2.0% | Mezz 1.0x, 12.0% cash, 3.0% PIK, 8 yrs, 2.5%'
       : 'e.g. Senior A 2.5x, 9.0%, 15.0% p.a., 5 yrs, 1.5% | Senior B 1.5x, 10.0%, 1.0% p.a., 7 yrs, 2.0% | Mezz 1.0x, 12.0% cash, 3.0% PIK, 8 yrs, 2.5%');
+    w(ws, `F${IN.trEg}`, fx(`IF(AND(ISNUMBER(G${IN.mezz}),G${IN.mezz}<${m},C${IN.mezz}>0),"⚠ Mezzanine tenor is shorter than the ${m}-year hold – it is repaid at exit in this model","")`), { bold: true, color: RED });
 
     w(ws, `A${IN.cashHead}`, 'Cash management', { bold: true });
     if (sweepOn) {
       input(IN.sweep, 'Cash sweep (% of excess cash)', pc(d.cash?.sweepPct), NF.pct, 'e.g. 100.0% – share of excess cash used to prepay senior debt');
       input(IN.minCash, 'Minimum cash balance', num(d.cash?.minCash), NF.n1, 'e.g. 150.0 – operating cash kept in the business');
     } else {
-      note(ws, `A${IN.sweep}`, 'No cash sweep – excess cash builds up and is added to equity at exit.');
+      note(ws, `A${IN.sweep}`, 'No cash sweep – excess cash above the minimum repays any revolver, then builds up and is added to equity at exit.');
+      input(IN.minCash, 'Minimum cash balance', num(d.cash?.minCash), NF.n1, 'e.g. 150.0 – operating cash kept in the business; the revolver draws to protect it');
     }
+    input(IN.rcf, `Revolving credit facility – commitment (${unitShort})`, num(d.cash?.rcf), NF.n1, 'e.g. 300.0 – undrawn at close; draws automatically to cover shortfalls (0 = no revolver)');
+    input(IN.rcfRate, 'Revolver interest rate (on drawn balance)', pc(d.cash?.rcfRate), NF.pct, 'e.g. 9.0% – on the opening drawn balance');
+    input(IN.rcfFee, 'Revolver commitment fee (on undrawn amount)', pc(d.cash?.rcfFee), NF.pct, 'e.g. 0.5% – on the opening undrawn commitment');
     w(ws, `A${IN.exitHead}`, 'Exit', { bold: true });
     input(IN.exitMult, `Exit EV / EBITDA multiple (end of Year ${m})`, num(d.deal?.exitMultiple), NF.x, 'e.g. 10.0x – often set equal to entry multiple as a base case');
     w(ws, `A${IN.stepHead}`, 'Sensitivity step sizes', { bold: true });
@@ -283,52 +283,53 @@ export function buildLboWorkbook(a) {
       ['(−) Senior A outstanding', M(R.aClose), LNK],
       ['(−) Senior B outstanding', M(R.bClose), LNK],
       ['(−) Mezzanine outstanding (incl. PIK)', M(R.mClose), LNK],
+      ['(−) Revolver outstanding', M(R.rClose), LNK],
       ['(−) Lease liabilities', M(R.leaseRow), LNK],
       ['(−) Non-controlling interest', inB(IN.nci), LNK],
       ['(+) Cash on balance sheet', M(R.cashClose), LNK],
-      ['Exit Equity Value (to sponsor)', 'B7-B8-B9-B10-B11-B12+B13', { ...KEYT, fmt: NF.n1 }, KEYT],
+      ['Exit Equity Value (to sponsor)', 'B7-B8-B9-B10-B11-B12-B13+B14', { ...KEYT, fmt: NF.n1 }, KEYT],
     ].forEach(([lab, f, st, lst], i) => { w(ws, `A${5 + i}`, lab, lst || {}); w(ws, `B${5 + i}`, fx(f), st); });
 
     const RC = (j) => colL(2 + j);             // returns column of year j (0 = entry)
-    hdr(ws, 'A17', 'Sponsor returns', { align: 'left', wrap: false });
-    for (let j = 0; j <= m; j++) hdr(ws, `${RC(j)}17`, fx(label(n - 1 + j)), { wrap: false });
-    w(ws, 'A18', 'Year');
-    for (let j = 0; j <= m; j++) w(ws, `${RC(j)}18`, j, { italic: true, size: 9, color: T.grey });
-    w(ws, 'A19', 'Sponsor cash flows');
+    hdr(ws, 'A18', 'Sponsor returns', { align: 'left', wrap: false });
+    for (let j = 0; j <= m; j++) hdr(ws, `${RC(j)}18`, fx(label(n - 1 + j)), { wrap: false });
+    w(ws, 'A19', 'Year');
+    for (let j = 0; j <= m; j++) w(ws, `${RC(j)}19`, j, { italic: true, size: 9, color: T.grey });
+    w(ws, 'A20', 'Sponsor cash flows');
     for (let j = 0; j <= m; j++) {
-      const v = j === 0 ? fx(`-${SU}!$G$9`) : j === m ? fx('B14') : 0;
-      w(ws, `${RC(j)}19`, v, S11);
+      const v = j === 0 ? fx(`-${SU}!$G$9`) : j === m ? fx('B15') : 0;
+      w(ws, `${RC(j)}20`, v, S11);
     }
-    w(ws, 'A21', 'Sponsor equity invested'); w(ws, 'B21', fx(`${SU}!$G$9`), LNK);
-    w(ws, 'A22', 'Exit equity value'); w(ws, 'B22', fx('B14'), S11);
+    w(ws, 'A22', 'Sponsor equity invested'); w(ws, 'B22', fx(`${SU}!$G$9`), LNK);
+    w(ws, 'A23', 'Exit equity value'); w(ws, 'B23', fx('B15'), S11);
     const KEYS = { bold: true, fill: KEY };
-    w(ws, 'A23', 'MOIC', KEYS); w(ws, 'B23', fx('IF(B21>0,B22/B21,"NM")'), { ...KEYS, fmt: NFM });
-    w(ws, 'A24', 'IRR', KEYS); w(ws, 'B24', fx(`IF(AND(B21>0,B22>0),IRR(B19:${RC(m)}19),"NM")`), { ...KEYS, fmt: NF.pct });
-    note(ws, 'C24', 'IRR function on the cash flow row above');
+    w(ws, 'A24', 'MOIC', KEYS); w(ws, 'B24', fx('IF(B22>0,B23/B22,"NM")'), { ...KEYS, fmt: NFM });
+    w(ws, 'A25', 'IRR', KEYS); w(ws, 'B25', fx(`IF(AND(B22>0,B23>0),IRR(B20:${RC(m)}20),"NM")`), { ...KEYS, fmt: NF.pct });
+    note(ws, 'C25', 'IRR function on the cash flow row above');
 
-    hdr(ws, 'A27', 'Value creation bridge', { align: 'left', wrap: false }); hdr(ws, 'B27', unitShort, { wrap: false }); hdr(ws, 'C27', '% of value created', { wrap: false });
-    w(ws, 'A28', 'Sponsor equity at entry', SUBT); w(ws, 'B28', fx('B21'), { ...SUBT, fmt: NF.n1 });
+    hdr(ws, 'A28', 'Value creation bridge', { align: 'left', wrap: false }); hdr(ws, 'B28', unitShort, { wrap: false }); hdr(ws, 'C28', '% of value created', { wrap: false });
+    w(ws, 'A29', 'Sponsor equity at entry', SUBT); w(ws, 'B29', fx('B22'), { ...SUBT, fmt: NF.n1 });
     [
       ['(+) EBITDA growth', `(${M(R.ebitda)}-${inB(IN.ebitda)})*${inB(IN.exitMult)}`],
       ['(+) Multiple expansion / (contraction)', `${inB(IN.ebitda)}*(${inB(IN.exitMult)}-${inB(IN.entryMult)})`],
       ['(+) Net debt reduction', `${M(R.nd, E0)}-${M(R.nd)}`],
       ['(−) Transaction & financing fees', `-(${inB(IN.fees)}+Inputs!$I$${IN.total})`],
     ].forEach(([lab, f], i) => {
-      const rr = 29 + i;
+      const rr = 30 + i;
       w(ws, `A${rr}`, lab); w(ws, `B${rr}`, fx(f), S11);
-      w(ws, `C${rr}`, fx(`IFERROR(B${rr}/SUM($B$29:$B$32),0)`), { size: 11, fmt: NF.pct });
+      w(ws, `C${rr}`, fx(`IFERROR(B${rr}/SUM($B$30:$B$33),0)`), { size: 11, fmt: NF.pct });
     });
-    w(ws, 'A33', 'Sponsor equity at exit', SUBT); w(ws, 'B33', fx('B28+SUM(B29:B32)'), { ...SUBT, fmt: NF.n1 });
-    w(ws, 'A35', 'Check: bridge vs exit waterfall (must be 0)'); w(ws, 'B35', fx('ROUND(B33-B14,1)'), { bold: true, fmt: NF.n1 });
-    note(ws, 'A36', 'EBITDA growth uses the exit multiple; multiple expansion uses entry EBITDA – this pairing adds up exactly.');
-    w(ws, 'A38', 'Returns summary', { bold: true });
+    w(ws, 'A34', 'Sponsor equity at exit', SUBT); w(ws, 'B34', fx('B29+SUM(B30:B33)'), { ...SUBT, fmt: NF.n1 });
+    w(ws, 'A36', 'Check: bridge vs exit waterfall (must be 0)'); w(ws, 'B36', fx('ROUND(B34-B15,1)'), { bold: true, fmt: NF.n1 });
+    note(ws, 'A37', 'EBITDA growth uses the exit multiple; multiple expansion uses entry EBITDA – this pairing adds up exactly.');
+    w(ws, 'A39', 'Returns summary', { bold: true });
     [
       ['Entry EV', inB(IN.ev), S11],
       ['Exit EV', 'B7', S11],
       ['Entry → exit EBITDA CAGR', `IFERROR((${M(R.ebitda)}/${inB(IN.ebitda)})^(1/${m})-1,0)`, { size: 11, fmt: NF.pct }],
       ['Net debt / EBITDA at entry', M(R.ndE, E0), { size: 11, fmt: NF.x }],
       ['Net debt / EBITDA at exit', M(R.ndE), { size: 11, fmt: NF.x }],
-    ].forEach(([lab, f, st], i) => { w(ws, `A${39 + i}`, lab); w(ws, `B${39 + i}`, fx(f), st); });
+    ].forEach(([lab, f, st], i) => { w(ws, `A${40 + i}`, lab); w(ws, `B${40 + i}`, fx(f), st); });
   }
 
   /* ============================== Sensitivity ============================== */
@@ -426,7 +427,7 @@ export function buildLboWorkbook(a) {
         const isEntry = k === n - 1;
         if (k < n) {
           if (engine && !isEntry) continue;
-          if (o.entry && isEntry) { w(ws, c(Xc, row), fx(o.entry(Xc)), { fmt, ...(o.entryStyle || st) }); continue; }
+          if (o.entry && isEntry) { const ev = o.entry(Xc); w(ws, c(Xc, row), typeof ev === 'number' ? ev : fx(ev), { fmt, ...(o.entryStyle || st) }); continue; }
           if (o.holdOnly || o.entry) {
             if (engine) { if (fmt) w(ws, c(Xc, row), null, { size: 11, fmt }); } else w(ws, c(Xc, row), null, { size: 11, fill: T.na, fmt: fmt || undefined });
             continue;
@@ -457,16 +458,17 @@ export function buildLboWorkbook(a) {
     line(R.intA, 'Interest – Senior A', { holdOnly: true, hold: (Y) => `${c(Y, R.aOpen)}*Inputs!$D$${IN.senA}` });
     line(R.intB, 'Interest – Senior B', { holdOnly: true, hold: (Y) => `${c(Y, R.bOpen)}*Inputs!$D$${IN.senB}` });
     line(R.intM, 'Interest – Mezzanine (cash)', { holdOnly: true, hold: (Y) => `${c(Y, R.mOpen)}*Inputs!$D$${IN.mezz}` });
+    line(R.intR, 'Interest – Revolver (drawn) + commitment fee', { holdOnly: true, hold: (Y) => `${c(Y, R.rOpen)}*${inv(IN.rcfRate)}+${c(Y, R.rUndrawn)}*${inv(IN.rcfFee)}` });
     line(R.pik, 'Interest – Mezzanine (PIK, non-cash)', { holdOnly: true, hold: (Y) => `${c(Y, R.mOpen)}*Inputs!$E$${IN.mezz}` });
     line(R.fee, 'Amortisation of financing fees (non-cash)', {
       holdOnly: true,
       hold: (Y) => [IN.senA, IN.senB, IN.mezz].map((t) => `IFERROR(IF(${c(Y, 5)}<=Inputs!$G$${t},Inputs!$I$${t}/Inputs!$G$${t},0),0)`).join('+'),
     });
-    line(R.pbt, 'Profit Before Tax', { st: 'sub', holdOnly: true, hold: (Y) => `${c(Y, R.ebit)}-${c(Y, R.intA)}-${c(Y, R.intB)}-${c(Y, R.intM)}-${c(Y, R.pik)}-${c(Y, R.fee)}` });
+    line(R.pbt, 'Profit Before Tax', { st: 'sub', holdOnly: true, hold: (Y) => `${c(Y, R.ebit)}-${c(Y, R.intA)}-${c(Y, R.intB)}-${c(Y, R.intM)}-${c(Y, R.intR)}-${c(Y, R.pik)}-${c(Y, R.fee)}` });
     line(R.tax, 'Tax', { holdOnly: true, hold: (Y) => `MAX(0,${c(Y, R.pbt)})*${A(12)(Y)}` });
     line(R.ni, 'Net Income', { st: 'sub', holdOnly: true, hold: (Y) => `${c(Y, R.pbt)}-${c(Y, R.tax)}` });
 
-    sec(24, 'WORKING CAPITAL & CAPEX');
+    sec(25, 'WORKING CAPITAL & CAPEX');
     line(R.inv, 'Inventories', { hist: Hs(36), histLink: true, hold: (Y) => `${c(Y, R.materials)}*${A(16)(Y)}/365` });
     line(R.rec, 'Trade Receivables', { hist: Hs(37), histLink: true, hold: (Y) => `${c(Y, R.rev)}*${A(17)(Y)}/365` });
     line(R.oca, 'Other Current Assets', { hist: Hs(41), histLink: true, hold: (Y) => `${c(Y, R.rev)}*${A(19)(Y)}` });
@@ -478,39 +480,57 @@ export function buildLboWorkbook(a) {
     line(R.dNwc, 'Increase / (Decrease) in NWC', { firstNa: true, hist: dF, hold: dF });
     line(R.capex, 'Capex', { hist: (Xc) => `-Historicals!${Xc}73`, histLink: true, hold: (Y) => `${c(Y, R.rev)}*${A(15)(Y)}` });
 
-    sec(33, 'FREE CASH FLOW AVAILABLE FOR DEBT REPAYMENT');
+    sec(34, 'FREE CASH FLOW AVAILABLE FOR DEBT REPAYMENT');
     line(R.fNi, 'Net Income', { holdOnly: true, hold: rc(R.ni) });
     line(R.fDa, '(+) Depreciation & Amortisation', { holdOnly: true, hold: rc(R.da) });
     line(R.fPik, '(+) PIK interest (non-cash)', { holdOnly: true, hold: rc(R.pik) });
     line(R.fFee, '(+) Financing fee amortisation (non-cash)', { holdOnly: true, hold: rc(R.fee) });
     line(R.fCapex, '(−) Capex', { holdOnly: true, hold: rc(R.capex) });
     line(R.fNwc, '(−) Increase in NWC', { holdOnly: true, hold: rc(R.dNwc) });
-    line(R.fcf, 'Free Cash Flow', { st: 'key', holdOnly: true, hold: (Y) => `${c(Y, R.fNi)}+${c(Y, R.fDa)}+${c(Y, R.fPik)}+${c(Y, R.fFee)}-${c(Y, R.fCapex)}-${c(Y, R.fNwc)}` });
+    line(R.fLease, '(−) Lease payments (Ind AS 116)', { holdOnly: true, hold: (Y) => `${c(Y, R.rev)}*${A(23)(Y)}` });
+    line(R.fcf, 'Free Cash Flow', { st: 'key', holdOnly: true, hold: (Y) => `${c(Y, R.fNi)}+${c(Y, R.fDa)}+${c(Y, R.fPik)}+${c(Y, R.fFee)}-${c(Y, R.fCapex)}-${c(Y, R.fNwc)}-${c(Y, R.fLease)}` });
 
-    sec(41, 'CASH & DEBT SCHEDULE');
+    sec(43, 'CASH & DEBT SCHEDULE');
     const bold = (row, text) => w(ws, `A${row + off}`, text, { bold: true });
     const closeEntry = { link: true, fill: T.sub, top: true };
     bold(R.cashTitle, 'Cash');
     line(R.cashOpen, 'Opening cash', { holdOnly: true, hold: (Y, P) => c(P, R.cashClose) });
     line(R.cashFcf, '(+) Free cash flow', { holdOnly: true, hold: rc(R.fcf) });
-    line(R.cashMand, '(−) Mandatory repayments', { holdOnly: true, hold: (Y) => `${c(Y, R.aMand)}+${c(Y, R.bMand)}` });
-    if (sweepOn) {
-      line(R.minCash, '(−) Minimum cash balance', { holdOnly: true, hold: () => inv(IN.minCash) });
-      line(R.avail, 'Cash available for sweep', { holdOnly: true, hold: (Y) => `MAX(0,${c(Y, R.cashOpen)}+${c(Y, R.cashFcf)}-${c(Y, R.cashMand)}-${c(Y, R.minCash)})*${inv(IN.sweep)}` });
-      line(R.cashSweep, '(−) Cash sweep', { holdOnly: true, hold: (Y) => `${c(Y, R.aSweep)}+${c(Y, R.bSweep)}` });
-    }
+    line(R.cashMand, '(−) Mandatory repayments (incl. balloon at maturity)', { holdOnly: true, hold: (Y) => `${c(Y, R.aMand)}+${c(Y, R.bMand)}` });
+    line(R.cashAfter, 'Cash after mandatory repayments', { holdOnly: true, hold: (Y) => `${c(Y, R.cashOpen)}+${c(Y, R.cashFcf)}-${c(Y, R.cashMand)}` });
+    line(R.rDraw, '(+) Revolver draw', { holdOnly: true, hold: (Y) => `MIN(MAX(0,${inv(IN.rcf)}-${c(Y, R.rOpen)}),MAX(0,${inv(IN.minCash)}-${c(Y, R.cashAfter)}))` });
+    line(R.rRepay, '(−) Revolver repayment', { holdOnly: true, hold: (Y) => `MIN(${c(Y, R.rOpen)},MAX(0,${c(Y, R.cashAfter)}-${inv(IN.minCash)}))` });
+    line(R.minCash, '(−) Minimum cash balance', { holdOnly: true, hold: () => inv(IN.minCash) });
+    line(R.avail, sweepOn ? 'Cash available for sweep' : 'Cash available for sweep (none in this structure)', {
+      holdOnly: true,
+      hold: (Y) => (sweepOn ? `MAX(0,${c(Y, R.cashAfter)}+${c(Y, R.rDraw)}-${c(Y, R.rRepay)}-${c(Y, R.minCash)})*${inv(IN.sweep)}` : '0'),
+    });
+    line(R.cashSweep, '(−) Cash sweep', { holdOnly: true, hold: (Y) => `${c(Y, R.aSweep)}+${c(Y, R.bSweep)}` });
     line(R.cashClose, 'Closing cash', {
       st: 'sub', entry: () => `${inv(IN.cash)}-${inv(IN.cashUsed)}`, entryStyle: closeEntry,
-      hold: (Y) => `${c(Y, R.cashOpen)}+${c(Y, R.cashFcf)}-${c(Y, R.cashMand)}${sweepOn ? `-${c(Y, R.cashSweep)}` : ''}`,
+      hold: (Y) => `${c(Y, R.cashAfter)}+${c(Y, R.rDraw)}-${c(Y, R.rRepay)}-${c(Y, R.cashSweep)}`,
     });
+    bold(R.rHead, 'Revolving credit facility (RCF)');
+    line(R.rOpen, 'Opening balance', { holdOnly: true, hold: (Y, P) => c(P, R.rClose) });
+    line(R.rDraw2, '(+) Draw', { holdOnly: true, hold: rc(R.rDraw) });
+    line(R.rRepay2, '(−) Repayment', { holdOnly: true, hold: rc(R.rRepay) });
+    line(R.rClose, 'Closing balance', { st: 'sub', entry: () => 0, entryStyle: closeEntry, hold: (Y) => `${c(Y, R.rOpen)}+${c(Y, R.rDraw2)}-${c(Y, R.rRepay2)}` });
+    line(R.rUndrawn, 'Undrawn commitment (opening)', { holdOnly: true, hold: (Y) => `MAX(0,${inv(IN.rcf)}-${c(Y, R.rOpen)})` });
+    const yr = (Y) => `${Y}$${5 + off}`;                 // the year number of column Y
     const tranche = (head, lab, t, rows) => {
       bold(rows.head, lab);
+      const G = `Inputs!$G$${t}`;
       line(rows.open, 'Opening balance', { holdOnly: true, hold: (Y, P) => c(P, rows.close) });
-      line(rows.mand, '(−) Mandatory repayment', { holdOnly: true, hold: (Y) => (repay === 'sweep' ? '0' : `MIN(${c(Y, rows.open)},Inputs!$C$${t}*Inputs!$F$${t})`) });
-      if (sweepOn) line(rows.sweep, '(−) Cash sweep', { holdOnly: true, hold: rows.sweepF });
+      line(rows.mand, repay === 'sweep' ? '(−) Mandatory repayment (balloon at maturity)' : '(−) Mandatory repayment', {
+        holdOnly: true,
+        hold: (Y) => (repay === 'sweep'
+          ? `IF(AND(ISNUMBER(${G}),${G}<${m},${yr(Y)}=${G}),${c(Y, rows.open)},0)`
+          : `IF(AND(ISNUMBER(${G}),${yr(Y)}>${G}),0,IF(AND(ISNUMBER(${G}),${G}<${m},${yr(Y)}=${G}),${c(Y, rows.open)},MIN(${c(Y, rows.open)},Inputs!$C$${t}*Inputs!$F$${t})))`),
+      });
+      line(rows.sweep, '(−) Cash sweep', { holdOnly: true, hold: sweepOn ? rows.sweepF : () => '0' });
       line(rows.close, 'Closing balance', {
         st: 'sub', entry: () => `Inputs!$C$${t}`, entryStyle: closeEntry,
-        hold: (Y) => `${c(Y, rows.open)}-${c(Y, rows.mand)}${sweepOn ? `-${c(Y, rows.sweep)}` : ''}`,
+        hold: (Y) => `${c(Y, rows.open)}-${c(Y, rows.mand)}-${c(Y, rows.sweep)}`,
       });
     };
     tranche('a', 'Senior A (Term Loan A)', IN.senA, {
@@ -527,8 +547,8 @@ export function buildLboWorkbook(a) {
     line(R.mClose, 'Closing balance', { st: 'sub', entry: () => `Inputs!$C$${IN.mezz}`, entryStyle: closeEntry, hold: (Y) => `${c(Y, R.mOpen)}+${c(Y, R.mPik)}` });
 
     sec(R.credit, 'CREDIT STATISTICS');
-    const tdF = (Y) => `${c(Y, R.aClose)}+${c(Y, R.bClose)}+${c(Y, R.mClose)}`;
-    line(R.totalDebt, 'Total debt', { entry: tdF, entryStyle: {}, hold: tdF });
+    const tdF = (Y) => `${c(Y, R.aClose)}+${c(Y, R.bClose)}+${c(Y, R.mClose)}+${c(Y, R.rClose)}`;
+    line(R.totalDebt, 'Total debt (incl. revolver)', { entry: tdF, entryStyle: {}, hold: tdF });
     line(R.leaseRow, 'Lease liabilities (held constant)', { entry: () => inv(IN.leases), entryStyle: { link: true }, hold: () => inv(IN.leases) });
     const ndF = (Y) => `${c(Y, R.totalDebt)}+${c(Y, R.leaseRow)}-${c(Y, R.cashClose)}`;
     line(R.nd, 'Net debt', { st: 'sub', entry: ndF, hold: ndF });
@@ -536,9 +556,13 @@ export function buildLboWorkbook(a) {
     line(R.dE, 'Total debt / EBITDA', { fmt: NF.x, entry: deF, entryStyle: {}, hold: deF });
     const ndeF = (Y) => `IFERROR(${c(Y, R.nd)}/${c(Y, R.ebitda)},0)`;
     line(R.ndE, 'Net debt / EBITDA', { fmt: NF.x, entry: ndeF, entryStyle: {}, hold: ndeF });
-    line(R.cover, 'EBITDA / Cash interest', { fmt: NF.x, holdOnly: true, hold: (Y) => `IFERROR(${c(Y, R.ebitda)}/(${c(Y, R.intA)}+${c(Y, R.intB)}+${c(Y, R.intM)}),0)` });
+    line(R.cover, 'EBITDA / Cash interest', { fmt: NF.x, holdOnly: true, hold: (Y) => `IFERROR(${c(Y, R.ebitda)}/(${c(Y, R.intA)}+${c(Y, R.intB)}+${c(Y, R.intM)}+${c(Y, R.intR)}),0)` });
     line(R.repaid, 'Cumulative senior debt repaid (% of original)', { fmt: NF.pct, holdOnly: true, hold: (Y) => `IFERROR(1-(${c(Y, R.aClose)}+${c(Y, R.bClose)})/(Inputs!$C$${IN.senA}+Inputs!$C$${IN.senB}),0)` });
-    line(R.shortfall, 'Cash shortfall check', { fmt: null, holdOnly: true, holdStyle: { align: 'center' }, hold: (Y) => `IF(${c(Y, R.cashClose)}<-0.001,"SHORTFALL","OK")` });
+    line(R.shortfall, 'Cash shortfall check (after revolver)', { fmt: null, holdOnly: true, holdStyle: { align: 'center' }, hold: (Y) => `IF(${c(Y, R.cashClose)}<-0.001,"SHORTFALL","OK")` });
+    line(R.headroom, 'Revolver headroom check', {
+      fmt: null, holdOnly: true, holdStyle: { align: 'center' },
+      hold: (Y) => `IF(${c(Y, R.rClose)}>${inv(IN.rcf)}+0.001,"OVER LIMIT",IF(AND(${inv(IN.rcf)}>0,${c(Y, R.rClose)}>=0.999*${inv(IN.rcf)}),"FULLY DRAWN","OK"))`,
+    });
   };
 
   /* header rows of a model copy: period labels (row `lr`) and year numbers (row `lr + 1`) */
@@ -553,7 +577,7 @@ export function buildLboWorkbook(a) {
     widths(ws);
     ws.views = [{ state: 'frozen', xSplit: 1, ySplit: 4, topLeftCell: 'B5' }];
     w(ws, 'A1', fx('IF(Inputs!$B$5="","LBO Model",Inputs!$B$5&" – LBO Model")'), { bold: true, size: 14, link: true });
-    note(ws, 'A2', `${unitLabel} | ${TYPE_NAME[repay]} | Interest on opening balances | Fully calculated – do not type here`);
+    note(ws, 'A2', `${unitLabel} | ${TYPE_NAME[repay]} | Revolver + interest on opening balances | Fully calculated – do not type here`);
     if (n > 1) w(ws, 'B3', 'Actual', { bold: true });
     w(ws, `${E0}3`, 'Entry', { bold: true });
     w(ws, `${X(n)}3`, 'Projection (holding period)', { bold: true });
@@ -574,6 +598,7 @@ export function buildLboWorkbook(a) {
       const base = blockBase(i);
       w(ws, `A${base}`, `Case ${i + 1}: revenue growth shift`, { bold: true });
       w(ws, `B${base}`, fx(`(${k})*${inB(IN.growthStep)}`), { bold: true, fmt: NF.pct });
+      hdr(ws, `A${base + 1}`, unitLabel, { align: 'left', wrap: false });
       modelHeader(ws, base + 1, n - 1);
       writeModel(ws, engRow(0, i), true, `$B$${base}`);
     });

@@ -32,8 +32,8 @@ function LboPage({ a, f, r }) {
   const hold = r.labels.fcst;
   const yearsWithEntry = [r.labels.hist[n - 1], ...hold];
   const kind = repayKind(r.repay);
-  const sweep = r.repay !== 'mandatory';
   const shortYears = hold.filter((_, j) => C.shortfall[j] === 'SHORTFALL');
+  const fullYears = hold.filter((_, j) => C.headroom[j] !== 'OK');
   // a blank driver counts as 0 (as in the template) — name the years where any is blank
   const stored = a.lbo?.drivers || {};
   const blankYears = hold.filter((_, j) => LBO_DRIVERS.some((d) => d.key && !fin(stored[d.key]?.[j])));
@@ -56,6 +56,7 @@ function LboPage({ a, f, r }) {
       { name: 'Senior A', type: 'bar', stack: 'd', barMaxWidth: 36, itemStyle: { color: COL.tealDeep }, data: [r.tranches.senA.amount, ...S.aClose].map((v) => rnd(v)) },
       { name: 'Senior B', type: 'bar', stack: 'd', barMaxWidth: 36, itemStyle: { color: COL.teal }, data: [r.tranches.senB.amount, ...S.bClose].map((v) => rnd(v)) },
       { name: 'Mezzanine (incl. PIK)', type: 'bar', stack: 'd', barMaxWidth: 36, itemStyle: { color: COL.gold }, data: [r.tranches.mezz.amount, ...S.mClose].map((v) => rnd(v)) },
+      ...(r.rcf.commit > 0 ? [{ name: 'Revolver', type: 'bar', stack: 'd', barMaxWidth: 36, itemStyle: { color: COL.red }, data: [0, ...S.rClose].map((v) => rnd(v)) }] : []),
       { ...lineSeries('Net debt / EBITDA', COL.green, C.ndEbitda.map((v) => rnd(v, 2)), { yAxisIndex: 1 }) },
     ],
   });
@@ -69,26 +70,33 @@ function LboPage({ a, f, r }) {
     ['Cost of Materials', F.materials], ['Employee Benefits Expense', F.employee], ['Other Expenses', F.otherExp],
     ['EBITDA', F.ebitda, 'n1', true], ['  EBITDA margin', F.margin, 'pct'], ['Depreciation & Amortisation', F.da], ['EBIT', F.ebit, 'n1', true],
     ['Interest – Senior A', S.intA, 'n1', false, true], ['Interest – Senior B', S.intB, 'n1', false, true],
-    ['Interest – Mezzanine (cash)', S.intMezz, 'n1', false, true], ['Interest – Mezzanine (PIK, non-cash)', S.pik, 'n1', false, true],
+    ['Interest – Mezzanine (cash)', S.intMezz, 'n1', false, true], ['Interest – Revolver (drawn) + commitment fee', S.intRcf, 'n1', false, true], ['Interest – Mezzanine (PIK, non-cash)', S.pik, 'n1', false, true],
     ['Amortisation of financing fees (non-cash)', S.feeAmort, 'n1', false, true],
     ['Profit Before Tax', S.pbt, 'n1', true, true], ['Tax', S.tax, 'n1', false, true], ['Net Income', S.ni, 'n1', true, true],
     ['WORKING CAPITAL & CAPEX'],
     ['Inventories', F.inv], ['Trade Receivables', F.rec], ['Other Current Assets', F.oca], ['Trade Payables', F.pay],
     ['Other Current Liabilities & Provisions', F.ocl], ['Net Working Capital', F.nwc, 'n1', true], ['Increase / (Decrease) in NWC', F.dNwc], ['Capex', F.capex],
     ['FREE CASH FLOW AVAILABLE FOR DEBT REPAYMENT'],
+    ['(−) Lease payments (Ind AS 116)', S.leasePay, 'n1', false, true],
     ['Free Cash Flow', S.fcf, 'n1', true, true],
     ['CASH & DEBT SCHEDULE'],
-    ['Opening cash', S.cashOpen, 'n1', false, true], ['(+) Free cash flow', S.fcf, 'n1', false, true], ['(−) Mandatory repayments', S.mand, 'n1', false, true],
-    ...(sweep ? [['(−) Minimum cash balance', S.minCash, 'n1', false, true], ['Cash available for sweep', S.avail, 'n1', false, true], ['(−) Cash sweep', S.sweep, 'n1', false, true]] : []),
+    ['Opening cash', S.cashOpen, 'n1', false, true], ['(+) Free cash flow', S.fcf, 'n1', false, true], ['(−) Mandatory repayments (incl. balloon at maturity)', S.mand, 'n1', false, true],
+    ['Cash after mandatory repayments', S.cashAfter, 'n1', false, true],
+    ['(+) Revolver draw', S.rcfDraw, 'n1', false, true], ['(−) Revolver repayment', S.rcfRepay, 'n1', false, true],
+    ['(−) Minimum cash balance', S.minCash, 'n1', false, true],
+    [r.repay === 'mandatory' ? 'Cash available for sweep (none in this structure)' : 'Cash available for sweep', S.avail, 'n1', false, true], ['(−) Cash sweep', S.sweep, 'n1', false, true],
     ['Closing cash', [r.entry.cashAfter, ...S.cashClose], 'n1', true, 'entry'],
+    ['Revolver — closing balance', [0, ...S.rClose], 'n1', false, 'entry'],
+    ['Revolver — undrawn commitment (opening)', S.rUndrawn, 'n1', false, true],
     ['Senior A — closing balance', [r.tranches.senA.amount, ...S.aClose], 'n1', false, 'entry'],
     ['Senior B — closing balance', [r.tranches.senB.amount, ...S.bClose], 'n1', false, 'entry'],
     ['Mezzanine — closing balance (incl. PIK)', [r.tranches.mezz.amount, ...S.mClose], 'n1', false, 'entry'],
     ['CREDIT STATISTICS'],
-    ['Total debt', C.totalDebt, 'n1', true, 'entry'], ['Lease liabilities (held constant)', C.leases, 'n1', false, 'entry'], ['Net debt', C.netDebt, 'n1', true, 'entry'],
+    ['Total debt (incl. revolver)', C.totalDebt, 'n1', true, 'entry'], ['Lease liabilities (held constant)', C.leases, 'n1', false, 'entry'], ['Net debt', C.netDebt, 'n1', true, 'entry'],
     ['Total debt / EBITDA', C.debtEbitda, 'x', false, 'entry'], ['Net debt / EBITDA', C.ndEbitda, 'x', false, 'entry'],
     ['EBITDA / Cash interest', C.intCover, 'x', false, true], ['Cumulative senior debt repaid (% of original)', C.seniorRepaid, 'pct', false, true],
-    ['Cash shortfall check', C.shortfall, 'txt', false, true],
+    ['Cash shortfall check (after revolver)', C.shortfall, 'txt', false, true],
+    ['Revolver headroom check', C.headroom, 'txt', false, true],
   ];
   /** Values across all columns: full (n + m), hold years only, or entry + hold. */
   const spread = (vals, part) => (part === true ? [...Array(n).fill(null), ...vals] : part === 'entry' ? [...Array(n - 1).fill(null), ...vals] : vals);
@@ -109,7 +117,9 @@ function LboPage({ a, f, r }) {
           blankYears.length ? `Blank operating drivers in ${blankYears.join(', ')} count as 0, as in the template — fill them on the Assumptions step.` : null,
           shortYears.length ? `Cash goes negative in ${shortYears.join(', ')} — ${r.repay === 'sweep'
             ? 'free cash flow is negative and larger than the cash on hand (there are no mandatory repayments)'
-            : 'mandatory repayments exceed the cash available (opening cash plus free cash flow)'}; the structure would need a revolver or lower leverage.` : null,
+            : 'mandatory repayments exceed the cash available (opening cash plus free cash flow)'}, even after the revolver; it would need a larger revolver or lower leverage.` : null,
+          fullYears.length ? `The revolver is fully drawn (or over its limit) in ${fullYears.join(', ')}.` : null,
+          r.mezzWarn ? r.mezzWarn.replace(/^⚠ /, '') + '.' : null,
           su.sponsor < 0 ? 'Sponsor equity is negative — the structure is over-levered.' : null,
           r.entry.cashWarn ? 'The existing cash used exceeds the existing cash on the balance sheet.' : null,
           su.check !== 0 ? `Sources − uses = ${t(su.check)} (must be 0).` : null,
@@ -185,6 +195,7 @@ function LboPage({ a, f, r }) {
                   <tr><td>(−) Senior A outstanding</td><td>{t(w.senA)}</td></tr>
                   <tr><td>(−) Senior B outstanding</td><td>{t(w.senB)}</td></tr>
                   <tr><td>(−) Mezzanine outstanding (incl. PIK)</td><td>{t(w.mezz)}</td></tr>
+                  <tr><td>(−) Revolver outstanding</td><td>{t(w.rcf)}</td></tr>
                   <tr><td>(−) Lease liabilities</td><td>{t(w.leases)}</td></tr>
                   <tr><td>(−) Non-controlling interest</td><td>{t(w.nci)}</td></tr>
                   <tr><td>(+) Cash on balance sheet</td><td>{t(w.cash)}</td></tr>

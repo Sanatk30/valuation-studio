@@ -41,24 +41,27 @@ console.log('\n=== structure & look ===');
   const wb = res.wb;
   const inp = wb.getWorksheet('Inputs');
   ok(inp.getCell('B20').fill?.fgColor?.argb === 'FFFFF2CC' && inp.getCell('B20').font?.color?.argb === 'FF0000FF', 'inputs: blue on cream');
-  ok(inp.getCell('A46').value === 'Exit EV / EBITDA multiple (end of Year 5)', 'Inputs row 46 = exit multiple, as the template');
+  ok(inp.getCell('A49').value === 'Exit EV / EBITDA multiple (end of Year 5)', 'Inputs row 49 = exit multiple, as the revised template');
+  ok(inp.getCell('A44').value === 'Revolving credit facility – commitment (₹ Cr)', 'Inputs row 44 = revolver commitment');
   ok(inp.getCell('B19').value?.formula === 'Historicals!$D$13', 'entry EBITDA links to Historicals');
   const mdl = wb.getWorksheet('LBO Model');
-  ok(mdl.getCell('E47').value?.formula === 'MAX(0,E43+E44-E45-E46)*Inputs!$B$42', 'cash available for sweep as the template');
-  ok(mdl.getCell('E20').value?.formula === 'IFERROR(IF(E5<=Inputs!$G$35,Inputs!$I$35/Inputs!$G$35,0),0)+IFERROR(IF(E5<=Inputs!$G$36,Inputs!$I$36/Inputs!$G$36,0),0)+IFERROR(IF(E5<=Inputs!$G$37,Inputs!$I$37/Inputs!$G$37,0),0)', 'financing-fee amortisation as the template');
+  ok(mdl.getCell('E52').value?.formula === 'MAX(0,E48+E49-E50-E51)*Inputs!$B$42', 'cash available for sweep as the revised template');
+  ok(mdl.getCell('E49').value?.formula === 'MIN(MAX(0,Inputs!$B$44-E56),MAX(0,Inputs!$B$43-E48))' && mdl.getCell('E50').value?.formula === 'MIN(E56,MAX(0,E48-Inputs!$B$43))', 'revolver draw and repayment as the revised template');
+  ok(mdl.getCell('E63').value?.formula === 'IF(AND(ISNUMBER(Inputs!$G$35),E$5>Inputs!$G$35),0,IF(AND(ISNUMBER(Inputs!$G$35),Inputs!$G$35<5,E$5=Inputs!$G$35),E62,MIN(E62,Inputs!$C$35*Inputs!$F$35)))', 'Senior A: balloon at maturity inside the hold');
+  ok(mdl.getCell('E21').value?.formula === 'IFERROR(IF(E5<=Inputs!$G$35,Inputs!$I$35/Inputs!$G$35,0),0)+IFERROR(IF(E5<=Inputs!$G$36,Inputs!$I$36/Inputs!$G$36,0),0)+IFERROR(IF(E5<=Inputs!$G$37,Inputs!$I$37/Inputs!$G$37,0),0)', 'financing-fee amortisation as the template');
   ok(mdl.getCell('B16').fill?.fgColor?.argb === 'FFE7E6E6', 'not-applicable cells greyed');
   ok(mdl.views?.[0]?.state === 'frozen' && mdl.views[0].ySplit === 4, 'LBO Model frozen at B5');
   const ret = wb.getWorksheet('Returns');
-  ok(ret.getCell('B24').value?.formula === 'IF(AND(B21>0,B22>0),IRR(B19:G19),"NM")', 'IRR with Excel\'s IRR function');
+  ok(ret.getCell('B25').value?.formula === 'IF(AND(B22>0,B23>0),IRR(B20:G20),"NM")', 'IRR with Excel\'s IRR function');
   const sen = wb.getWorksheet('Sensitivity');
   ok(sen.getCell('E9').fill?.fgColor?.argb === 'FFEAF1DD' && sen.getCell('E9').font?.bold, 'sensitivity centre cell shaded');
   ok(res.X.get('LBO Model', 'A1') === 'Example Manufacturing Ltd – LBO Model', 'LBO Model title from Inputs!B5');
   const eng = wb.getWorksheet('Sensitivity Engine');
-  ok(eng.getCell('E81').value?.formula === 'D81*(1+Assumptions!E7+$B$77)', 'engine case 2 revenue with its growth shift');
+  ok(eng.getCell('E92').value?.formula === 'D92*(1+Assumptions!E7+$B$88)', 'engine case 2 revenue with its growth shift');
   const mand = checkLboWorkbook(model({ repay: 'mandatory' }), {}).wb;
-  ok(mand.getWorksheet('LBO Model').getCell('A46').value === 'Closing cash' && mand.getWorksheet('Inputs').getCell('A45').value === 'Exit EV / EBITDA multiple (end of Year 5)', 'mandatory only: no sweep rows, exit multiple at row 45');
+  ok(mand.getWorksheet('LBO Model').getCell('A54').value === 'Closing cash' && mand.getWorksheet('LBO Model').getCell('E52').value?.formula === '0' && mand.getWorksheet('Inputs').getCell('A49').value === 'Exit EV / EBITDA multiple (end of Year 5)', 'mandatory only: same rows, nothing swept, exit multiple at row 49');
   const sw = checkLboWorkbook(model({ repay: 'sweep' }), {}).wb;
-  ok(sw.getWorksheet('Inputs').getCell('F35').value === 'n.a. (sweep only)' && sw.getWorksheet('LBO Model').getCell('E52').value?.formula === '0', 'sweep only: no scheduled amortisation');
+  ok(sw.getWorksheet('Inputs').getCell('F35').value === 'n.a. (sweep only)' && sw.getWorksheet('LBO Model').getCell('E63').value?.formula === 'IF(AND(ISNUMBER(Inputs!$G$35),Inputs!$G$35<5,E$5=Inputs!$G$35),E62,0)', 'sweep only: no scheduled amortisation, balloon at maturity');
 }
 
 console.log('\n=== years ===');
@@ -83,6 +86,16 @@ run('blank drivers (all 0)', checkLboWorkbook(model({}, (d) => { d.drivers = {};
 run('blank historicals', checkLboWorkbook(model({}, (d) => { d.company.page = blankPage(); })));
 run('blank deal (fresh method)', checkLboWorkbook({ settings: { currency: 'INR', unit: 'Cr' }, company: {}, lbo: blankLboT() }));
 run('USD Mn', checkLboWorkbook(model({}, null, { currency: 'USD', unit: 'Mn' })));
+// the revised templates: revolver, balloon at maturity, lease payments
+for (const repay of ['mandatory', 'both', 'sweep']) {
+  run(`${repay}: revolver draws to protect minimum cash`, checkLboWorkbook(model({ repay }, (d) => { d.debt.senA.amort = 40; d.deal.cashUsed = 600; d.cash.rcf = 500; }), { tag: `rcf ${repay}` }));
+  run(`${repay}: revolver fully drawn, still short`, checkLboWorkbook(model({ repay }, (d) => { d.debt.senA.amort = 60; d.deal.cashUsed = 600; d.cash.rcf = 50; }), { tag: `rcf full ${repay}` }));
+  run(`${repay}: Senior A matures in Year 3 (balloon)`, checkLboWorkbook(model({ repay }, (d) => { d.debt.senA.tenor = 3; }), { tag: `balloon ${repay}` }));
+  run(`${repay}: no revolver, blank tenors`, checkLboWorkbook(model({ repay }, (d) => { d.cash.rcf = null; d.debt.senA.tenor = null; d.debt.senB.tenor = null; }), { tag: `no rcf ${repay}` }));
+}
+run('mezzanine tenor shorter than the hold (warning)', checkLboWorkbook(model({}, (d) => { d.debt.mezz.tenor = 3; })));
+run('3-year hold, Senior B matures in Year 2', checkLboWorkbook(model({ holdYears: 3, labels: null }, (d) => { for (const k of Object.keys(d.drivers)) d.drivers[k] = d.drivers[k].slice(0, 3); d.debt.senB.tenor = 2; })));
+run('no lease payments', checkLboWorkbook(model({}, (d) => { d.drivers.leasePay = []; })));
 
 console.log('\n=== what a cash shortfall means (the output names the cause) ===');
 {

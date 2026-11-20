@@ -124,7 +124,7 @@ for (let it = 0; it < RUNS; it++) {
   for (const t of ['senA', 'senB', 'mezz']) {
     l.debt[t] = { x: pick([rv(0, 5), null]), rate: pick([rv(0, 20), null]), amort: pick([rv(0, 50), null, 100]), tenor: pick([rv(0, 10), Math.round(rv(0, 10)), null]), feePct: pick([rv(0, 5), null]), pik: pick([rv(0, 10), null]) };
   }
-  l.cash = { sweepPct: pick([rv(0, 100), null, 100]), minCash: pick([rv(0, 500), null]) };
+  l.cash = { sweepPct: pick([rv(0, 100), null, 100]), minCash: pick([rv(0, 500), null]), rcf: pick([rv(0, 2000), null, 0]), rcfRate: pick([rv(0, 15), null]), rcfFee: pick([rv(0, 2), null]) };
   try {
     const r = computeLboT(A);
     clean({ ...r, sens: { ...r.sens, runs: null } }, 'lbo');
@@ -142,6 +142,11 @@ for (let it = 0; it < RUNS; it++) {
       if (S.sweep[j] > 1e-9 && S.cashClose[j] < S.minCash[j] - 1e-6) flag('sweep takes cash below the minimum', r.repay);
       if (S.bSweep[j] > 1e-9 && S.aClose[j] > 1e-6) flag('Senior B swept before Senior A is repaid', r.repay);
       if (!near(S.mClose[j], S.mOpen[j] * (1 + r.tranches.mezz.pik))) flag('PIK does not accrue on the opening mezzanine', it);
+      // the revolver: never negative, never above the commitment, and it holds the minimum cash while it has room
+      if (S.rClose[j] < -1e-9 || S.rClose[j] > r.rcf.commit + 1e-6) flag('revolver outside 0 … commitment', `${S.rClose[j]} ${r.rcf.commit}`);
+      if (S.rcfDraw[j] > 1e-9 && S.rcfRepay[j] > 1e-9) flag('revolver drawn and repaid in the same year', it);
+      if (S.rClose[j] < r.rcf.commit - 1e-6 && S.cashClose[j] < S.minCash[j] - 1e-6) flag('cash below the minimum while the revolver has room', `${S.cashClose[j]} ${S.minCash[j]}`);
+      if (r.tranches.senA.tenorSet && r.tranches.senA.tenor < r.m && j + 1 === r.tranches.senA.tenor && S.aClose[j] > 1e-6) flag('Senior A not repaid at maturity', it);
     }
   } catch (e) { flag(`throws: ${e.message}`, e.stack); }
 }

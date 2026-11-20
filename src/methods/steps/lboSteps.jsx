@@ -217,10 +217,15 @@ export const lboTransactionStep = () => ({
     f.x('lbo.deal.entryMultiple', 'Entry EV / EBITDA multiple', { hint: 'e.g. 10.0x — on the latest actual year’s EBITDA' }),
     f.money('lbo.deal.cashUsed', 'Existing cash used to fund the deal', { required: false, hint: 'e.g. 400.0 – must not exceed existing cash. Blank = 0.' }),
     f.pct('lbo.deal.txnFeePct', 'Transaction fees (% of entry EV)', { required: false, min: 0, hint: 'e.g. 2.0% – advisory, legal, due diligence, stamp duty. Blank = 0.' }),
-    ...(S(data).repay === 'mandatory' ? [] : [
-      f.pct('lbo.cash.sweepPct', 'Cash sweep (% of excess cash)', { min: 0, max: 100, hint: 'e.g. 100.0% – share of excess cash used to prepay senior debt' }),
-      f.money('lbo.cash.minCash', 'Minimum cash balance', { hint: 'e.g. 150.0 – operating cash kept in the business' }),
-    ]),
+    ...(S(data).repay === 'mandatory'
+      ? [f.money('lbo.cash.minCash', 'Minimum cash balance', { required: false, hint: 'e.g. 150.0 – operating cash kept in the business; the revolver draws to protect it. Blank = 0.' })]
+      : [
+        f.pct('lbo.cash.sweepPct', 'Cash sweep (% of excess cash)', { min: 0, max: 100, hint: 'e.g. 100.0% – share of excess cash used to prepay senior debt' }),
+        f.money('lbo.cash.minCash', 'Minimum cash balance', { hint: 'e.g. 150.0 – operating cash kept in the business' }),
+      ]),
+    f.money('lbo.cash.rcf', 'Revolving credit facility – commitment', { required: false, hint: 'e.g. 300.0 – undrawn at close; draws automatically to cover shortfalls. Blank or 0 = no revolver.' }),
+    f.pct('lbo.cash.rcfRate', 'Revolver interest rate (on drawn balance)', { required: false, min: 0, hint: 'e.g. 9.0% – on the opening drawn balance. Blank = 0.' }),
+    f.pct('lbo.cash.rcfFee', 'Revolver commitment fee (on undrawn amount)', { required: false, min: 0, hint: 'e.g. 0.5% – on the opening undrawn commitment. Blank = 0.' }),
   ],
   Extra: TransactionExtra,
   extraBelow: true,
@@ -235,7 +240,7 @@ function ExitReadout({ data, company }) {
   return (
     <div className={`readout${bad ? ' warn' : ''}`}>
       IRR <b className="acc">{pct1(r.irr)}</b> · MOIC <b>{fin(r.moic) ? `${r.moic.toFixed(2)}x` : 'NM'}</b> · exit equity <b>{fmtTpl(r.exit.equity, 'n1', CURRENCIES[company.currency]?.locale)}</b>
-      {bad && ' — cash goes negative in at least one year: the structure would need a revolver or lower leverage.'}
+      {bad && ' — cash goes negative in at least one year even after the revolver: the structure would need a larger revolver or lower leverage.'}
     </div>
   );
 }
