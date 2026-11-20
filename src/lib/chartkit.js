@@ -167,21 +167,30 @@ export function themed(core, { zoom = false } = {}) {
 /**
  * Terminal-style waterfall: floating deltas over an invisible base,
  * totals restart from zero. items: { label, value, total? }.
+ * Values are stacked SIGNED with stackStrategy 'all' (ECharts otherwise stacks
+ * negatives and positives apart), so a level below zero — negative equity, a
+ * negative PV of terminal value — is drawn below the axis where it belongs.
  */
 export function waterfallOption(items, fmt, { showLabels = true } = {}) {
   let run = 0;
   const base = [], val = [], labels = [];
+  const bar = (signed, kind, end) => ({
+    value: signed, signed, kind,
+    // the label sits on the bar's outer end: above a bar ending above zero, below one ending below it
+    label: { position: end < 0 ? 'bottom' : 'top' },
+    itemStyle: { borderRadius: signed < 0 ? [0, 0, 3, 3] : [3, 3, 0, 0] },
+  });
   items.forEach((it) => {
     labels.push(it.label);
     if (it.total) {
       run = it.value;
       base.push(0);
-      val.push({ value: Math.abs(it.value), signed: it.value, kind: 'total' });
+      val.push(bar(it.value, 'total', it.value));
     } else {
       const start = run;
       run += it.value;
-      base.push(Math.min(start, run));
-      val.push({ value: Math.abs(it.value), signed: it.value, kind: it.value >= 0 ? 'up' : 'down' });
+      base.push(start);
+      val.push(bar(it.value, it.value >= 0 ? 'up' : 'down', run));
     }
   });
   const kColor = { total: COL.teal, up: COL.green, down: COL.red };
@@ -202,9 +211,9 @@ export function waterfallOption(items, fmt, { showLabels = true } = {}) {
     yAxis: yVal({ axisLabel: { color: COL.axis, formatter: (v) => fmt(v) } }),
     grid: { left: 8, right: 14, top: 32, bottom: 8, containLabel: true },
     series: [
-      { name: 'base', type: 'bar', stack: 'w', silent: true, itemStyle: { color: 'transparent' }, emphasis: { itemStyle: { color: 'transparent' } }, data: base },
+      { name: 'base', type: 'bar', stack: 'w', stackStrategy: 'all', silent: true, itemStyle: { color: 'transparent' }, emphasis: { itemStyle: { color: 'transparent' } }, data: base },
       {
-        name: 'Δ', type: 'bar', stack: 'w', barMaxWidth: 42,
+        name: 'Δ', type: 'bar', stack: 'w', stackStrategy: 'all', barMaxWidth: 42,
         itemStyle: { color: (p) => vgrad(kColor[val[p.dataIndex].kind], 0.95, 0.45), borderRadius: [3, 3, 0, 0] },
         label: showLabels
           ? { show: true, position: 'top', color: COL.axisStrong, fontFamily: 'Inter, sans-serif', fontSize: 9.5, formatter: (p) => fmt(val[p.dataIndex].signed) }

@@ -44,11 +44,27 @@ export function applyListing(data, mapped, { companyPaths = null, methodId = nul
   const pick = (src, keys) => Object.fromEntries(keys.filter((k) => src && finite(src[k])).map((k) => [k, src[k]]));
   const asked = companyPaths ? COMPANY_KEYS.filter((k) => companyPaths.includes(`company.${k}`)) : COMPANY_KEYS;
   const ownCompanyKeys = asked.filter((k) => k in (data.company || {}));
-  next.company = { ...data.company, ...pick(mapped.company, ownCompanyKeys) };
-  if (data.drivers) next.drivers = { ...data.drivers, ...pick(mapped.drivers, ['revenue0', 'ebitda0', 'nwc0']) };
-  if (data.ts && mapped.ts && TS_BALANCE_METHODS.includes(methodId)) next.ts = { ...data.ts, ...pick(mapped.ts, ['startingPPE', 'equity0']) };
+  // section → the keys this method takes from a listing
+  const targets = { company: ownCompanyKeys };
+  if (data.drivers) targets.drivers = ['revenue0', 'ebitda0', 'nwc0'];
+  if (data.ts && TS_BALANCE_METHODS.includes(methodId)) targets.ts = ['startingPPE', 'equity0'];
+  // A value the PREVIOUS listing filled, which this listing does not report and the user has
+  // not changed since, is cleared: it belonged to the other company (e.g. HDFC Bank reports no
+  // EBITDA, so the earlier listing's EBITDA would otherwise stay). What the user typed is kept.
+  const before = data.listing?.applied || {};
+  const applied = {};
+  for (const [sec, keys] of Object.entries(targets)) {
+    const got = pick(mapped[sec], keys);
+    const cur = { ...(data[sec] || {}) };
+    for (const k of keys) {
+      const path = `${sec}.${k}`;
+      if (k in got) { cur[k] = got[k]; applied[path] = got[k]; }
+      else if (path in before && cur[k] === before[path]) cur[k] = null;
+    }
+    next[sec] = cur;
+  }
   if ('history' in data && mapped.history) next.history = mapped.history;
-  next.listing = mapped.listing || null;
+  next.listing = mapped.listing ? { ...mapped.listing, applied } : null;
   return next;
 }
 

@@ -29,7 +29,7 @@
  * for the ranking only — nothing here is written into the model; the ticked
  * peers go through the normal fetch and rate confirmation.
  */
-import { searchSymbols, fetchRecommendations, parseListing, ltmPeriod, ebitdaSuspect, chartUrl, UNIT_FACTOR } from './yahoo.js';
+import { searchSymbols, fetchRecommendations, parseListing, ltmPeriod, ebitdaSuspect, chartUrl, UNIT_FACTOR, timeseriesWindow } from './yahoo.js';
 import { fetchLiveRates } from './fx.js';
 import { YF_BASE } from './yfBase.js';
 
@@ -279,12 +279,12 @@ async function profileOf(symbol, opts) {
 
 async function snapshotOf(symbol, opts) {
   const base = opts.base ?? YF_BASE;
-  const now = Math.floor(Date.now() / 1000);
-  const from = now - 4 * 366 * 86400;
+  // whole-day window: the same URL all day, so the relay / browser cache can answer a repeat
+  const { until, recentFrom } = timeseriesWindow(Date.now());
   try {
     const [chart, ts] = await Promise.all([
       getJson(chartUrl(symbol, base), opts.fetchImpl),
-      getJson(snapshotUrl(symbol, from, now, base), opts.fetchImpl),
+      getJson(snapshotUrl(symbol, recentFrom, until, base), opts.fetchImpl),
     ]);
     return parseSnapshot({ symbol, chart, ts });
   } catch {

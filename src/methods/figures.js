@@ -29,7 +29,8 @@ const statRange = (sel) => `${STAT_SHORT[sel.low]}–${STAT_SHORT[sel.high]}`;
  * page, only that row is offered to Combined.
  */
 function impliedFigures(prefix, name, rows, headline, note) {
-  const pick = headline ? rows.filter((r) => r.key === headline) : rows;
+  // a headline whose multiple has since been unticked no longer has a row: offer every row instead
+  const pick = headline && rows.some((r) => r.key === headline) ? rows.filter((r) => r.key === headline) : rows;
   return pick.filter((r) => isNum(r.price.mid)).map((r) => {
     const ends = [r.price.low, r.price.high].filter(isNum);
     return {

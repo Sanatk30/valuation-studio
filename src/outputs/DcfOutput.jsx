@@ -119,7 +119,7 @@ function DcfPage({ a, f, r }) {
         sub={`${cfK.long} over ${m} forecast year${m === 1 ? '' : 's'} (${m === 1 ? fc[0] : `${fc[0]}–${fc[m - 1]}`}), discounted at ${r.cf === 'fcff' ? 'the WACC' : 'the cost of equity'} ${t(v.rate, 'pct')} with end-of-year discounting${r.settings.valDate ? ` from ${fmtDate(r.settings.valDate)}` : ''}; terminal value by ${tvName}.`}
         warnings={[
           r.blankYears.length ? `Blank drivers in ${r.blankYears.map((j) => fc[j]).join(', ')} count as 0, as in the template — fill them on the Assumptions step.` : null,
-          r.tv === 'gordon' && !(v.rate > v.g) ?`The discount rate (${t(v.rate, 'pct')}) is not above the terminal growth (${t(v.g, 'pct')}) — the terminal value is NM, as in the template.` : null,
+          r.tv === 'gordon' && !(v.rate > v.g) ? `The discount rate (${t(v.rate, 'pct')}) is not above the terminal growth (${t(v.g, 'pct')}) — the terminal value is NM, as in the template.` : null,
           fin(num(v.tvShare)) && v.tvShare > 0.75 ? `The terminal value is ${t(v.tvShare, 'pct')} of the total — above ~75% the value depends heavily on the terminal assumptions.` : null,
         ]}
         kpis={[

@@ -31,8 +31,10 @@ export const stepValid = (step, data, ctx) => {
  *              that is neither valid nor skipped; = steps.length when complete)
  */
 export function methodProgress(def, mstate, ctx) {
-  const data = mstate.data;
-  const skipped = mstate.skipped || {};
+  // a record saved without this method reads as a blank, not-started method
+  let data = mstate?.data;
+  if (data == null) { try { data = blankMethodData(def.id); } catch { data = null; } }
+  const skipped = mstate?.skipped || {};
   const states = def.steps.map((s) => {
     if (s.optional && skipped[s.id]) return 'skipped';
     return stepValid(s, data, ctx) ? 'valid' : 'invalid';

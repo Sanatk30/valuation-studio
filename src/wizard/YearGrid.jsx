@@ -14,7 +14,13 @@ export default function YearGrid({ heads, rows, onCell, onMode, onPasteBlock, no
     if (!/[\t\n]/.test(text.trim())) return;          // single value: normal paste
     e.preventDefault();
     const block = text.replace(/\r/g, '').split('\n').filter((l, i, arr) => l.length || i < arr.length - 1)
-      .map((l) => l.split('\t').map((s) => parseNum(s)));
+      .map((l) => {
+        const cells = l.split('\t');
+        // a leading text label ("Revenue", copied with its row) is not a value: drop it, so the
+        // figures land in the cells they were copied from instead of one column to the right
+        if (cells.length > 1 && cells[0].trim() && Number.isNaN(parseNum(cells[0]))) cells.shift();
+        return cells.map((s) => parseNum(s));
+      });
     onPasteBlock(r, c, block);
   };
 

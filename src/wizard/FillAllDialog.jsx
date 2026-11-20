@@ -16,7 +16,7 @@ export default function FillAllDialog({ def, mstate, ctx, company, onClose, onAp
   const [jsonErr, setJsonErr] = useState('');
 
   const setData = (fn) => setDraft((d) => fn(d));
-  const dctx = { ...ctx, record: { ...ctx.record, methods: { ...ctx.record.methods, [def.id]: { ...mstate, data: draft } } } };
+  const dctx = { ...ctx, record: { ...ctx.record, methods: { ...ctx.record.methods, [def.id]: { ...mstate, data: draft, skipped } } } };   // the dialog's own skips (e.g. history → Ratio settings)
 
   const statuses = def.steps.map((s) => {
     if (s.optional && skipped[s.id]) return 'skipped';

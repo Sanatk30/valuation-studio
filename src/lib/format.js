@@ -76,7 +76,8 @@ export function parseInputNumber(s) {
   const t = String(s ?? '').trim();
   if (!t) return null;
   const neg = /^\(.*\)$/.test(t);
-  const clean = t.replace(/[(),\s]/g, '').replace(/^[\u2212\u2013]/, '-');
+  // a trailing % (a %-formatted Excel cell pasted into a % box) is dropped: the boxes hold percent
+  const clean = t.replace(/[(),\s]/g, '').replace(/%$/, '').replace(/^[\u2212\u2013]/, '-');
   if (!/^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(clean)) return NaN;
   const v = Number(clean);
   return Number.isFinite(v) ? (neg ? -v : v) : NaN;

@@ -163,8 +163,10 @@ function StepRail({ def, prog, view, onGo }) {
   return (
     <nav className="step-rail" aria-label="Steps">
       {def.steps.map((s, i) => {
-        const st = prog.states[i];
         const can = i <= prog.reachable;
+        // a step beyond the first unfinished one shows its number, not ✓: a step with nothing
+        // required (DCF / LBO Assumptions, blank = 0) is "valid" even before Settings sets its years
+        const st = can ? prog.states[i] : 'invalid';
         return (
           <button
             key={s.id}
