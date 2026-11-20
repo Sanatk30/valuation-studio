@@ -8,7 +8,7 @@ import { parseListing, ltmPeriod, parseSearch } from '../src/lib/yahoo.js';
 import { parseRateResponse } from '../src/lib/fx.js';
 import {
   parseSnapshot, scoreCandidate, buildReference, rankCandidates, findPeers, makeConvert, WEIGHTS, SNAPSHOT_TYPES, mapLimit, resultStale,
-  groupOf, normName, dedupeListings, searchTerms, marketOf, secondaryListing, popularityOf,
+  groupOf, normName, businessWords, dedupeListings, searchTerms, marketOf, secondaryListing, popularityOf,
 } from '../src/lib/peerFinder.js';
 import { computePage, setCell } from '../src/lib/engine/companyPage.js';
 import { blankPeer } from '../src/lib/engine/comps.js';
@@ -141,38 +141,46 @@ console.log('\n=== groups and fit ===');
   const full = { symbol: 'X', industry: 'Semis', sector: 'Tech', exchange: 'NASDAQ', snap: { financialCurrency: 'USD', marketCap: { value: 1000, currency: 'USD' }, revenue: { value: 500, currency: 'USD' }, margin: 0.30, growth: 0.10 } };
   const pt = (r, k) => r.parts.find((p) => p.key === k);
   const a = scoreCandidate(ref, full, 'USD');
-  ok(a.group === 1 && a.score === 100 && a.coverage === 4 && a.max === 100, 'identical company: same industry, fit 100 on 4 of 4 signals');
+  ok(a.group === 1 && a.score === 100 && a.coverage === 4 && a.max === 85, 'identical company: same industry, fit 100 on 4 of 5 signals (line of business NA without industry names)');
   ok(!a.parts.some((p) => p.key === 'industry'), 'industry is not part of the fit — it decides the group');
 
   ok(groupOf(ref, { industry: 'Software', sector: 'Tech' }) === 2, 'same sector, other industry → group 2');
   ok(groupOf(ref, { industry: 'Banks', sector: 'Financials' }) === 3, 'other sector → group 3');
   ok(groupOf(ref, { industry: null, sector: 'Tech' }) === 2 && groupOf(ref, { industry: null, sector: null }) === 0, 'sector only → 2; nothing reported → 0 (not guessed)');
   ok(groupOf({ industry: null, sector: null }, full) === 0, 'target with no classification → 0');
+  ok(groupOf({ industry: 'Consumer Electronics', sector: 'Technology' }, { industry: 'Computer Hardware', sector: 'Technology' }) === 4, 'a closely related industry → group 4 (ranked after the same industry)');
+  ok(groupOf({ industry: 'Banks—Regional', sector: 'Financial Services' }, { industry: 'Banks—Diversified', sector: 'Financial Services' }) === 4, 'the two bank types are related');
+  ok(rankCandidates([{ group: 2, score: 90, coverage: 4, order: 0 }, { group: 4, score: 10, coverage: 4, order: 1 }, { group: 1, score: 5, coverage: 4, order: 2 }]).map((c) => c.group).join() === '1,4,2', 'groups rank 1, related, then the rest of the sector');
+  ok(businessWords('Asian Paints Limited', ['Berger Paints India Limited', 'Kansai Nerolac Paints Limited', 'Gujarat Fluorochemicals Limited', 'Atul Ltd', 'Linde India Limited']).join() === 'paint', 'line of business: "paint" recurs across the industry');
+  ok(businessWords('Tata Consultancy Services Limited', ['Infosys Limited', 'Tata Technologies Limited', 'Wipro Limited', 'HCL Technologies Limited']).length === 0, 'a group name used once ("Tata") is not a line of business');
+  ok(businessWords('HDFC Bank Limited', ['ICICI Bank Limited', 'Axis Bank Limited', 'Kotak Mahindra Bank Limited', 'State Bank of India']).length === 0, 'a word every name shares ("bank") separates nothing');
+  const { INDUSTRY_ANCHORS } = await import('../src/lib/peerAnchors.js');
+  ok(Object.values(INDUSTRY_ANCHORS).every((l) => l.length >= 3 && new Set(l).size === l.length), 'anchor lists: at least 3 distinct listings each');
 
   const b = scoreCandidate(ref, { ...full, symbol: 'X.L', exchange: 'LSE',
     snap: { ...full.snap, marketCap: { value: 10000, currency: 'USD' }, margin: 0.40, growth: 0.35 } }, 'USD');
-  ok(pt(b, 'market').pts === 12, 'other home market, same reporting currency = 12 of 20');
-  ok(near(pt(b, 'size').pts, 0), '10× the market cap = 0 of 40');
-  ok(near(pt(b, 'margin').pts, 25 * 0.5), '10 pts margin gap = half of 25');
+  ok(pt(b, 'market').pts === 9, 'other home market, same reporting currency = 9 of 15');
+  ok(near(pt(b, 'size').pts, 0), '10× the market cap = 0 of 35');
+  ok(near(pt(b, 'margin').pts, 20 * 0.5), '10 pts margin gap = half of 20');
   ok(near(pt(b, 'growth').pts, 0), '25 pts growth gap = 0 of 15');
-  ok(b.score === Math.round((12 + 0 + 12.5 + 0) / 100 * 100), `fit = points ÷ available (${b.score})`);
+  ok(b.score === Math.round((9 + 0 + 10 + 0) / 85 * 100), `fit = points ÷ available (${b.score}; line of business NA here)`);
   const b2 = scoreCandidate(ref, { ...full, symbol: 'X.NS', snap: { ...full.snap, financialCurrency: 'INR' } }, 'USD');
   ok(pt(b2, 'market').pts === 0 && /India/.test(pt(b2, 'market').text), 'other market and currency = 0, named');
-  ok(pt(scoreCandidate(ref, full, 'USD'), 'market').pts === 20, 'same home market = 20');
+  ok(pt(scoreCandidate(ref, full, 'USD'), 'market').pts === 15, 'same home market = 15');
 
   const c = scoreCandidate(ref, { ...full, snap: { ...full.snap, marketCap: { value: 316.227766, currency: 'USD' } } }, 'USD');
-  ok(near(pt(c, 'size').pts, 40 * 0.5, 1e-6), '√10 smaller = half of the size points (log scale)');
+  ok(near(pt(c, 'size').pts, 35 * 0.5, 1e-6), '√10 smaller = half of the size points (log scale)');
 
   const d = scoreCandidate({ ...ref, marketCap: null }, { ...full, snap: { ...full.snap, marketCap: null, revenue: { value: 250, currency: 'USD' } } }, 'USD');
-  ok(/revenue/.test(pt(d, 'size').text) && near(pt(d, 'size').pts, 40 * (1 - Math.log10(2))), 'no market cap → size on revenue');
+  ok(/revenue/.test(pt(d, 'size').text) && near(pt(d, 'size').pts, 35 * (1 - Math.log10(2))), 'no market cap → size on revenue');
 
   const e = scoreCandidate(ref, { symbol: 'Y', industry: 'Semis', sector: 'Tech', exchange: 'NASDAQ', snap: null }, 'USD');
-  ok(e.coverage === 1 && e.max === 20 && e.score === 100 && pt(e, 'margin').pts === null, 'missing signals are NA and excluded — never counted as 0 or guessed');
+  ok(e.coverage === 1 && e.max === 15 && e.score === 100 && pt(e, 'margin').pts === null, 'missing signals are NA and excluded — never counted as 0 or guessed');
 
   const f = scoreCandidate(ref, { ...full, snap: { ...full.snap, financialCurrency: 'EUR', marketCap: { value: 900, currency: 'EUR' }, revenue: { value: 450, currency: 'EUR' } } }, 'USD', {});
   ok(pt(f, 'size').pts === null && /FX/.test(pt(f, 'size').text), 'a foreign size with no FX rate is NA, not compared unconverted');
   const g = scoreCandidate(ref, { ...full, snap: { ...full.snap, financialCurrency: 'EUR', marketCap: { value: 900, currency: 'EUR' } } }, 'USD', { EUR: { rate: 1.1 } });
-  ok(near(pt(g, 'size').pts, 40 * (1 - Math.abs(Math.log10(990 / 1000)))), 'a foreign size converts at the live rate');
+  ok(near(pt(g, 'size').pts, 35 * (1 - Math.abs(Math.log10(990 / 1000)))), 'a foreign size converts at the live rate');
   const adr = scoreCandidate({ ...ref, marketCap: 1000, revenue: 500 }, { ...full, snap: { ...full.snap, adr: true, marketCap: null, revenue: { value: 400, currency: 'USD' } } }, 'USD');
   ok(adr.sizeBasis === 'revenue', 'a receipt (no market cap) is sized on revenue');
 

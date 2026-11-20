@@ -17,20 +17,33 @@
  *                  Funds and indices drop out; one company listed on several
  *                  exchanges (INFY, INFY.NS, INFY.BO …) is kept once, on the
  *                  seed's exchange or home market when it trades there.
+ *                    anchors      a few well-known listings of the seed's
+ *                                 industry and its related industries
+ *                                 (peerAnchors.js) — hints only: each counts
+ *                                 by Yahoo's own classification, and seeds the
+ *                                 crawl where co-watch lists follow popularity
+ *                                 (NIKE → Starbucks) rather than industry.
  *   3. Group     — Yahoo's classification decides who is a peer at all:
- *                    1 same industry · 2 same sector, other industry ·
+ *                    1 same industry · 4 a closely related industry
+ *                    (Consumer Electronics ↔ Computer Hardware …) ·
+ *                    2 same sector, other industry ·
  *                    3 other sector — listed apart, never ranked as peers.
  *   4. Figures   — for up to `compareSize` names of groups 1–2 (same industry
  *                  first): price, shares and the reported LTM revenue / EBITDA
  *                  and the last two fiscal years' revenue.
  *   5. Fit       — inside each group, four signals, each shown with its reason:
- *                    size    40 at 1×, falling to 0 at 10× apart (log scale),
+ *                    size    35 at 1×, falling to 0 at 10× apart (log scale),
  *                            on market cap, or on LTM revenue when a market
  *                            cap is missing on either side
- *                    margin  25 at the same EBITDA margin, 0 at 20 pts apart (LTM;
+ *                    margin  20 at the same EBITDA margin, 0 at 20 pts apart (LTM;
  *                            the latest fiscal year when LTM EBITDA is not reported)
  *                    growth  15 at the same revenue growth, 0 at 25 pts apart
- *                    market  20 same home market · 12 same reporting currency
+ *                    market  15 same home market · 9 same reporting currency
+ *                    business 15 when the candidate's name carries a word of
+ *                            the target's name that recurs across its industry
+ *                            ("Paints" for Asian Paints: Yahoo files paint makers
+ *                            under Specialty Chemicals with fluorochemicals and
+ *                            explosives) — NA when the target's name has none
  *                  Fit = points ÷ points available × 100. A signal either
  *                  side lacks is not scored (NA) — never guessed — and the
  *                  coverage ("3 of 4 signals") is shown beside the fit.
@@ -44,9 +57,10 @@
 import { searchSymbols, parseSearch, fetchRecommendations, parseListing, ltmPeriod, ebitdaSuspect, chartUrl, UNIT_FACTOR, timeseriesWindow } from './yahoo.js';
 import { fetchLiveRates } from './fx.js';
 import { YF_BASE } from './yfBase.js';
+import { anchorsOf, relatedIndustry, relatedIndustries } from './peerAnchors.js';
 
-export const WEIGHTS = { size: 40, margin: 25, growth: 15, market: 20 };
-const SAME_CURRENCY_PTS = 12;
+export const WEIGHTS = { size: 35, margin: 20, growth: 15, market: 15, business: 15 };
+const SAME_CURRENCY_PTS = 9;
 export const MIN_SIZE_RATIO = 0.01;   // a candidate under 1% of the target's size is listed apart as too small
 const SIZE_SPAN = 1;        // log10 distance at which size scores 0 (10×)
 const MARGIN_SPAN = 0.20;   // 20 percentage points
@@ -244,20 +258,38 @@ export function searchTerms(industry, sameIndustryNames = [], seedName = '', max
 
 /* ------------------------------------------------------------ scoring */
 
+const stem = (w) => (w.length > 4 && w.endsWith('s') ? w.slice(0, -1) : w);
+
+/**
+ * Words of the target's name that tell its line of business: a word (4+
+ * letters, not generic) that also appears in at least two OTHER names of its
+ * industry. "Asian Paints" → "paint" (Berger Paints, Kansai Nerolac Paints …);
+ * a group name such as "Tata" or a word every bank shares still qualifies
+ * only by recurring, and a word all candidates carry ranks no one apart.
+ */
+export function businessWords(seedName, sameIndustryNames = []) {
+  const words = (n) => [...new Set(normName(n).split(' ').filter((w) => w.length >= 4 && !GENERIC.has(w) && !/^\d+$/.test(w)).map(stem))];
+  const others = sameIndustryNames.map(words);
+  const k = (w) => others.filter((ws) => ws.includes(w)).length;
+  // recurring, but not on (almost) every name — then it separates nothing
+  return words(seedName).filter((w) => k(w) >= 2 && k(w) < Math.max(3, others.length * 0.8));
+}
+
 /** Popularity from an exact-symbol search hit (score − 10,000,000), else null. */
 export const popularityOf = (hit) => (hit && fin(hit.score) && hit.score >= 1e7 ? hit.score - 1e7 : null);
 const pop = (c) => (fin(c.popularity) ? c.popularity : -1);
 
-/** 1 same industry · 2 same sector, other industry · 3 other sector · 0 not classified on either side. */
+/** 1 same industry · 4 related industry · 2 same sector, other industry · 3 other sector · 0 not classified on either side. */
 export function groupOf(ref, c) {
   if (ref.industry && c.industry) {
     if (up(ref.industry) === up(c.industry)) return 1;
+    if (relatedIndustry(ref.industry, c.industry)) return 4;
     return ref.sector && c.sector && up(ref.sector) === up(c.sector) ? 2 : 3;
   }
   if (ref.sector && c.sector) return up(ref.sector) === up(c.sector) ? 2 : 3;
   return 0;
 }
-export const GROUP_LABEL = { 1: 'Same industry', 2: 'Same sector, other industry', 0: 'Industry not reported', 3: 'Other sector' };
+export const GROUP_LABEL = { 1: 'Same industry', 4: 'Related industry', 2: 'Same sector, other industry', 0: 'Industry not reported', 3: 'Other sector' };
 
 
 /**
@@ -350,13 +382,21 @@ export function scoreCandidate(ref, c, currency, rates = {}) {
   else if (cc || cmkt) add('market', 0, `Other market (${[cmkt && marketName(cmkt), c.exchange, cc].filter(Boolean).join(', ')})`);
   else add('market', null, 'Market not reported');
 
+  // line of business: a recurring industry word of the target's name (see businessWords)
+  const bw = ref.businessWords || [];
+  if (bw.length) {
+    const own = new Set(normName(c.name).split(' ').map(stem));
+    const hit = bw.find((w) => own.has(w));
+    add('business', hit ? WEIGHTS.business : 0, hit ? `Name shares “${hit}” with the target — same line of business` : `Name does not carry “${bw.join('” / “')}”`);
+  } else add('business', null, 'Line of business not told by the name');
+
   const scored = parts.filter((p) => p.pts !== null);
   const max = scored.reduce((s, p) => s + p.max, 0);
   const pts = scored.reduce((s, p) => s + p.pts, 0);
   return { group, score: max > 0 ? Math.round((pts / max) * 100) : null, max, coverage: scored.length, parts, sizeRatio: ratio, sizeBasis: basis };
 }
 
-const GROUP_ORDER = { 1: 0, 2: 1, 0: 2, 3: 3 };
+const GROUP_ORDER = { 1: 0, 4: 1, 2: 2, 0: 3, 3: 4 };
 /** Best first: group (same industry first), then fit, then signals covered, then pool order. */
 export function rankCandidates(list) {
   return [...list].sort((a, b) => {
@@ -472,7 +512,7 @@ export async function findPeers({
   };
 
   // co-watched names → profiles (one search each, capped)
-  const profileAll = async (symbols, source) => {
+  const profileAll = async (symbols, source, countDrops = true) => {
     const todo = symbols.filter((s) => !tried.has(up(s)) && !skipSym.has(up(s))).slice(0, Math.max(0, maxProfiles - profiles));
     todo.forEach((s) => tried.add(up(s)));
     let done = 0;
@@ -482,12 +522,19 @@ export async function findPeers({
       return p;
     });
     profiles += todo.length;
-    got.forEach((p) => { if (!p) dropped++; else if (!skipped(p)) addProfiled(p, source); });
+    got.forEach((p) => { if (!p) { if (countDrops) dropped++; } else if (!skipped(p)) addProfiled(p, source); });
   };
 
   onProgress(`Collecting names co-watched with ${seed.symbol}…`);
   const first = await fetchRecommendations(seed.symbol, 20, opts).catch(() => []);
   await profileAll(first.map((r) => r.symbol), 'co-watched');
+
+  // anchors: well-known listings of the industry and its related industries (hints — Yahoo's class decides)
+  if (seed.industry) {
+    onProgress(`Checking well-known ${seed.industry} listings…`);
+    const anchors = [...anchorsOf(seed.industry), ...relatedIndustries(seed.industry).flatMap((ind) => anchorsOf(ind).slice(0, 5))];
+    await profileAll([...new Set(anchors)], 'industry anchors', false);   // a renamed anchor ticker is not a dropped candidate
+  }
 
   // search on the industry's own words, in the seed's home market
   if (seed.industry) {
@@ -580,6 +627,7 @@ export async function findPeers({
 
   const ref = buildReference({ inputs, seed: { ...seed, snap: seedSnap }, currency, unit, rates: fx });
   ref.market = seedMarket;
+  ref.businessWords = businessWords(seed.name, grouped.filter((c) => c.group === 1).map((c) => c.name));
   const scoredAll = withSnap.map((c) => ({ ...c, ...scoreCandidate(ref, c, currency, fx) }));
   // under 1% of the target's size is not a comparable, however close its margins: listed apart
   const tooSmall = scoredAll.filter((c) => fin(c.sizeRatio) && c.sizeRatio < MIN_SIZE_RATIO)

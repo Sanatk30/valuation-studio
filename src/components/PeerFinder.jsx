@@ -4,10 +4,11 @@ import { UNIT_FACTOR } from '../lib/yahoo.js';
 import { fmtMoney, fmtPct } from '../lib/format.js';
 import { YF_HINT } from '../lib/yfBase.js';
 
-const SIGNAL_LABEL = { market: 'Market', size: 'Size', margin: 'EBITDA margin', growth: 'Growth' };
+const SIGNAL_LABEL = { market: 'Market', size: 'Size', margin: 'EBITDA margin', growth: 'Growth', business: 'Line of business' };
 const N_SIGNALS = Object.keys(WEIGHTS).length;
 const GROUP_NOTE = {
   1: 'Yahoo classifies these in the same industry as the target — the comparable set.',
+  4: 'A closely related industry (e.g. Computer Hardware for Consumer Electronics): often competitors valued alike — check the business mix before ticking.',
   2: 'Same sector, other industry: related businesses, not direct peers. Tick one only if you know it competes.',
   0: 'Yahoo reports no industry for these (or for the target), so they cannot be grouped.',
 };
@@ -39,19 +40,19 @@ export default function PeerFinder({ company, inputs, defaultSeed = '', exclude 
   const [res, setRes] = useState(null);
   const [ticked, setTicked] = useState(() => new Set());
   const [open, setOpen] = useState(null);
-  const [shown, setShown] = useState(() => new Set([1]));   // groups whose rows are shown
+  const [shown, setShown] = useState(() => new Set([1, 4]));   // groups whose rows are shown
   const uf = UNIT_FACTOR[company.unit];
 
   const run = async () => {
     if (!seed.trim() || running) return;
-    setRunning(true); setErr(''); setRes(null); setTicked(new Set()); setOpen(null); setProgress(''); setShown(new Set([1]));
+    setRunning(true); setErr(''); setRes(null); setTicked(new Set()); setOpen(null); setProgress(''); setShown(new Set([1, 4]));
     try {
       const out = await findPeers({
         seed: seed.trim(), inputs, currency: company.currency, unit: company.unit, exclude, onProgress: setProgress,
       });
       setRes(out);
       if (!out.candidates.length) setErr('No listed company in the target’s industry or sector was found that is not already in the set — add peers by ticker.');
-      else if (!out.candidates.some((c) => c.group === 1)) setShown(new Set([1, 2, 0]));
+      else if (!out.candidates.some((c) => c.group === 1)) setShown(new Set([1, 4, 2, 0]));
     } catch (e) {
       setErr(`${e?.message || 'Peer search failed'}${/Yahoo returned|fetch/i.test(e?.message || '') ? ` — ${YF_HINT}.` : ''}`);
     } finally {
@@ -67,7 +68,7 @@ export default function PeerFinder({ company, inputs, defaultSeed = '', exclude 
   const sameInd = res ? res.candidates.filter((c) => c.group === 1) : [];
   const tickTop = (k) => setTicked(new Set(sameInd.slice(0, k).map((c) => c.symbol)));
   const toggleGroup = (g) => setShown((s0) => { const n = new Set(s0); if (n.has(g)) n.delete(g); else n.add(g); return n; });
-  const groups = res ? [1, 2, 0].map((g) => ({ g, rows: res.candidates.filter((c) => c.group === g) })).filter((x) => x.rows.length) : [];
+  const groups = res ? [1, 4, 2, 0].map((g) => ({ g, rows: res.candidates.filter((c) => c.group === g) })).filter((x) => x.rows.length) : [];
   const money = (v) => (fin(v) && fin(uf) ? fmtMoney(v / uf, company, 0) : 'NA');
   const ref = res?.ref;
 
