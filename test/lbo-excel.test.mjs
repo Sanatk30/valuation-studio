@@ -10,7 +10,7 @@
 import { checkLboWorkbook } from './helpers/lboChecks.mjs';
 import { sampleLboData } from './fixtures/lboSample.mjs';
 import { blankPage } from '../src/lib/engine/companyPage.js';
-import { blankLboT } from '../src/lib/engine/lboTemplate.js';
+import { blankLboT, computeLboT } from '../src/lib/engine/lboTemplate.js';
 
 let checks = 0, failures = 0;
 const ok = (cond, msg) => { checks++; if (!cond) { failures++; console.error('FAIL:', msg); } };
@@ -83,6 +83,20 @@ run('blank drivers (all 0)', checkLboWorkbook(model({}, (d) => { d.drivers = {};
 run('blank historicals', checkLboWorkbook(model({}, (d) => { d.company.page = blankPage(); })));
 run('blank deal (fresh method)', checkLboWorkbook({ settings: { currency: 'INR', unit: 'Cr' }, company: {}, lbo: blankLboT() }));
 run('USD Mn', checkLboWorkbook(model({}, null, { currency: 'USD', unit: 'Mn' })));
+
+console.log('\n=== what a cash shortfall means (the output names the cause) ===');
+{
+  // cash sweep only: no mandatory repayment, so a shortfall is negative free cash flow larger than the opening cash
+  const sw = computeLboT(model({ repay: 'sweep' }, (d) => { d.debt.senA.x = 9; d.debt.senB.x = 4; }));
+  const swShort = sw.S.cashClose.map((c, j) => (c < -0.001 ? j : -1)).filter((j) => j >= 0);
+  ok(swShort.length > 0 && swShort.every((j) => sw.S.mand[j] === 0 && sw.S.cashOpen[j] + sw.S.fcf[j] < 0), `sweep only: shortfall years have no mandatory repayment and opening cash + FCF < 0 (${swShort})`);
+  // mandatory repayments: a shortfall is mandatory repayments above opening cash + free cash flow
+  for (const repay of ['mandatory', 'both']) {
+    const r = computeLboT(model({ repay }, (d) => { d.debt.senA.amort = 60; d.deal.cashUsed = 600; }));
+    const yrs = r.S.cashClose.map((c, j) => (c < -0.001 ? j : -1)).filter((j) => j >= 0);
+    ok(yrs.length > 0 && yrs.every((j) => r.S.mand[j] > r.S.cashOpen[j] + r.S.fcf[j]), `${repay}: shortfall years have mandatory repayments above opening cash + FCF (${yrs})`);
+  }
+}
 
 console.log(`\n${checks - failures}/${checks} checks passed`);
 if (failures) { console.error(`${failures} FAILED`); process.exit(1); }

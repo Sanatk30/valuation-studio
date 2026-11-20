@@ -24,6 +24,8 @@ export default function DcfOutput({ a }) {
 }
 
 const num = (v) => (fin(v) ? v : NaN);
+/** A KPI's text when the template cell reads NM (a KPI with a finite value animates it instead). */
+const nm = (v) => (fin(v) ? undefined : 'NM');
 
 function DcfPage({ a, f, r }) {
   const v = r.valuation;
@@ -54,12 +56,13 @@ function DcfPage({ a, f, r }) {
     ],
   });
   const bridge = [
-    { label: 'PV of forecast flows', value: v.sumPv },
-    { label: 'PV of terminal value', value: num(v.pvTv) },
+    // short labels: six categories share the chart's width without rotation
+    { label: 'PV forecast', value: v.sumPv },
+    { label: 'PV terminal', value: num(v.pvTv) },
     ...(r.cf === 'fcff'
-      ? [{ label: 'Enterprise value', value: num(v.ev), total: true }, { label: '− Net debt', value: -v.netDebt }, { label: '− NCI', value: -v.nci }]
+      ? [{ label: 'EV', value: num(v.ev), total: true }, { label: '− Net debt', value: -v.netDebt }, { label: '− NCI', value: -v.nci }]
       : []),
-    { label: 'Equity value', value: num(v.equity), total: true },
+    { label: 'Equity', value: num(v.equity), total: true },
   ];
   const bridgeOk = bridge.every((b) => fin(b.value));
 
@@ -113,15 +116,16 @@ function DcfPage({ a, f, r }) {
     <div className="qo">
       <Headline
         eyebrow={`DCF — ${cfK.label} · ${r.tv === 'exit' ? `Exit ${multName}` : 'Gordon Growth'} · ${r.coeKind === 'capm' ? 'CAPM' : 'Build-Up'} (template ${r.template})`}
-        sub={`${cfK.long} over ${m} forecast year${m === 1 ? '' : 's'} (${fc[0]}–${fc[m - 1]}), discounted at ${r.cf === 'fcff' ? 'the WACC' : 'the cost of equity'} ${t(v.rate, 'pct')} with end-of-year discounting${r.settings.valDate ? ` from ${fmtDate(r.settings.valDate)}` : ''}; terminal value by ${tvName}.`}
+        sub={`${cfK.long} over ${m} forecast year${m === 1 ? '' : 's'} (${m === 1 ? fc[0] : `${fc[0]}–${fc[m - 1]}`}), discounted at ${r.cf === 'fcff' ? 'the WACC' : 'the cost of equity'} ${t(v.rate, 'pct')} with end-of-year discounting${r.settings.valDate ? ` from ${fmtDate(r.settings.valDate)}` : ''}; terminal value by ${tvName}.`}
         warnings={[
-          r.tv === 'gordon' && !(v.rate > v.g) ? `The discount rate (${t(v.rate, 'pct')}) is not above the terminal growth (${t(v.g, 'pct')}) — the terminal value is NM, as in the template.` : null,
+          r.blankYears.length ? `Blank drivers in ${r.blankYears.map((j) => fc[j]).join(', ')} count as 0, as in the template — fill them on the Assumptions step.` : null,
+          r.tv === 'gordon' && !(v.rate > v.g) ?`The discount rate (${t(v.rate, 'pct')}) is not above the terminal growth (${t(v.g, 'pct')}) — the terminal value is NM, as in the template.` : null,
           fin(num(v.tvShare)) && v.tvShare > 0.75 ? `The terminal value is ${t(v.tvShare, 'pct')} of the total — above ~75% the value depends heavily on the terminal assumptions.` : null,
         ]}
         kpis={[
-          { label: `Value per share (${f.sym})`, value: num(v.perShare), fmt: (x) => f.price(x), hero: true, tone: hasPx ? tone(upsidePct(num(v.perShare), px)) : undefined, sub: hasPx ? `${t(v.upside, 'pct')} vs ${f.price(px)}` : 'no current price' },
-          { label: 'Equity value', value: num(v.equity), fmt: (x) => f.money(x) },
-          r.cf === 'fcff' && { label: 'Enterprise value', value: num(v.ev), fmt: (x) => f.money(x) },
+          { label: `Value per share (${f.sym})`, value: num(v.perShare), text: nm(v.perShare), fmt: (x) => f.price(x), hero: true, tone: hasPx ? tone(upsidePct(num(v.perShare), px)) : undefined, sub: hasPx ? `${t(v.upside, 'pct')} vs ${f.price(px)}` : 'no current price' },
+          { label: 'Equity value', value: num(v.equity), text: nm(v.equity), fmt: (x) => f.money(x) },
+          r.cf === 'fcff' && { label: 'Enterprise value', value: num(v.ev), text: nm(v.ev), fmt: (x) => f.money(x) },
           { label: rateName, text: t(v.rate, 'pct'), sub: w ? `Ke ${t(coe.ke, 'pct')} · Kd after tax ${t(w.kdAfter, 'pct')} · D/(D+E) ${t(w.targetWd, 'pct')}` : (r.coeKind === 'capm' ? `rf ${t(coe.rf, 'pct')} + β ${fmtTpl(coe.beta, 'n2', L)} × ERP ${t(coe.erp, 'pct')}` : 'build-up') },
           { label: 'Terminal value share', text: t(v.tvShare, 'pct'), sub: r.tv === 'gordon' ? `implied exit ${multName} ${t(v.implied, 'x')}` : `implied perpetual growth ${t(v.implied, 'pct')}` },
         ].filter(Boolean)}

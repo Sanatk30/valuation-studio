@@ -9,6 +9,7 @@
 import { checkDcfWorkbook } from './helpers/dcfChecks.mjs';
 import { sampleDcfData } from './fixtures/dcfSample.mjs';
 import { blankPage } from '../src/lib/engine/companyPage.js';
+import { computeDcfT, dcfLabels } from '../src/lib/engine/dcfTemplate.js';
 
 let checks = 0, failures = 0;
 const ok = (cond, msg) => { checks++; if (!cond) { failures++; console.error('FAIL:', msg); } };
@@ -70,7 +71,32 @@ run('loss-making forecast', checkDcfWorkbook(model({}, (d) => { d.drivers.materi
 run('custom sensitivity steps', checkDcfWorkbook(model({ rateStep: 1, gStep: 0.25 })));
 run('exit multiple steps', checkDcfWorkbook(model({ tv: 'exit', multStep: 2.5 })));
 run('USD Mn', checkDcfWorkbook(model({}, null, { currency: 'USD', unit: 'Mn' })));
+// a blank step (an old save or a pasted JSON) falls back to the template example in the engine — the sheet must use the same step
+run('blank sensitivity steps (Gordon)', checkDcfWorkbook(model({ rateStep: null, gStep: null })));
+run('blank sensitivity step (exit)', checkDcfWorkbook(model({ tv: 'exit', multStep: null })));
 run('negative build-up premium', checkDcfWorkbook(model({ coe: 'buildup' }, (d) => { d.buildup.industry = -1; })));
+
+console.log('\n=== blank drivers (the output warns: a blank counts as 0) ===');
+{
+  const by = (settings, mut) => computeDcfT(model(settings, mut)).blankYears.join(',');
+  ok(by({}) === '', 'sample: no blank driver');
+  ok(by({ fcstYears: 7, labels: null }) === '5,6', `forecast years added after the drivers were typed are flagged (${by({ fcstYears: 7, labels: null })})`);
+  ok(by({}, (d) => { d.drivers.capex[2] = null; }) === '2', 'one blank operating driver flags its year');
+  ok(by({}, (d) => { d.drivers.payout = []; d.drivers.netBorrow = []; d.drivers.otherInc = []; d.drivers.intRate = []; }) === '', 'FCFF: payout, net borrowing, other income and the interest rate do not move the value — not flagged');
+  ok(by({ cf: 'fcfe' }, (d) => { d.drivers.netBorrow[4] = null; }) === '4', 'FCFE: a blank net borrowing is flagged');
+  ok(by({ cf: 'fcfe' }, (d) => { d.drivers.payout = []; }) === '', 'FCFE: the payout is not used');
+  ok(by({ cf: 'ddm' }, (d) => { d.drivers.payout[0] = null; }) === '0', 'DDM: a blank payout is flagged');
+}
+
+console.log('\n=== period labels ===');
+{
+  const st = { hist: ['FY24', '', 'FY26'], fcst: ['FY27E', '', 'FY29E', 'FY30E', 'FY31E'] };
+  const eng = dcfLabels(st, 3, 5, 2027);
+  ok(eng.hist[1] === 'FY25' && eng.fcst[1] === 'FY28E', 'engine / workbook: a blank label reads as its default');
+  const ed = dcfLabels(st, 3, 5, 2027, { keepBlank: true });
+  ok(ed.hist[1] === '' && ed.fcst[1] === '' && ed.hist[0] === 'FY24', 'label editor: a cleared label stays blank so it can be retyped');
+  ok(dcfLabels({ hist: [null, 'FY25', 'FY26'] }, 3, 5, 2027, { keepBlank: true }).hist[0] === 'FY24', 'label editor: a never-typed label still shows its default');
+}
 
 console.log(`\n${checks - failures}/${checks} checks passed`);
 if (failures) { console.error(`${failures} FAILED`); process.exit(1); }
