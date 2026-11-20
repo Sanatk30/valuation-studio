@@ -139,7 +139,7 @@ export default function RegressionSections({ a, f, R, px }) {
             </tbody>
           </table>
         </div>
-        <div className="qo-note">*** p &lt; 1% · ** p &lt; 5% · * p &lt; 10%. With few peers, treat significance as indicative.{fit.dropped?.length ? ` Excluded: ${fit.dropped.join(', ')}.` : ''}</div>
+        <div className="qo-note">*** p &lt; 1% · ** p &lt; 5% · * p &lt; 10%. With few peers, treat significance as indicative.{fit.dropped?.length ? ` Excluded: ${fit.dropped.join(', ')}.` : ''}{R.unpriced?.length ? ` Left out (no share price or share count): ${R.unpriced.join(', ')}.` : ''}</div>
       </Collapsible>
 
       <Collapsible title="Regression — fit and residual charts" tag="REG">

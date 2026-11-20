@@ -110,7 +110,7 @@ export const blankDcfT = () => ({
   settings: blankDcfSettings(),
   company: { ticker: '', price: null, shares: null, page: blankPage() },
   drivers: Object.fromEntries(DRIVER_KEYS.map((k) => [k, []])),   // per forecast year, first year first
-  capm: { rf: null, beta: null, erp: null, betaMode: 'direct', peerBeta: null, targetDe: null, taxRate: null, peers: [] },
+  capm: { rf: null, beta: null, erp: null, betaMode: null, peerBeta: null, targetDe: null, taxRate: null, peers: [] },
   buildup: { rf: null, erp: null, size: null, industry: null, specific: null, country: null },
   wacc: { kd: null, taxRate: null, targetWd: null },
 });

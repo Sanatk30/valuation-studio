@@ -119,15 +119,21 @@ capex %, NWC %; per-year grid with paste).
 - Yahoo peers with TTM: stub columns hold **12-month figures** (labelled).
 - Yahoo peers: SG&A = **balancing line** (gross profit − EBIT) so EBIT / EBITDA
   equal Yahoo's reported figures.
-- DCF FCFE: **opening cash is added** to the FCFE equity value.
+- DCF FCFE: ~~opening cash is added~~ — superseded (2026-11-20): the user's template is followed, FCFE equity value = PV of FCFE + PV of TV, **no opening cash**. FCFE starts from PAT, which already carries other income (the return on that cash), so adding the cash would count it twice.
 - DCF WACC-vs-leverage surface: D/(D+E) rows **clamped to 0–90 %** (old
   behaviour).
 - DCF tornado: back, with **editable bump sizes** (step inputs above it, each
   starting at 1 pp) for margin, growth, capex and tax.
 - Comps / Precedent headline: **all implied-price rows side by side**.
-- ADR / depositary receipts: **warning only**.
+- ADR / depositary receipts: **warning only** (revisited 2026-11-20, see below).
 - Yahoo peers follow the company rules: cash = cash & equivalents only, and a
   negative reported effective tax rate is left NA.
 - Precedent offer price: the purchase consideration decides the legs — Cash =
   cash offer; Stock = exchange ratio × acquirer price; Cash / Stock = both. A
   leg the deal does not have is 0; a leg it has must be filled, else NA.
+
+## Round 4 decisions (2026-11-20)
+- DCF beta method starts **blank** (was 'direct'); the user picks it.
+- % change from a negative base stays a plain signed ratio (−2 → −1 reads −50%), not NM.
+- Comps regression: a peer with no share price or share count (market cap 0 under blank = 0) is **left out of the regression** and named in a note; it stays on the Comps Summary.
+- Comps and Precedent: at least **3** included peers / deals (count fields min 3, step validation).

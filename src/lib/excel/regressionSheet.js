@@ -86,6 +86,7 @@ export function writeRegressionSheet(ws, a, F, links) {
   const rawCell = (k, i) => `${colL(2 + usedX.indexOf(k))}${pd0 + i}`;
   const rawYCell = (i) => `${colL(2 + usedX.length)}${pd0 + i}`;
   if (fitR.dropped.length) { put(ws, `A${rr}`, `Excluded (incomplete): ${fitR.dropped.join(', ')}`, { italic: true, color: C_MUTED }); rr++; }
+  if (regRun.unpriced?.length) { put(ws, `A${rr}`, `Left out (no share price or share count, so market cap = 0): ${regRun.unpriced.join(', ')}`, { italic: true, color: C_MUTED }); rr++; }
   rr++;
 
   /* ---- transformed design matrix ---- */

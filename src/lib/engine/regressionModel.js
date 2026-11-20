@@ -41,14 +41,28 @@ export function allVars(a, comps = computeComps(a)) {
 }
 
 /**
+ * A peer with no share price (or no share count) has a market cap of 0 under
+ * the template's blank-is-0 rule, so its EV and every multiple and size measure
+ * read nonsense. It stays on the Comps Summary as the template has it, but it
+ * is left out of the regression.
+ */
+const priced = (r) => fin(r.page?.market?.price) && r.page.market.price > 0 && fin(r.page?.market?.shares) && r.page.market.shares > 0;
+
+/** Included, non-empty peers the regression leaves out for a missing price or share count. */
+export function unpricedPeers(a, comps = computeComps(a)) {
+  return comps.peers.filter((r) => r.include === 1 && !r.empty && !priced(r)).map((r) => r.name || r.role);
+}
+
+/**
  * Included peers → { id, name, values } with every variable (custom ones typed
  * on the peer object). An empty slot (nothing typed or fetched) is not a peer:
  * its blank page reads 0, which would enter a size-only model as a (0, 0) point.
+ * A peer with no price or share count is left out too (see `priced`).
  */
 export function observations(a, comps = computeComps(a)) {
   const vars = allVars(a, comps);
   const peerObj = Object.fromEntries(peerSlots(a.comps).map((p) => [p.id, p]));
-  return comps.peers.filter((r) => r.include === 1 && !r.empty).map((r) => ({
+  return comps.peers.filter((r) => r.include === 1 && !r.empty && priced(r)).map((r) => ({
     id: r.id,
     name: r.name || r.role,          // an unnamed peer reads "Peer k", as on the Comps Summary
     values: Object.fromEntries(vars.map((v) => [v.key, v.custom ? num(peerObj[r.id]?.[v.key]) : v.get(r)])),
@@ -91,5 +105,5 @@ export function runRegression(a) {
       mid: toPrice(pred.yHat), lo: toPrice(pred.lo), hi: toPrice(pred.hi),
     };
   }
-  return { fit, pred, price, yVar, yDef, xVars, target, spec, observations: obs };
+  return { fit, pred, price, yVar, yDef, xVars, target, spec, observations: obs, unpriced: unpricedPeers(a, comps) };
 }

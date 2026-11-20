@@ -8,9 +8,9 @@ import { computePage, MIN_YEARS, MAX_YEARS } from '../../lib/engine/companyPage.
 import {
   COMPS_MULTIPLES, blankPeer, isBlankPeer, peerSlots, periodLabels, clampYears, multipleLabel, computeComps, usedMultiples,
 } from '../../lib/engine/comps.js';
-import { PREC_METHODS, dealSlots, impliedEquity100, controlPremium } from '../../lib/engine/precedent.js';
+import { PREC_METHODS, dealSlots, isBlankDeal, impliedEquity100, controlPremium } from '../../lib/engine/precedent.js';
 import { STAT_KEYS, STAT_LABELS, statsSettings } from '../../lib/engine/templateStats.js';
-import { runRegression, allVars, observations, targetValues } from '../../lib/engine/regressionModel.js';
+import { runRegression, allVars, observations, targetValues, unpricedPeers } from '../../lib/engine/regressionModel.js';
 import { toEngineInput } from '../../store/methodModel.js';
 import { fmtX, fmtPct, fmtNum, fmtTpl, fmtDate, CURRENCIES } from '../../lib/format.js';
 
@@ -35,6 +35,9 @@ const ytdSpec = (path) => f.bool(path, 'Year-to-date columns', {
   yes: 'On — prior & current YTD', no: 'Off — LTM = latest FY',
   hint: 'With YTD columns, LTM = latest FY + current YTD − prior YTD, and the current-YTD column holds the interim balance sheet.',
 });
+
+/** Peers / deals a valuation needs at least (the spec's minimum set). */
+const MIN_SET = 3;
 
 /** The implied valuation needs at least one multiple (method) ticked on the Settings step. */
 const needOneMethod = (methods, settings) => (usedMultiples(methods, settings?.multiples).length ? [] : ['Tick at least one multiple for the implied valuation (Valuation choices).']);
@@ -364,7 +367,11 @@ export const peersStep = () => ({
   id: 'peers',
   title: 'Peers',
   blurb: 'The comparable listed companies — as many as you choose, each with its own company page, include flag and tier.',
-  fields: () => [f.int('comps.peerCount', 'Number of peers', { min: 1, max: 60, hint: 'Template: 10. Raising it adds empty slots; lowering it keeps the data of the slots it hides.' })],
+  fields: () => [f.int('comps.peerCount', 'Number of peers', { min: MIN_SET, max: 60, hint: `Template: 10; at least ${MIN_SET}. Raising it adds empty slots; lowering it keeps the data of the slots it hides.` })],
+  validate: (data) => {
+    const k = peerSlots(data.comps).filter((p) => !isBlankPeer(p) && p.include !== 0).length;
+    return k >= MIN_SET ? [] : [`Include at least ${MIN_SET} peers (Include = 1) — the statistics need ${MIN_SET}; ${k} so far.`];
+  },
   Extra: PeersExtra,
   extraBelow: true,
 });
@@ -389,6 +396,7 @@ function RegressionSetup({ data, setData, company }) {
     try { return runRegression(a); } catch { return null; }
   }, [a, yVar, activeX.length]);
   const obs = useMemo(() => observations(a, comps), [a, comps]);
+  const unpriced = useMemo(() => unpricedPeers(a, comps), [a, comps]);
   const tv = useMemo(() => targetValues(a, comps).values, [a, comps]);
   const locale = CURRENCIES[company.currency]?.locale;
   const customs = spec.customVars || [];
@@ -506,6 +514,9 @@ function RegressionSetup({ data, setData, company }) {
         </div>
       </div>
 
+      {unpriced.length > 0 && (
+        <div className="note-bar">Left out of the regression — no share price or share count, so the market cap reads 0: {unpriced.join(', ')}. Enter the price on the Peers step to include {unpriced.length === 1 ? 'it' : 'them'}.</div>
+      )}
       {fit && (
         <div className="readout">
           {fit.ok
@@ -683,7 +694,11 @@ export const dealListStep = () => ({
   id: 'deals',
   title: 'Deal list',
   blurb: 'The precedent transactions: dates, parties, stake and consideration, and (for listed targets) the offer and unaffected prices.',
-  fields: () => [f.int('precedent.dealCount', 'Number of deals', { min: 1, max: 60, hint: 'Template: 10. Raising it adds empty rows; lowering it keeps the hidden rows’ data.' })],
+  fields: () => [f.int('precedent.dealCount', 'Number of deals', { min: MIN_SET, max: 60, hint: `Template: 10; at least ${MIN_SET}. Raising it adds empty rows; lowering it keeps the hidden rows’ data.` })],
+  validate: (data) => {
+    const k = dealSlots(data.precedent).filter((d) => !isBlankDeal(d) && d.include !== 0).length;
+    return k >= MIN_SET ? [] : [`Include at least ${MIN_SET} deals (Include = 1) — the statistics need ${MIN_SET}; ${k} so far.`];
+  },
   Extra: DealListExtra,
   extraBelow: true,
 });
