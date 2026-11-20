@@ -29,14 +29,27 @@ import { YF_HINT } from '../lib/yfBase.js';
  *   opts.before  deal pages: only fiscal years ending before this ISO date
  *   opts.labels  true → the page takes the fetched period labels (precedent pages)
  *   opts.market  false → leave price / shares alone (deal targets are priced by the deal)
+ *   opts.alignTo the page's FY labels ("FY24", "FY2025" …): each column takes the fiscal year its
+ *                label names, not simply the latest n Yahoo reports (unparseable labels → latest n)
+ *   opts.basic   true → `shares` is the BASIC share count (comps: diluted by the treasury stock method)
  */
-export function mergeFetch(slot, m, company, { n, before = null, labels = false, market = true } = {}) {
-  const f = templateFromListing(m.raw, company, m.rates || {}, { n, before });
+export const labelYear = (l) => {
+  const m = /^\s*FY\s*'?(\d{4}|\d{2})\s*$/i.exec(String(l ?? ''));
+  if (!m) return null;
+  return m[1].length === 4 ? Number(m[1]) : 2000 + Number(m[1]);
+};
+export function mergeFetch(slot, m, company, { n, before = null, labels = false, market = true, alignTo = null, basic = false } = {}) {
+  const ys = Array.isArray(alignTo) ? alignTo.map(labelYear) : null;
+  const years = ys && ys.length === n && ys.every((y) => Number.isInteger(y)) ? ys : null;
+  const f = templateFromListing(m.raw, company, m.rates || {}, { n, before, years });
   const was = String(slot._fetched?.symbol || '').toUpperCase();
   const other = was && String(f.ticker || '').toUpperCase() !== was;
   const own = other ? blankPage() : (slot.page || { lines: {} });
   const covered = f.fyDates.length;
-  const reported = Array.from({ length: n }, (_, i) => i >= n - covered);
+  // which columns the fetch fills: by year when aligned, else the latest `covered`
+  const reported = years
+    ? years.map((y) => f.fyDates.some((d) => Number(String(d).slice(0, 4)) === y))
+    : Array.from({ length: n }, (_, i) => i >= n - covered);
   const page = mergeFetchedPage(own, f.page, n, reported);
   if (labels) page.labels = { ...(own.labels || {}), fy: f.page.labels.fy };
   const keep = (v, mine) => (v === null || v === undefined || v === '' ? mine ?? null : v);
@@ -46,9 +59,9 @@ export function mergeFetch(slot, m, company, { n, before = null, labels = false,
     name: f.name || slot.name,
     ticker: f.ticker || slot.ticker,
     sector: keep(f.sector, prev.sector) || '',
-    ...(market ? { price: keep(f.price, prev.price), shares: keep(f.shares, prev.shares) } : {}),
+    ...(market ? { price: keep(f.price, prev.price), shares: keep(basic ? f.basicShares : f.shares, prev.shares) } : {}),
     page,
-    _fetched: { ...f.fetched, warnings: f.warnings, fyDates: f.fyDates },
+    _fetched: { ...f.fetched, warnings: f.warnings, fyDates: f.fyDates, lastFyEnd: f.lastFyEnd, shareBasis: market ? (basic ? 'basic' : 'diluted') : null },
   };
 }
 

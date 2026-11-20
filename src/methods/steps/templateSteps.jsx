@@ -249,7 +249,7 @@ function CompsTargetExtra({ data, setData, company }) {
       <div className="tool-card">
         <div className="tool-h">Fill from Yahoo Finance <span className="fld-opt">optional</span></div>
         <YahooSearch company={company} action="Fill the page"
-          onPick={(m) => setTarget((cur) => mergeFetch(cur, m, company, { n }))} />
+          onPick={(m) => setTarget((cur) => mergeFetch(cur, m, company, { n, alignTo: compsLabels(data, company).fy, basic: true }))} />
         {t._fetched && <FetchNote f={t._fetched} />}
       </div>
       <div className="tool-card">
@@ -270,6 +270,7 @@ export function FetchNote({ f: fx }) {
       Filled from <b>{fx.symbol}</b> ({fx.financialCurrency}{fx.fyDates?.length ? `, ${fx.fyDates[0]} → ${fx.fyDates[fx.fyDates.length - 1]}` : ''}).
       Cost of Materials = cost of revenue, Employee Benefits = salaries (when reported), Other Expenses and Other Income balance to Yahoo’s EBITDA and pre-tax income,
       and the “Other” balance-sheet and cash-flow lines take the difference to Yahoo’s totals. YTD columns are left for you.
+      {fx.shareBasis === 'basic' && ' Shares = basic shares outstanding at the latest balance sheet; add options / convertibles for the treasury stock method.'}
       {(fx.warnings || []).map((w) => <div key={w} className="fld-e">{w}</div>)}
     </div>
   );
@@ -320,7 +321,7 @@ function PeersExtra({ data, setData, company }) {
     for (const m of ms) {
       let k = out.findIndex(isBlankPeer);
       if (k < 0) { out.push(blankPeer({ tierId: tiers[0]?.id ?? null })); k = out.length - 1; }
-      out[k] = mergeFetch(out[k], m, company, { n });
+      out[k] = mergeFetch(out[k], m, company, { n, alignTo: labels.fy, basic: true });
     }
     return out;
   });
@@ -420,7 +421,7 @@ function PeersExtra({ data, setData, company }) {
                         <td><NumBox small value={p.shares ?? null} onChange={(v) => setPeer(k, (x) => ({ ...x, shares: v }))} /></td>
                         <td className="calc">{e > 0 ? fmtTpl(pg.market.ev / e, 'x', locale) : 'NM'}</td>
                         <td>
-                          <RowFetch query={p.ticker} company={company} onFilled={(m) => setPeer(k, (x) => mergeFetch(x, m, company, { n }))} />
+                          <RowFetch query={p.ticker} company={company} onFilled={(m) => setPeer(k, (x) => mergeFetch(x, m, company, { n, alignTo: labels.fy, basic: true }))} />
                           <button className="peer-del" title="Clear this slot" onClick={() => setPeer(k, () => blankPeer({ id: p.id }))}>×</button>
                         </td>
                       </tr>

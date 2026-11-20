@@ -329,6 +329,30 @@ console.log('\n=== currency change after a Yahoo fill: the listing note follows 
     'a unit change rescales the record the same way (money and shares; price untouched)');
 }
 
+/* ------------------------------------------------ fiscal years aligned to the page's labels */
+{
+  // the bug behind "Apple's numbers were wrong": the fill took the latest n years Yahoo reports whatever
+  // the column labels said, so a page labelled one year earlier than Yahoo's latest was shifted by a year
+  const raw = listing('AAPL');
+  const ds = raw.annual.TotalRevenue.map((p) => p.date);
+  const yr = (d) => Number(d.slice(0, 4));
+  const last = ds[ds.length - 1], prev = ds[ds.length - 2];
+  const co = { ...USD_MN, fyEndMonth: 3 };
+  const years = [yr(prev) - 2, yr(prev) - 1, yr(prev)];
+  const t = templateFromListing(raw, co, {}, { n: 3, years });
+  ok(t.page.labels.fy.join() === years.map((y) => `FY${String(y).slice(2)}`).join(), `aligned: labels stay the page's (${t.page.labels.fy.join(', ')})`);
+  ok(near(t.page.lines.rev.fy[2], raw.annual.TotalRevenue.find((p) => p.date === prev).value / 1e6), `aligned: the ${t.page.labels.fy[2]} column holds the fiscal year ending ${prev}, not the latest (${last})`);
+  ok(t.warnings.some((w) => /after this page's last column/.test(w)), 'aligned: a newer reported year is named, not silently dropped');
+  ok(t.warnings.some((w) => /fiscal year ends in/.test(w)), 'aligned: a fiscal year ending in another month than the company\'s is explained');
+  const ahead = templateFromListing(raw, co, {}, { n: 3, years: [yr(last) - 1, yr(last), yr(last) + 1] });
+  ok(ahead.page.lines.rev.fy[2] === null && near(ahead.page.lines.rev.fy[1], raw.annual.TotalRevenue.find((p) => p.date === last).value / 1e6), 'aligned: a year Yahoo does not have yet stays blank (no shift)');
+  ok(ahead.warnings.some((w) => /no FY/.test(w)), 'aligned: the missing year is named');
+  ok(templateFromListing(raw, co, {}, { n: 3 }).page.lines.rev.fy[2] !== null, 'no labels to align to: the latest n years, as before');
+  const { labelYear } = await importJsx('src/components/PeerYahoo.jsx');
+  ok(labelYear('FY25') === 2025 && labelYear('FY2026') === 2026 && labelYear("FY'24") === 2024 && labelYear('Latest FY') === null && labelYear('FY27E') === null, 'label years: FY25, FY2026, FY\'24; not "Latest FY" or forecast labels');
+  ok(Number.isFinite(t.basicShares) && t.basicShares > 0, `basic shares outstanding read for the comps treasury-stock base (${t.basicShares})`);
+}
+
 /* ------------------------------------------------ reported statements */
 {
   const raw = listing('AAPL');

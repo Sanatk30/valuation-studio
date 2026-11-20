@@ -286,6 +286,7 @@ const fyName = (date) => `FY${String(date).slice(0, 4)}`;
 /** The point of `blk[base]` dated exactly `date` (no nearest-date matching). */
 const pointAt = (blk, base, date) => (date && blk?.[base] ? blk[base].find((p) => p.date === date) || null : null);
 const lastDate = (blk, base) => (blk?.[base]?.length ? blk[base][blk[base].length - 1].date : null);
+const lastPoint = (blk, base) => (blk?.[base]?.length ? blk[base][blk[base].length - 1] : null);
 const maxDate = (dates) => dates.filter(Boolean).sort().pop() || null;
 
 /**
@@ -698,11 +699,19 @@ function mapCore(raw, company, rates, opts) {
  * section takes the difference to reported CFO / CFI / CFF.
  * A line whose source (or subtotal) is not reported stays blank.
  */
-export function templateFromListing(raw, company, rates = {}, { n = 3, before = null } = {}) {
+export function templateFromListing(raw, company, rates = {}, { n = 3, before = null, years = null } = {}) {
   const conv = makeConverter(raw, company, rates);
   const warnings = [];
   const all = unionDates(raw.annual, ['TotalRevenue', 'EBIT', 'NetIncome', 'TotalAssets'], 0);
-  const dates = (before ? all.filter((d) => d < before) : all).slice(-n);
+  const avail = before ? all.filter((d) => d < before) : all;
+  // `years`: the fiscal year each column is labelled with (FY25 → 2025, the calendar year the
+  // fiscal year ends in). Each column then takes THAT fiscal year — never simply the latest n,
+  // which shifted every column by a year whenever Yahoo already had a newer year (e.g. Apple's
+  // FY2026, to September 2026, under a page labelled FY23–FY25).
+  const aligned = Array.isArray(years) && years.length === n && years.every((y) => Number.isInteger(y));
+  const yearOf = (d) => Number(String(d).slice(0, 4));
+  const slot = aligned ? years.map((y) => avail.find((d) => yearOf(d) === y) || null) : null;
+  const dates = aligned ? slot.filter(Boolean) : avail.slice(-n);
   const nz = (...vs) => vs.reduce((acc, v) => acc + (v ?? 0), 0);
   const any = (...vs) => vs.some((v) => v !== null && v !== undefined);
   const neg = (v) => (v === null ? null : -v);
@@ -786,8 +795,9 @@ export function templateFromListing(raw, company, rates = {}, { n = 3, before = 
   });
 
   const page = blankPage();
-  const pad = Array(Math.max(0, n - dates.length)).fill(null);
-  for (const key of Object.keys(page.lines)) page.lines[key] = { fy: [...pad, ...cols.map((c) => c[key] ?? null)], p: null, c: null };
+  const pad = aligned ? [] : Array(Math.max(0, n - dates.length)).fill(null);
+  const colOf = aligned ? slot.map((d) => (d ? cols[dates.indexOf(d)] : null)) : [...pad, ...cols];
+  for (const key of Object.keys(page.lines)) page.lines[key] = { fy: colOf.map((c) => (c ? c[key] ?? null : null)), p: null, c: null };
   // blank earlier columns carry the fiscal years before the first reported one (FY20, FY21 before FY22)
   const fyLabel = (year) => `FY${String(((year % 100) + 100) % 100).padStart(2, '0')}`;
   const firstYear = dates.length ? Number(String(dates[0]).slice(0, 4)) : null;
@@ -795,8 +805,20 @@ export function templateFromListing(raw, company, rates = {}, { n = 3, before = 
   const padLabel = (i) => (firstYear !== null ? fyLabel(firstYear - (pad.length - i)) : i === n - 1 ? 'Latest FY' : `FY -${n - 1 - i}`);
   page.labels = { fy: [...pad.map((_, i) => padLabel(i)), ...dates.map((d) => fyLabel(Number(String(d).slice(0, 4))))], p: null, c: null, ltm: null };
 
-  if (!dates.length) warnings.push(before ? `Yahoo has no fiscal year ending before ${before} for ${raw.symbol} — it keeps about four years of annual statements.` : `Yahoo returned no annual statements for ${raw.symbol}.`);
+  if (aligned) {
+    page.labels = { fy: years.map((y) => fyLabel(y)), p: null, c: null, ltm: null };
+    const missing = years.filter((_, i) => !slot[i]);
+    const later = avail.filter((d) => yearOf(d) > Math.max(...years));
+    if (!dates.length) warnings.push(`Yahoo has none of the fiscal years ${years.map(fyLabel).join(', ')} for ${raw.symbol} — it keeps about four years of annual statements.`);
+    else if (missing.length) warnings.push(`Yahoo has no ${missing.map(fyLabel).join(', ')} for ${raw.symbol}: ${missing.length === 1 ? 'that column is' : 'those columns are'} left blank.`);
+    if (later.length) warnings.push(`Yahoo also reports ${later.map((d) => `${fyLabel(yearOf(d))} (to ${monYear(d)})`).join(', ')}, after this page's last column ${fyLabel(Math.max(...years))} — not used. Move Year 1 later in the company settings to include it.`);
+  } else if (!dates.length) warnings.push(before ? `Yahoo has no fiscal year ending before ${before} for ${raw.symbol} — it keeps about four years of annual statements.` : `Yahoo returned no annual statements for ${raw.symbol}.`);
   else if (dates.length < n) warnings.push(`Yahoo has ${dates.length} fiscal year${dates.length === 1 ? '' : 's'}${before ? ` before ${before}` : ''}; the earlier column${n - dates.length === 1 ? ' is' : 's are'} left blank.`);
+  // a fiscal year ending in another month than the company's: say what "FY25" means for this listing
+  const endMonth = dates.length ? Number(String(dates[dates.length - 1]).slice(5, 7)) : null;
+  if (endMonth && Number.isInteger(company.fyEndMonth) && endMonth !== company.fyEndMonth) {
+    warnings.push(`${raw.symbol}'s fiscal year ends in ${MONTHS[endMonth - 1]}, not ${MONTHS[company.fyEndMonth - 1]}: each FY column holds its fiscal year ending in ${MONTHS[endMonth - 1]} of that year (e.g. ${fyLabel(yearOf(dates[dates.length - 1]))} = year to ${monYear(dates[dates.length - 1])}).`);
+  }
 
   // latest diluted weighted-average shares (TTM when reported, else the latest fiscal year)
   const ltm = ltmPeriod(raw);
@@ -806,6 +828,10 @@ export function templateFromListing(raw, company, rates = {}, { n = 3, before = 
   if (px.currency && raw.financialCurrency && px.currency !== raw.financialCurrency) {
     warnings.push(`Price in ${px.quoteCurrency || px.currency}, financials in ${raw.financialCurrency} — if this is an ADR/GDR, check the share count against the price.`);
   }
+  // basic shares outstanding at the latest balance-sheet date (the comps template's treasury-stock base)
+  const bsD = balanceSheetDate(raw);
+  const basic = (bsD && bsPoint(raw, 'OrdinarySharesNumber', bsD))
+    || [lastPoint(raw.quarterly, 'OrdinarySharesNumber'), lastPoint(raw.annual, 'OrdinarySharesNumber')].filter(Boolean).sort((p, q) => (p.date < q.date ? 1 : -1))[0] || null;
   const sector = [raw.sector, raw.industry].filter(Boolean).join(' / ');
   return {
     name: raw.name,
@@ -813,6 +839,8 @@ export function templateFromListing(raw, company, rates = {}, { n = 3, before = 
     sector,
     price: conv.perShareIn(px.value, px.currency),
     shares: conv.shares(latestShares),
+    basicShares: conv.shares(basic),
+    lastFyEnd: dates.length ? dates[dates.length - 1] : null,
     page,
     fyDates: dates,
     warnings,

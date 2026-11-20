@@ -116,7 +116,7 @@ function CompanyExtra({ data, setData, company }) {
     <div className="step-tools">
       <div className="tool-card">
         <div className="tool-h">Fill from Yahoo Finance <span className="fld-opt">optional</span></div>
-        <YahooSearch company={company} action="Fill the historicals" onPick={(m) => setCo((cur) => mergeFetch(cur, m, company, { n }))} />
+        <YahooSearch company={company} action="Fill the historicals" onPick={(m) => setCo((cur) => mergeFetch(cur, m, company, { n, alignTo: lab.hist }))} />
         {c._fetched && <FetchNote f={c._fetched} />}
       </div>
       <div className="tool-card">
