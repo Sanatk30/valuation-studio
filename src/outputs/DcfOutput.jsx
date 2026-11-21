@@ -355,7 +355,13 @@ function DcfMap({ r, f, t, onEdit }) {
       id: 'res', title: '4 · Result', label: 'Value per share', value: fin(v.perShare) ? f.price(v.perShare) : 'NM',
       sub: up !== null ? `${up >= 0 ? '▲' : '▼'} ${Math.abs(up * 100).toFixed(1)}% vs market ${f.price(px)}` : 'no current price', tone: up === null ? '' : up >= 0 ? 'up' : 'dn',
       rows: [['Equity value', money(v.equity)], ...(ff ? [['Enterprise value', money(v.ev)], ['Implied EV / EBITDA', fin(v.ev) && lastEbitda > 0 ? `${(v.ev / lastEbitda).toFixed(1)}x` : 'NM']] : [])],
-      action: { label: 'Open sensitivity', onClick: () => document.querySelector('[data-title*="Sensitivity"] .qo-coll-head, [data-title*="Sensitivity"]')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) },
+      action: { label: 'Open sensitivity', onClick: () => {
+        // open the section if it was closed, then bring it into view
+        const el = document.querySelector('.qo-coll[data-title^="Sensitivity"]');
+        if (!el) return;
+        if (!el.classList.contains('open')) el.querySelector('.qo-coll-head')?.click();
+        setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }), 30);
+      } },
     }} />
   );
 }

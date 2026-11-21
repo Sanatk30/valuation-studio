@@ -1,50 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import Logo from './Logo.jsx';
+import React, { useEffect, useRef, useState } from 'react';
 import FlowOverview from './FlowOverview.jsx';
-import { NewCompanyForm, CompanySettings, FY_OPTIONS } from './CompanyForms.jsx';
-import { METHODS } from '../methods/registry.js';
+import { NewCompanyForm, CompanySettings } from './CompanyForms.jsx';
 import { METHOD_META, VALUATION_ORDER, ANALYSIS_ORDER } from '../methods/labels.js';
-import { useCompanyCtx } from '../wizard/MethodPage.jsx';
-import { setActive, resetMethod, updateMethod } from '../store/store.js';
-import { CURRENCIES, UNITS, fmtPrice, fmtNum } from '../lib/format.js';
-import { combinedResult, rowLabel } from '../methods/combined.jsx';
-import { methodMarketPrice } from '../methods/figures.js';
-import FootballField from '../components/FootballField.jsx';
-import LiveChart from '../components/LiveChart.jsx';
-import { donutOption, areaTrendOption } from '../lib/chartkit.js';
-import { useThemeMode } from '../lib/theme.js';
-import { computeDcfT } from '../lib/engine/dcfTemplate.js';
-import { toEngineInput } from '../store/methodModel.js';
+import { setActive } from '../store/store.js';
+import { UNITS } from '../lib/format.js';
 import { effectiveYear1 } from '../lib/period.js';
-
-const fin = Number.isFinite;
-const median = (xs) => {
-  const s = [...xs].sort((x, y) => x - y);
-  const m = Math.floor(s.length / 2);
-  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
-};
-
-/** A completed method's result in one line for its card (and one row for the snapshot chart). */
-function methodResult(id, record, ctx) {
-  const company = ctx.company;
-  if (id === 'combined') {
-    const res = combinedResult(record.methods.combined?.data || {}, { ...ctx, record });
-    return fin(res.value) ? { text: `${fmtPrice(res.value, company, 2)} / share`, row: { label: 'Combined', low: res.value, mid: res.value, high: res.value, highlight: true } } : null;
-  }
-  const figs = ctx.figuresOf(id) || [];
-  if (!figs.length) return null;
-  const short = METHOD_META[id].short;
-  if (figs.length === 1) {
-    const g = figs[0];
-    return { text: `${fmtPrice(g.value, company, 2)} / share`, row: { label: short, low: fin(g.low) ? g.low : g.value, mid: g.value, high: fin(g.high) ? g.high : g.value } };
-  }
-  const vals = figs.map((g) => g.value);
-  const mid = median(vals);
-  return {
-    text: `${fmtPrice(Math.min(...vals), company, 0)} – ${fmtPrice(Math.max(...vals), company, 0)} (${figs.length} multiples)`,
-    row: { label: `${short} · ${figs.length} multiples`, low: Math.min(...figs.map((g) => (fin(g.low) ? g.low : g.value))), mid, high: Math.max(...figs.map((g) => (fin(g.high) ? g.high : g.value))) },
-  };
-}
 
 const SunIcon = () => <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>;
 const MoonIcon = () => <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M20 14.5A8 8 0 019.5 4a8 8 0 1010.5 10.5z" /></svg>;
@@ -60,9 +20,7 @@ const ICONS = {
   ratios: <><path d="M19 5L5 19" /><circle cx="7" cy="7" r="2.6" /><circle cx="17" cy="17" r="2.6" /></>,
 };
 
-const HOME_ICON = <><path d="M3 11l9-7 9 7" /><path d="M5 10v10h14V10" /></>;
 const SETTINGS_ICON = <><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z" /></>;
-const SEARCH_ICON = <><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" /></>;
 const Icon = ({ d }) => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">{d}</svg>;
 
 /**
@@ -141,86 +99,6 @@ export function TopBar({ state, record, method, onOpen, onHome, onNew, onSetting
   );
 }
 
-const STATUS = (p, n, def, locked) => (p.complete
-  ? { cls: 'done', text: 'Complete', action: 'Open' }
-  : p.started
-    ? { cls: 'prog', text: `Step ${p.reachable + 1} of ${n} · ${def.steps[p.reachable]?.title || ''}`, action: 'Resume' }
-    : { cls: 'none', text: locked ? 'Complete a valuation method first' : 'Not started', action: 'Start' });
-
-/** The market price the completed valuations carry (their Company steps), else the Combined step's. */
-function marketPriceOf(record, ctx) {
-  const fromMethods = ['dcf', 'comps', 'precedent'].map((id) => (ctx.progressOf(id).complete ? methodMarketPrice(id, record.methods[id]?.data) : NaN)).find((v) => fin(v) && v > 0);
-  if (fin(fromMethods)) return fromMethods;
-  const c = record.methods.combined?.data?.combined?.marketPrice;
-  return fin(c) && c > 0 ? c : NaN;
-}
-
-/** One method in the numbered index: name, status, result, gap to the market, the action. */
-/** Mini bar sparkline for a KPI card: teal bars with quiet grey bars between them. */
-function MiniBars({ data }) {
-  const v = data.filter(fin);
-  if (v.length < 2) return null;
-  const max = Math.max(...v.map(Math.abs)) || 1, W = 150, H = 64, n = v.length, gap = W / (n * 2);
-  return (
-    <svg className="mini" viewBox={`0 0 ${W} ${H}`} aria-hidden="true">
-      {v.map((x, i) => {
-        const h = Math.max(4, (Math.abs(x) / max) * (H - 6));
-        const g = Math.max(4, h * 0.62);
-        return (
-          <g key={i}>
-            <rect x={i * 2 * gap + gap * 0.15} y={H - g} width={gap * 0.7} height={g} rx="2.5" className="mb-ghost" />
-            <rect x={(i * 2 + 1) * gap + gap * 0.15} y={H - h} width={gap * 0.7} height={h} rx="2.5" className="mb-bar" />
-          </g>
-        );
-      })}
-    </svg>
-  );
-}
-
-/** Mini area sparkline for a KPI card. */
-function MiniArea({ data }) {
-  const v = data.filter(fin);
-  if (v.length < 2) return null;
-  const W = 150, H = 64, lo = Math.min(...v), hi = Math.max(...v), span = hi - lo || 1;
-  const pts = v.map((x, i) => [(i / (v.length - 1)) * W, H - 6 - ((x - lo) / span) * (H - 14)]);
-  const line = pts.map((p) => p.map((c) => c.toFixed(1)).join(',')).join(' ');
-  return (
-    <svg className="mini" viewBox={`0 0 ${W} ${H}`} aria-hidden="true">
-      <defs><linearGradient id="maFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="var(--accent)" stopOpacity=".22" /><stop offset="1" stopColor="var(--accent)" stopOpacity="0" /></linearGradient></defs>
-      <polygon points={`0,${H} ${line} ${W},${H}`} fill="url(#maFill)" />
-      <polyline points={line} fill="none" className="ma-line" />
-    </svg>
-  );
-}
-
-const KPI_ICONS = {
-  value: <><path d="M4 7h16v10H4z" /><path d="M4 11h16" /><circle cx="15.5" cy="14" r="1" /></>,
-  dcf: ICONS.dcf,
-  done: <><path d="M5 12l4 4 10-10" /></>,
-};
-
-/** The DCF's figures the overview shows, when the DCF is complete. */
-function dcfSeries(record, ctx) {
-  if (!ctx.progressOf('dcf').complete) return null;
-  try {
-    const r = computeDcfT(toEngineInput(ctx.company, record.methods.dcf.data));
-    const r0 = r.F.rev[r.n - 1], r1 = r.F.rev[r.F.rev.length - 1], yrs = r.F.rev.length - r.n;
-    return {
-      labels: [...r.labels.hist, ...r.labels.fcst], nHist: r.n, cash: r.flows.cash, tvShare: r.valuation.tvShare,
-      cagr: r0 > 0 && r1 > 0 && yrs > 0 ? Math.pow(r1 / r0, 1 / yrs) - 1 : NaN,
-      rev: r.F.rev, ebitda: r.F.ebitda,
-    };
-  } catch { return null; }
-}
-
-const DONUT = ['#2B7C85', '#5FA8B0', '#9CCBD0', '#C9DFE1', '#E0A33A', '#7C6AC4'];
-const INSIGHT_ICONS = {
-  up: <><path d="M7 17L17 7M9 7h8v8" /></>,
-  down: <><path d="M7 7l10 10M17 9v8H9" /></>,
-  warn: <><path d="M12 3l9 16H3z" /><path d="M12 10v4M12 17h.01" /></>,
-  todo: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
-};
-
 /** The overview: the flow map the user picked (data → methods → combined value). */
 export function Home({ record, onOpen }) {
   return <FlowOverview record={record} onOpen={onOpen} />;
@@ -230,6 +108,13 @@ export function Home({ record, onOpen }) {
 export function FirstRun({ state }) {
   const others = Object.values(state?.companies || {}).sort((a, b) => b.updatedAt - a.updatedAt);
   const [menu, setMenu] = useState(false);
+  const menuRef = useRef(null);
+  useEffect(() => {
+    if (!menu) return undefined;
+    const h = (e) => { if (menuRef.current && !menuRef.current.contains(e.target)) setMenu(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [menu]);
   const meth = ['DCF', 'Comps', 'Precedent', 'LBO', 'IPO', '3-Statement', 'Ratios'];
   return (
     <div className="fr2">
@@ -263,8 +148,8 @@ export function FirstRun({ state }) {
         {others.length > 0 && (
           <div className="fr2-top">
             <span>Already have one?</span>
-            <div className="tb-dd">
-              <button className="btn sm" onClick={() => setMenu(!menu)}>Open recent ▾</button>
+            <div className="tb-dd" ref={menuRef}>
+              <button className="btn sm" onClick={() => setMenu(!menu)} aria-expanded={menu}>Open recent ▾</button>
               {menu && (
                 <div className="tb-menu right">
                   {others.map((c) => <button key={c.id} onClick={() => { setActive(c.id); setMenu(false); }}><span>{c.name}</span><span className="co-meta">{c.currency} · {c.unit}</span></button>)}

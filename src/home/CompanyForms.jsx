@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createCompany, updateCompany, replaceCompany, duplicateCompany, deleteCompany } from '../store/store.js';
 import { CURRENCIES, UNITS } from '../lib/format.js';
 import { SUPPORTED_CURRENCIES, fetchLiveRate } from '../lib/fx.js';
@@ -114,11 +114,14 @@ export function NewCompanyForm({ onDone, onCancel }) {
     return () => { live = false; clearTimeout(id); };
   }, [q, listing]);
 
+  const pickSeq = useRef(0);   // each pick (and Change) gets a number: a late Yahoo reply for an older one is ignored
   const pick = async (h) => {
+    const seq = ++pickSeq.current;
     setName(h.name); setQ(h.name); setHits(null); setListing({ symbol: h.symbol, exchange: h.exchange }); setNote('');
     setBusy(true);
     try {
       const raw = await fetchListing(h.symbol, { search: h });
+      if (seq !== pickSeq.current) return;
       const got = {};
       const ccy = raw.financialCurrency || raw.price?.currency;
       if (ccy && SUPPORTED_CURRENCIES.includes(ccy)) { setCurrency(ccy); got.currency = true; }
@@ -128,10 +131,10 @@ export function NewCompanyForm({ onDone, onCancel }) {
       setFilled(got);
       if (!got.currency || !got.fy) setNote('Yahoo did not give everything — choose the rest below.');
     } catch {
-      setNote('Could not reach Yahoo just now — choose the currency and fiscal year yourself.');
-    } finally { setBusy(false); }
+      if (seq === pickSeq.current) setNote('Could not reach Yahoo just now — choose the currency and fiscal year yourself.');
+    } finally { if (seq === pickSeq.current) setBusy(false); }
   };
-  const clearPick = () => { setListing(null); setFilled({}); setNote(''); };
+  const clearPick = () => { pickSeq.current += 1; setBusy(false); setListing(null); setFilled({}); setNote(''); };
 
   const y1 = fy ? impliedYear1(Number(fy)) : null;
   const errs = {

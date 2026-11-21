@@ -37,15 +37,15 @@ function format(p, v) {
 export function CountUp({ children, ms = 700 }) {
   const text = String(children ?? '');
   const [shown, setShown] = useState(text);
-  const prev = useRef(text);
+  const onScreen = useRef(text);   // what is showing now — a count interrupted mid-way carries on from here
   useEffect(() => {
-    const from = parse(prev.current), to = parse(text);
-    prev.current = text;
-    if (!from || !to || from.pre !== to.pre || from.suf !== to.suf || reduced() || from.value === to.value) { setShown(text); return undefined; }
+    const show = (s) => { onScreen.current = s; setShown(s); };
+    const from = parse(onScreen.current), to = parse(text);
+    if (!from || !to || from.pre !== to.pre || from.suf !== to.suf || reduced() || from.value === to.value) { show(text); return undefined; }
     let raf; const t0 = performance.now();
     const tick = (t) => {
       const k = Math.min(1, (t - t0) / ms), e = 1 - (1 - k) ** 3;
-      setShown(k >= 1 ? text : format(to, from.value + (to.value - from.value) * e));
+      show(k >= 1 ? text : format(to, from.value + (to.value - from.value) * e));
       if (k < 1) raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);

@@ -61,7 +61,7 @@ export default function PeerMap({ peers, target, options, onToggle, company, hov
               {h && <circle cx={X(x)} cy={Y(y)} r="17" fill="none" stroke={col(p)} strokeOpacity=".45" strokeWidth="2" />}
               <circle cx={X(x)} cy={Y(y)} r="9" fill={on ? col(p) : 'var(--surface)'} stroke={col(p)} strokeWidth="2" />
               <text x={X(x) + 13} y={Y(y) + 4} className="pm-lb">{p.name || p.ticker}{on ? '' : ' (excluded)'}</text>
-              <title>{`${p.name}: ${y.toFixed(1)}x · ${sym}${fmtTpl(x, 'n0', locale)} — click to ${on ? 'exclude' : 'include'}`}</title>
+              <title>{`${p.name || p.ticker || p.role}: ${y.toFixed(1)}x · ${sym}${fmtTpl(x, 'n0', locale)} — click to ${on ? 'exclude' : 'include'}`}</title>
             </g>
           );
         })}

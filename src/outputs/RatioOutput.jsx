@@ -123,7 +123,8 @@ function RatioPage({ a, set, f, R, past, freq }) {
       </Headline>
 
       {R.sections.map((sec) => {
-        const lowBetter = (r) => /debt|gearing|days|cycle|leverage|payout|tax rate/i.test(r.label);
+        // lower is better for borrowing ratios (Debt / …, Net debt / …), leverage, days and cycles — not for covers like DSCR or Cash / debt
+        const lowBetter = (r) => /^(net )?debt \/|leverage|gearing|days|cycle|payout|tax rate/i.test(r.label);
         const better = (r) => { const v = r.vals.filter(fin); if (v.length < 2) return null; return lowBetter(r) ? v[v.length - 1] <= v[0] : v[v.length - 1] >= v[0]; };
         const okN = sec.rows.filter((r) => better(r) === true).length, known = sec.rows.filter((r) => better(r) !== null).length;
         const avg = (r) => { const v = r.vals.filter(fin); return v.length ? v.reduce((x, y) => x + y, 0) / v.length : NaN; };

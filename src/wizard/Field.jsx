@@ -10,7 +10,12 @@ import { parseInputNumber, fmtBox } from '../lib/format.js';
  */
 export function Field({ spec, data, onSet, company, reveal = false, row = false, sub, inline = false }) {
   if (row) return <RowField spec={spec} data={data} onSet={onSet} company={company} reveal={reveal} sub={sub} />;
-  if (inline) return <div className="fld-inl"><Field spec={{ ...spec, hint: null }} data={data} onSet={onSet} company={company} reveal={reveal} />{spec.hint && <Tip title={spec.label} body={spec.hint} />}</div>;
+  if (inline) return <div className="fld-inl"><FieldBody spec={{ ...spec, hint: null }} data={data} onSet={onSet} company={company} reveal={reveal} />{spec.hint && <Tip title={spec.label} body={spec.hint} />}</div>;
+  return <FieldBody spec={spec} data={data} onSet={onSet} company={company} reveal={reveal} />;
+}
+
+/** The field itself (its own component, so its hooks run on every render whatever the layout). */
+function FieldBody({ spec, data, onSet, company, reveal }) {
   const value = getPath(data, spec.path);
   const [touched, setTouched] = useState(false);
   const err = fieldError(spec, value);
@@ -172,7 +177,7 @@ function RowField({ spec, data, onSet, company, reveal, sub }) {
       </span>
     );
   } else {
-    control = <div className="fr-ctl"><Field spec={{ ...spec, hint: null, label: '' }} data={data} onSet={set} company={company} reveal={reveal} /></div>;
+    control = <div className="fr-ctl"><FieldBody spec={{ ...spec, hint: null, label: '' }} data={data} onSet={set} company={company} reveal={reveal} /></div>;
   }
   return (
     <div className={`fr${show ? ' bad' : ''}`}>

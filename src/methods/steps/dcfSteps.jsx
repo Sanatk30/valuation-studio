@@ -97,20 +97,6 @@ function DcfLabelsEditor({ data, setData, company }) {
   );
 }
 
-function DcfTimeline({ data, company }) {
-  const s = S(data);
-  const lab = labelsOf(data, company);
-  const tail = s.tv === 'exit'
-    ? { label: 'Exit', sub: `× ${exitMultipleName(s.cf || 'fcff')}`, tip: `The business is valued at the end of the forecast at an exit ${exitMultipleName(s.cf || 'fcff')} multiple.` }
-    : { label: 'Terminal', sub: 'forever', tip: 'Everything after the last forecast year, by Gordon growth: final cash flow × (1 + g) ÷ (rate − g).' };
-  return (
-    <div className="tool-card">
-      <div className="tool-h">Timeline <span className="fld-opt">hover a year for its dates and how it is used</span></div>
-      <Timeline hist={lab.hist} fcst={lab.fcst} startYear={company?.startYear} fyEndMonth={company?.fyEndMonth} tail={tail} valDate={s.valDate} />
-    </div>
-  );
-}
-
 /** Settings exactly as the approved sample (DCF page 1, option B): timeline first, then Model and Conventions. */
 function DcfSettingsLayout({ data, setData, company, F, Extra, ctx }) {
   const s = S(data);
@@ -187,20 +173,6 @@ export const dcfSettingsStep = () => ({
 });
 
 /* ======================= Company & historicals ======================= */
-
-function CompanyFetch({ data, setData, company }) {
-  const c = data.dcf.company;
-  const n = nHist(data);
-  const lab = labelsOf(data, company);
-  const setCo = (fn) => setData((d) => ({ ...d, dcf: { ...d.dcf, company: fn(d.dcf.company) } }));
-  return (
-    <div className="tool-card fetchbar">
-      <div className="tool-h">Fill from Yahoo Finance <span className="fld-opt">or paste from Excel into the statements below — every number stays editable</span></div>
-      <YahooSearch company={company} action="Fill the historicals" onPick={(m) => setCo((cur) => mergeFetch(cur, m, company, { n, alignTo: lab.hist }))} />
-      {c._fetched && <FetchNote f={c._fetched} company={company} />}
-    </div>
-  );
-}
 
 function CompanyExtra({ data, setData, company }) {
   const c = data.dcf.company;
@@ -564,7 +536,7 @@ function DcfTerminalLayout({ data, setData, company, F }) {
   const card = (tv, title, input, desc, r) => {
     const on = (s.tv || 'gordon') === tv;
     return (
-      <div className={`opt2${on ? ' on' : ''}`} onClick={() => !on && setS({ tv })} role="radio" aria-checked={on} tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' && !on) setS({ tv }); }}>
+      <div className={`opt2${on ? ' on' : ''}`} onClick={() => !on && setS({ tv })} role="radio" aria-checked={on} tabIndex={0} onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ') && !on) { e.preventDefault(); setS({ tv }); } }}>
         <div className="opt2-k"><span className="radio2" />{title}{on ? ' · in use' : ''}</div>
         <div className="opt2-r">
           <div onClick={(e) => e.stopPropagation()}>{input}</div>

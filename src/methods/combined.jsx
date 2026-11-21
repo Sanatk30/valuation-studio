@@ -317,9 +317,6 @@ export function CombinedOutput({ data, company, ctx }) {
     low: r.figure.low, mid: r.figure.value, high: r.figure.high,
   }));
   if (fin(res.value)) items.push({ label: 'Combined (weighted)', low: res.value, mid: res.value, high: res.value, highlight: true });
-  const lows = res.rows.map((r) => r.figure.low).filter(fin);
-  const highs = res.rows.map((r) => r.figure.high).filter(fin);
-  const top = [...res.rows].sort((x, y) => y.weight - x.weight)[0];
   const left = [...COMBINABLE, ...MANUAL_ROWS.map((m) => m.id)].filter((id) => !res.rows.some((r) => r.methodId === id));
   const sorted = [...res.rows].filter((r) => r.figure).sort((x, y) => x.figure.value - y.figure.value);
   const lo = sorted[0], hi = sorted[sorted.length - 1];

@@ -49,8 +49,9 @@ function DriverCard({ d, row, hist, nHist, labels, onSet, onRow, emptyHist, unit
   };
   const onMove = (e) => {
     if (!drag) return;
-    const v = round(vOf(toLocal(e)), d.fmt);
-    onSet(drag.j, d.fmt === 'days' ? Math.max(0, v) : v);
+    const r = round(vOf(toLocal(e)), d.fmt);
+    const v = d.fmt === 'days' ? Math.max(0, r) : r;
+    if (v !== row[drag.j]) onSet(drag.j, v);   // save only when the rounded value moves
   };
   const onUp = () => setDrag(null);
 

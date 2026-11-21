@@ -1,4 +1,4 @@
-import React, { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import React, { Suspense, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { METHODS, previewRows } from '../methods/registry.js';
 import { METHOD_META } from '../methods/labels.js';
@@ -171,13 +171,8 @@ export default function MethodPage({ record, methodId, onHome }) {
   );
 }
 
-/** A preview value that flashes when it changes, so an edit's effect is visible at a glance. */
+/** A preview value that counts to its new figure when it changes, so an edit's effect is visible at a glance. */
 function LiveValue({ value }) {
-  const prev = useRef(value);
-  const [tick, setTick] = useState(0);
-  useEffect(() => {
-    if (prev.current !== value) { prev.current = value; setTick((t) => t + 1); }
-  }, [value]);
   return <b><CountUp>{value}</CountUp></b>;
 }
 

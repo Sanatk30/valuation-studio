@@ -97,7 +97,8 @@ export default function FlowOverview({ record, onOpen }) {
   // the data boxes
   const peers = peerSlots(record.methods.comps?.data?.comps || {}).filter((p) => !isBlankPeer(p));
   const deals = dealSlots(record.methods.precedent?.data?.precedent || {}).filter((d) => !isBlankDeal(d));
-  const histDone = ['dcf', 'lbo', 'ts', 'ratios', 'ipo'].filter((id) => (prog[id].states?.[1] === 'valid'));
+  // the methods with a historicals step (IPO has none: its step 2 is the operating forecast)
+  const histDone = ['dcf', 'lbo', 'ts', 'ratios'].filter((id) => (prog[id].states?.[1] === 'valid'));
   const year1 = effectiveYear1(record.startYear, record.fyEndMonth);
   const data = [
     { id: 'co', ic: (record.name || 'QV').split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase(), t: 'Company profile', s: `${c.currency} ${UNITS[c.unit]} · FY ends ${MON[(record.fyEndMonth || 12) - 1]} · Year 1 ${year1} · used by every method`, ok: true },
@@ -149,7 +150,7 @@ export default function FlowOverview({ record, onOpen }) {
     ? { label: id === 'combined' ? 'Combined' : METHOD_META[id].short, low: results[id].low, mid: results[id].mid, high: results[id].high, highlight: id === 'combined' } : null).filter(Boolean);
   const dcf = dcfSeries(record, ctx);
   const num0 = (v) => fmtNum(v, 0, CURRENCIES[c.currency]?.locale);
-  const trend = useMemo(() => (dcf ? areaTrendOption(dcf.labels, [{ name: 'Revenue', data: dcf.rev }, { name: 'EBITDA', data: dcf.ebitda }], { fmt: num0, nHist: dcf.nHist }) : null), [dcf && JSON.stringify(dcf.rev), theme]); // eslint-disable-line react-hooks/exhaustive-deps
+  const trend = useMemo(() => (dcf ? areaTrendOption(dcf.labels, [{ name: 'Revenue', data: dcf.rev }, { name: 'EBITDA', data: dcf.ebitda }], { fmt: num0, nHist: dcf.nHist }) : null), [dcf && JSON.stringify([dcf.labels, dcf.rev, dcf.ebitda]), c.currency, theme]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const cv = comb && fin(comb.value) ? comb.value : NaN;
   const cg = gapOf(cv);

@@ -66,7 +66,7 @@ export function IpoPricingLayout({ data, setData, company, F }) {
   const card = (basis, title, field, other, desc, r) => {
     const on = p.basis === basis;
     return (
-      <div className={`opt2${on ? ' on' : ''}`} onClick={() => !on && setIpo({ basis })} role="radio" aria-checked={on} tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' && !on) setIpo({ basis }); }}>
+      <div className={`opt2${on ? ' on' : ''}`} onClick={() => !on && setIpo({ basis })} role="radio" aria-checked={on} tabIndex={0} onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ') && !on) { e.preventDefault(); setIpo({ basis }); } }}>
         <div className="opt2-k"><span className="radio2" />{title}{on ? ' · in use' : ''}</div>
         <div className="opt2-r">
           <div onClick={(e) => e.stopPropagation()}>{on ? F(field.path, { label: field.label }) : other}</div>

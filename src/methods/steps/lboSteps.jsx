@@ -85,7 +85,6 @@ function LboSettingsLayout({ data, setData, company, F, Extra, ctx }) {
 
 
 function SettingsExtra({ data, setData, company }) {
-  const s = S(data);
   return (
     <div className="step-tools">
       <YearCheck startYear={company?.startYear} fyEndMonth={company?.fyEndMonth} onUse={(y) => company?.id && updateCompany(company.id, { startYear: y })} />
@@ -328,7 +327,7 @@ function LboTransactionLayout({ data, setData, company, F }) {
         <LboLiveCard company={company} data={data} />
         <div className="box2">
           <h3>Checks</h3>
-          <div className="kv3"><span>Sources = uses</span>{su && Math.abs(su.check) < 0.05 ? <b className="up">✓ {m(su.totalUses)}</b> : <b className="dn">✕ off by {m(su?.check)}</b>}</div>
+          <div className="kv3"><span>Sources = uses</span>{!su || !fin(su.check) ? <b className="fa">—</b> : Math.abs(su.check) < 0.05 ? <b className="up">✓ {m(su.totalUses)}</b> : <b className="dn">✕ off by {m(su.check)}</b>}</div>
           <div className="kv3"><span>Interest cover year 1</span><b>{fin(cover) ? `${cover.toFixed(1)}x` : '—'}</b></div>
           <div className="kv3"><span>Equity share</span><b className={su && su.sponsor < 0 ? 'dn' : ''}>{su ? pct1(su.stats.equityPct) : '—'}</b></div>
           {r?.entry?.cashWarn && <div className="warn2 sm">The existing cash used exceeds the cash on the balance sheet.</div>}

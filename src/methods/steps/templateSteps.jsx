@@ -12,7 +12,7 @@ import { PREC_METHODS, dealSlots, isBlankDeal, impliedEquity100, controlPremium,
 import { STAT_KEYS, STAT_LABELS, statsSettings } from '../../lib/engine/templateStats.js';
 import { runRegression, allVars, observations, targetValues, unpricedPeers } from '../../lib/engine/regressionModel.js';
 import { toEngineInput } from '../../store/methodModel.js';
-import { fmtX, fmtPct, fmtNum, fmtTpl, fmtDate, CURRENCIES } from '../../lib/format.js';
+import { fmtX, fmtPct, fmtNum, fmtTpl, fmtDate, CURRENCIES, UNITS } from '../../lib/format.js';
 import { YearCheck, YearEndSwitch } from '../../home/CompanyForms.jsx';
 import { updateCompany } from '../../store/store.js';
 import PeerMap from '../../components/PeerMap.jsx';
@@ -45,6 +45,7 @@ const ytdSpec = (path) => f.bool(path, 'Year-to-date columns', {
 
 /** Peers / deals a valuation needs at least (the spec's minimum set). */
 const MIN_SET = 3;
+const MAX_DEALS = 60;   // the Number of deals field's upper limit
 
 /** The implied valuation needs at least one multiple (method) ticked on the Settings step. */
 const needOneMethod = (methods, settings) => (usedMultiples(methods, settings?.multiples).length ? [] : ['Tick at least one multiple for the implied valuation (Valuation choices).']);
@@ -1011,7 +1012,11 @@ function DealCardsLayout({ data, setData, company, F }) {
     stored[k] = { ...cur[k], ...patch };
     return { ...d, precedent: { ...d.precedent, deals: stored } };
   });
-  const addDeal = () => { setData((d) => ({ ...d, precedent: { ...d.precedent, dealCount: dealSlots(d.precedent).length + 1 } })); setEdit(deals.length); };
+  const addDeal = () => {
+    if (deals.length >= MAX_DEALS) return;
+    setData((d) => ({ ...d, precedent: { ...d.precedent, dealCount: Math.min(MAX_DEALS, dealSlots(d.precedent).length + 1) } }));
+    setEdit(deals.length);
+  };
   const x = (v) => (typeof v === 'number' && fin(v) ? `${v.toFixed(1)}x` : 'NM');
   const dated = deals.map((d, k) => ({ d, k, t: d.date ? Date.parse(d.date) : NaN })).filter((o) => fin(o.t));
   const now = Date.now();
@@ -1052,7 +1057,7 @@ function DealCardsLayout({ data, setData, company, F }) {
                 <button type="button" role="switch" aria-checked={on} aria-label="Include in the statistics" className={`sw${on ? ' on' : ''}`} disabled={isBlankDeal(d)} onClick={() => setDeal(k, { include: on ? 0 : 1 })} />
               </div>
               <div className="dc-t">{d.target || `Deal ${k + 1}`}</div>
-              <div className="dc-s">{d.acquirer ? `acquired by ${d.acquirer}` : 'acquirer not set'}{fin(d.stakePct) ? ` · ${d.stakePct}%` : ''}{fin(d.consideration) ? ` for ${sym}${fmtNum(d.consideration, 0, locale)} ${company.unit}` : ''}{d.form ? ` (${d.form.toLowerCase()})` : ''}</div>
+              <div className="dc-s">{d.acquirer ? `acquired by ${d.acquirer}` : 'acquirer not set'}{fin(d.stakePct) ? ` · ${d.stakePct}%` : ''}{fin(d.consideration) ? ` for ${sym}${fmtNum(d.consideration, 0, locale)} ${UNITS[company.unit] || ''}` : ''}{d.form ? ` (${d.form.toLowerCase()})` : ''}</div>
               <div className="dc-m">
                 <div><small>100% equity</small><b>{typeof eq === 'number' ? `${sym}${fmtNum(eq, 0, locale)}` : '—'}</b></div>
                 <div><small>EV/EBITDA</small><b>{x(row?.mult?.evEbitda)}</b></div>
@@ -1068,7 +1073,7 @@ function DealCardsLayout({ data, setData, company, F }) {
                   <label>Acquirer{txt(k, 'acquirer')}</label>
                   <label>Acquirer type{txt(k, 'acquirerType', 'Strategic / Financial')}</label>
                   <label>Stake acquired (%){num(k, 'stakePct')}</label>
-                  <label>Consideration paid ({company.unit}){num(k, 'consideration')}</label>
+                  <label>Consideration paid ({UNITS[company.unit] || ''}){num(k, 'consideration')}</label>
                   <label>Consideration form{txt(k, 'form', 'Cash / stock')}</label>
                   <label>Status{txt(k, 'status', 'Completed / Pending')}</label>
                   <label>Listed target?<select className="fld-in" value={d.listed || ''} onChange={(e) => setDeal(k, { listed: e.target.value })}><option value="">—</option><option value="Yes">Yes</option><option value="No">No</option></select></label>
@@ -1080,7 +1085,7 @@ function DealCardsLayout({ data, setData, company, F }) {
             </div>
           );
         })}
-        <button type="button" className="dcard add" onClick={addDeal}><span>+</span><b>Add a deal</b></button>
+        {deals.length < MAX_DEALS && <button type="button" className="dcard add" onClick={addDeal}><span>+</span><b>Add a deal</b></button>}
       </div>
     </>
   );
@@ -1090,7 +1095,7 @@ export const dealListStep = () => ({
   id: 'deals',
   title: 'Deal list',
   blurb: 'The precedent transactions: dates, parties, stake and consideration, and (for listed targets) the offer and unaffected prices.',
-  fields: () => [f.int('precedent.dealCount', 'Number of deals', { min: MIN_SET, max: 60, hint: `Template: 10; at least ${MIN_SET}. Raising it adds empty rows; lowering it keeps the hidden rows’ data.` })],
+  fields: () => [f.int('precedent.dealCount', 'Number of deals', { min: MIN_SET, max: MAX_DEALS, hint: `Template: 10; at least ${MIN_SET}. Raising it adds empty rows; lowering it keeps the hidden rows’ data.` })],
   validate: (data) => {
     const k = dealSlots(data.precedent).filter((d) => !isBlankDeal(d) && d.include !== 0).length;
     return k >= MIN_SET ? [] : [`Include at least ${MIN_SET} deals (Include = 1) — the statistics need ${MIN_SET}; ${k} so far.`];
