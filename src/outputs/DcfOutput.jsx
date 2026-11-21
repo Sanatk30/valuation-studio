@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import Heatmap from '../components/Heatmap.jsx';
+import CalcMap from '../components/CalcMap.jsx';
 import Waterfall from '../components/Waterfall.jsx';
 import { computeDcfT, CF_KINDS, dcfDriverDefs, exitMultipleName } from '../lib/engine/dcfTemplate.js';
 import { fmtTpl, fmtDate } from '../lib/format.js';
@@ -7,7 +8,7 @@ import Headline from './parts/Headline.jsx';
 import Collapsible, { Sections } from './parts/Collapsible.jsx';
 import ChartBox, { EngineError } from './parts/ChartBox.jsx';
 import { makeFmt, fin, upsidePct, rnd, tone, attempt } from './parts/format.js';
-import { themed, xCat, tipBy, COL, barSeries, lineSeries, moneyAxis, projectionOption } from './parts/charts.js';
+import { themed, xCat, yVal, tipBy, COL, barSeries, lineSeries, moneyAxis, axisName, projectionOption } from './parts/charts.js';
 
 /**
  * DCF output — the chosen template's valuation sheet (cash flows, discounting,
@@ -16,18 +17,18 @@ import { themed, xCat, tipBy, COL, barSeries, lineSeries, moneyAxis, projectionO
  * sheets behind it. Every figure is the engine's (dcfTemplate.js), which
  * reproduces the template's formulas.
  */
-export default function DcfOutput({ a }) {
+export default function DcfOutput({ a, onEdit }) {
   const f = useMemo(() => makeFmt(a.settings), [a.settings]);
   const model = useMemo(() => attempt(() => computeDcfT(a)), [a]);
   if (model.error) return <div className="qo"><EngineError what="The DCF" error={model.error} /></div>;
-  return <DcfPage a={a} f={f} r={model.value} />;
+  return <DcfPage a={a} f={f} r={model.value} onEdit={onEdit} />;
 }
 
 const num = (v) => (fin(v) ? v : NaN);
 /** A KPI's text when the template cell reads NM (a KPI with a finite value animates it instead). */
 const nm = (v) => (fin(v) ? undefined : 'NM');
 
-function DcfPage({ a, f, r }) {
+function DcfPage({ a, f, r, onEdit }) {
   const v = r.valuation;
   const L = f.locale;
   const t = (x, fmt = 'n1') => fmtTpl(x, fmt, L);
@@ -46,13 +47,15 @@ function DcfPage({ a, f, r }) {
   /* ---------------- charts ---------------- */
   const projOpt = projectionOption(f, allLabels, {
     revenue: F.rev, ebitda: F.ebitda, margin: F.margin.map((x) => (fin(x) ? x * 100 : NaN)),
-  });
+  }, { nHist: n, cash: { name: cashLabel.replace('Free Cash Flow to Firm', 'FCFF').replace('Free Cash Flow to Equity', 'FCFE'), data: [...Array(n).fill(null), ...r.flows.cash] } });
   const cashOpt = themed({
-    tooltip: tipBy({}, f.num),
-    xAxis: xCat(fc), yAxis: moneyAxis(f),
+    tooltip: tipBy({ 'Discount factor': (x) => (fin(x) ? x.toFixed(3) : '—') }, f.num),
+    xAxis: xCat(fc),
+    yAxis: [moneyAxis(f, axisName(f.unitLabel, 14)), yVal({ position: 'right', min: 0, max: 1, splitLine: { show: false }, ...axisName('discount factor', 14), axisLabel: { color: COL.axis, formatter: (x) => x.toFixed(1) } })],
     series: [
-      barSeries(cashLabel, COL.teal, r.flows.cash.map((x) => rnd(x))),
-      lineSeries('Present value', COL.gold, v.pv.map((x) => rnd(x))),
+      barSeries(cashLabel, COL.tealDeep, r.flows.cash.map((x) => rnd(x))),
+      barSeries('Present value', COL.teal, v.pv.map((x) => rnd(x))),
+      lineSeries('Discount factor', COL.gold, v.df.map((x) => (fin(x) ? +x.toFixed(4) : null)), { yAxisIndex: 1, dashed: true, width: 1.6 }),
     ],
   });
   const bridge = [
@@ -133,30 +136,9 @@ function DcfPage({ a, f, r }) {
 
   return (
     <div className="qo">
-      <Headline
-        eyebrow={`DCF — ${cfK.label} · ${r.tv === 'exit' ? `Exit ${multName}` : 'Gordon Growth'} · ${r.coeKind === 'capm' ? 'CAPM' : 'Build-Up'} (template ${r.template})`}
-        sub={`${cfK.long} over ${m} forecast year${m === 1 ? '' : 's'} (${m === 1 ? fc[0] : `${fc[0]}–${fc[m - 1]}`}), discounted at ${r.cf === 'fcff' ? 'the WACC' : 'the cost of equity'} ${t(v.rate, 'pct')} with ${timing}; terminal value by ${tvName}.`}
-        warnings={[
-          r.blankYears.length ? `Blank drivers in ${r.blankYears.map((j) => fc[j]).join(', ')} count as 0, as in the template — fill them on the Assumptions step.` : null,
-          r.tv === 'gordon' && !(v.rate > v.g) ? `The discount rate (${t(v.rate, 'pct')}) is not above the terminal growth (${t(v.g, 'pct')}) — the terminal value is NM, as in the template.` : null,
-          fin(num(v.tvShare)) && v.tvShare > 0.75 ? `The terminal value is ${t(v.tvShare, 'pct')} of the total — above ~75% the value depends heavily on the terminal assumptions.` : null,
-        ]}
-        kpis={[
-          { label: `Value per share (${f.sym})`, value: num(v.perShare), text: nm(v.perShare), fmt: (x) => f.price(x), hero: true, tone: hasPx ? tone(upsidePct(num(v.perShare), px)) : undefined, sub: hasPx ? `${t(v.upside, 'pct')} vs ${f.price(px)}` : 'no current price' },
-          { label: 'Equity value', value: num(v.equity), text: nm(v.equity), fmt: (x) => f.money(x) },
-          r.cf === 'fcff' && { label: 'Enterprise value', value: num(v.ev), text: nm(v.ev), fmt: (x) => f.money(x) },
-          { label: rateName, text: t(v.rate, 'pct'), sub: w ? `Ke ${t(coe.ke, 'pct')} · Kd after tax ${t(w.kdAfter, 'pct')} · D/(D+E) ${t(w.targetWd, 'pct')}` : (r.coeKind === 'capm' ? `rf ${t(coe.rf, 'pct')} + β ${fmtTpl(coe.beta, 'n2', L)} × ERP ${t(coe.erp, 'pct')}` : 'build-up') },
-          { label: 'Terminal value share', text: t(v.tvShare, 'pct'), sub: r.tv === 'gordon' ? `implied exit ${multName} ${t(v.implied, 'x')}` : `implied perpetual growth ${t(v.implied, 'pct')}` },
-        ].filter(Boolean)}
-      >
-        <div className="grid2">
-          <ChartBox title={`${cashLabel} and present value (${f.unitLabel})`} option={cashOpt} />
-          <div className="chartbox">
-            <div className="ct">Value bridge ({f.unitLabel})</div>
-            {bridgeOk ? <Waterfall items={bridge} fmt={f.num} /> : <div className="empty">NM — the terminal value is not meaningful.</div>}
-          </div>
-        </div>
-      </Headline>
+      <DcfMap r={r} f={f} t={t} onEdit={onEdit} />
+      {fin(num(v.tvShare)) && v.tvShare > 0.75 && <div className="warn2" style={{ marginBottom: 16 }}>The terminal value is {t(v.tvShare, 'pct')} of the total — above ~75% the value depends heavily on the terminal assumptions.</div>}
+      {r.blankYears.length > 0 && <div className="warn2" style={{ marginBottom: 16 }}>Blank drivers in {r.blankYears.map((j) => fc[j]).join(', ')} count as 0, as in the template — fill them on the Assumptions step.</div>}
 
       <Sections>
         <Collapsible title={`${cfK.label} — ${r.tv === 'exit' ? 'Terminal value: exit multiple' : 'Terminal value: Gordon growth'}`} tag="VALUATION" defaultOpen>
@@ -202,7 +184,7 @@ function DcfPage({ a, f, r }) {
         </Collapsible>
 
         <Collapsible title="Forecast model" tag="FORECAST">
-          <ChartBox title={`Revenue & EBITDA (${f.unitLabel}), EBITDA margin — actual and forecast`} option={projOpt} />
+          <ChartBox title={`Revenue, EBITDA and ${r.cf === 'ddm' ? 'dividends' : r.cf.toUpperCase()} (${f.unitLabel}) — actual and forecast`} sub={`Actual years lighter, forecast shaded; EBITDA margin on the right axis${fin(F.rev[n - 1]) && F.rev[n - 1] > 0 && F.rev[n + m - 1] > 0 ? ` · revenue CAGR ${allLabels[n - 1]}–${allLabels[n + m - 1]}: ${((Math.pow(F.rev[n + m - 1] / F.rev[n - 1], 1 / m) - 1) * 100).toFixed(1)}%` : ''}`} option={projOpt} height={300} />
           <div className="tablewrap tp-grid">
             <table className="fin compact">
               <thead>
@@ -295,5 +277,85 @@ function DcfPage({ a, f, r }) {
         </Collapsible>
       </Sections>
     </div>
+  );
+}
+
+/** The DCF result as a calculation map (the approved Result design, option A). */
+function DcfMap({ r, f, t, onEdit }) {
+  const v = r.valuation, F = r.F, D = r.drivers, n = r.n, m = r.m;
+  const fc = r.labels.fcst, last = fc[m - 1], base = r.labels.hist[n - 1];
+  const p1 = (x) => (fin(x) ? `${(x * 100).toFixed(1)}%` : '—');
+  const range = (arr) => (arr && arr.length ? (fin(arr[0]) && fin(arr[m - 1]) && Math.abs(arr[0] - arr[m - 1]) > 1e-9 ? `${p1(arr[0])} → ${p1(arr[m - 1])}` : p1(arr[0])) : '—');
+  const go = (i) => (onEdit ? () => onEdit(i) : undefined);
+  const money = (x) => (fin(x) ? `${f.sym}${t(x, 'n0')}` : 'NM');
+  const ff = r.cf === 'fcff';
+  const coe = r.coe, w = r.wacc;
+  const cashName = ff ? 'Free cash flow' : r.cf === 'fcfe' ? 'FCFE' : 'Dividends';
+  const sumCash = r.flows.cash.reduce((a2, x) => a2 + (fin(x) ? x : 0), 0);
+  const cols = [
+    { title: '1 · Your inputs', groups: [
+      { name: 'Operations', nodes: [
+        { id: 'i-g', label: 'Revenue growth', value: range(D.gRev), input: true, onClick: go(2) },
+        { id: 'i-m', label: 'Materials, % of revenue', value: range(D.materials), input: true, onClick: go(2) },
+        { id: 'i-t', label: 'Tax rate', value: range(D.tax), input: true, onClick: go(2) },
+        { id: 'i-c', label: 'Capex, % of revenue', value: range(D.capex), input: true, onClick: go(2) },
+        { id: 'i-w', label: 'Inventory days', value: fin(D.invDays?.[0]) ? `${Math.round(D.invDays[0])}` : '—', input: true, onClick: go(2) },
+      ] },
+      { name: 'Discount rate', nodes: r.coeKind === 'capm' ? [
+        { id: 'i-rf', label: 'Risk-free rate', value: p1(coe.rf), input: true, onClick: go(3) },
+        { id: 'i-b', label: 'Beta', value: fin(coe.beta) ? coe.beta.toFixed(2) : '—', input: true, onClick: go(3) },
+        { id: 'i-erp', label: 'Equity risk premium', value: p1(coe.erp), input: true, onClick: go(3) },
+        ...(w ? [{ id: 'i-kd', label: 'Cost of debt, after tax', value: p1(w.kdAfter), input: true, onClick: go(3) }] : []),
+      ] : [
+        { id: 'i-rf', label: 'Risk-free rate', value: p1(coe.rf), input: true, onClick: go(3) },
+        { id: 'i-erp', label: 'Premia (ERP + others)', value: p1(coe.ke - coe.rf), input: true, onClick: go(3) },
+        ...(w ? [{ id: 'i-kd', label: 'Cost of debt, after tax', value: p1(w.kdAfter), input: true, onClick: go(3) }] : []),
+      ] },
+      { name: 'Terminal', nodes: [
+        r.tv === 'exit' ? { id: 'i-tg', label: `Exit ${exitMultipleName(r.cf)}`, value: t(v.multiple, 'x'), input: true, onClick: go(4) }
+          : { id: 'i-tg', label: 'Terminal growth', value: p1(v.g), input: true, onClick: go(4) },
+      ] },
+    ] },
+    { title: '2 · Forecast', groups: [
+      { nodes: [
+        { id: 'c-rev', label: `Revenue ${last}`, value: money(F.rev[n + m - 1]), sub: `from ${money(F.rev[n - 1])} in ${base}`, spark: F.rev },
+        { id: 'c-ebitda', label: `EBITDA ${last}`, value: money(F.ebitda[n + m - 1]), sub: `margin ${p1(F.margin[n + m - 1])}` },
+        ff ? { id: 'c-nopat', label: `NOPAT ${last}`, value: money(r.flows.nopat[m - 1]), sub: `after tax on EBIT` } : { id: 'c-nopat', label: `PAT ${last}`, value: money(F.pat[n + m - 1]), sub: 'after interest and tax' },
+        { id: 'c-cash', label: `${cashName} ${fc[0]}–${last}`, value: money(sumCash), sub: `${m} years · shown below`, spark: r.flows.cash, sel: true },
+      ] },
+      { name: 'Discount rate', nodes: [
+        { id: 'c-ke', label: 'Cost of equity', value: p1(coe.ke), sub: r.coeKind === 'capm' ? `${p1(coe.rf)} + ${fin(coe.beta) ? coe.beta.toFixed(2) : '—'} × ${p1(coe.erp)}` : 'build-up' },
+        ...(w ? [{ id: 'c-wacc', label: 'WACC', value: p1(w.wacc), sub: `equity ${p1(w.targetWe)} · debt ${p1(w.targetWd)}` }] : []),
+      ] },
+    ] },
+    { title: '3 · Value', groups: [
+      { nodes: [
+        { id: 'v-pv', label: 'PV of forecast cash flows', value: money(v.sumPv), sub: `discounted ${v.mid ? 'mid-year' : 'end-year'} at ${p1(v.rate)}` },
+        { id: 'v-tv', label: 'PV of terminal value', value: money(v.pvTv), sub: `${r.tv === 'exit' ? 'exit multiple' : `Gordon growth at ${p1(v.g)}`} · ${fin(v.tvShare) ? (v.tvShare * 100).toFixed(1) : '—'}% of value` },
+        ...(ff ? [
+          { id: 'v-ev', label: 'Enterprise value', value: money(v.ev), sub: 'forecast + terminal' },
+          { id: 'v-bs', label: 'Net debt, NCI, investments', value: money(-(v.netDebt || 0) - (v.nci || 0) + (v.nonOp || 0)), sub: 'from the balance sheet', onClick: go(3) },
+        ] : []),
+        { id: 'v-eq', label: 'Equity value', value: money(v.equity), sub: fin(v.shares) ? `÷ ${t(v.shares, 'n2')} ${f.unit} diluted shares` : 'no share count' },
+      ] },
+    ] },
+  ];
+  const edges = [
+    ['i-g', 'c-rev', 1], ['i-m', 'c-ebitda'], ['i-t', 'c-nopat'], ['i-c', 'c-cash', 1], ['i-w', 'c-cash'],
+    ['i-rf', 'c-ke'], ['i-b', 'c-ke'], ['i-erp', 'c-ke'], ['i-kd', 'c-wacc'], ['i-tg', 'v-tv', 1],
+    ['c-cash', 'v-pv', 1], ['c-cash', 'v-tv', 1], ['c-wacc', 'v-pv'], ['c-ke', 'v-pv'],
+    ['v-pv', 'v-ev', 1], ['v-tv', 'v-ev', 1], ['v-ev', 'v-eq', 1], ['v-bs', 'v-eq'], ['v-pv', 'v-eq', !ff], ['v-tv', 'v-eq', !ff],
+    ['v-eq', 'res', 1],
+  ];
+  const px = r.price, hasPx = fin(px) && px > 0;
+  const up = hasPx && fin(v.perShare) ? v.perShare / px - 1 : null;
+  const lastEbitda = F.ebitda[n - 1];
+  return (
+    <CalcMap cols={cols} edges={edges} result={{
+      id: 'res', title: '4 · Result', label: 'Value per share', value: fin(v.perShare) ? f.price(v.perShare) : 'NM',
+      sub: up !== null ? `${up >= 0 ? '▲' : '▼'} ${Math.abs(up * 100).toFixed(1)}% vs market ${f.price(px)}` : 'no current price', tone: up === null ? '' : up >= 0 ? 'up' : 'dn',
+      rows: [['Equity value', money(v.equity)], ...(ff ? [['Enterprise value', money(v.ev)], ['Implied EV / EBITDA', fin(v.ev) && lastEbitda > 0 ? `${(v.ev / lastEbitda).toFixed(1)}x` : 'NM']] : [])],
+      action: { label: 'Open sensitivity', onClick: () => document.querySelector('[data-title*="Sensitivity"] .qo-coll-head, [data-title*="Sensitivity"]')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) },
+    }} />
   );
 }

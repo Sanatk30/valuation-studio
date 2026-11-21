@@ -3,18 +3,19 @@ import { f } from '../fields.js';
 import TemplatePageEditor from '../../components/TemplatePageEditor.jsx';
 import PasteDialog from '../../components/PasteDialog.jsx';
 import { PeerBatchAdd, YahooSearch, RowFetch, mergeFetch } from '../../components/PeerYahoo.jsx';
-import { NumBox } from '../../wizard/Field.jsx';
+import { NumBox, Tip } from '../../wizard/Field.jsx';
 import { computePage, MIN_YEARS, MAX_YEARS } from '../../lib/engine/companyPage.js';
 import {
   COMPS_MULTIPLES, blankPeer, isBlankPeer, peerSlots, periodLabels, clampYears, multipleLabel, computeComps, usedMultiples, tsmShares,
 } from '../../lib/engine/comps.js';
-import { PREC_METHODS, dealSlots, isBlankDeal, impliedEquity100, controlPremium } from '../../lib/engine/precedent.js';
+import { PREC_METHODS, dealSlots, isBlankDeal, impliedEquity100, controlPremium, computePrecedent } from '../../lib/engine/precedent.js';
 import { STAT_KEYS, STAT_LABELS, statsSettings } from '../../lib/engine/templateStats.js';
 import { runRegression, allVars, observations, targetValues, unpricedPeers } from '../../lib/engine/regressionModel.js';
 import { toEngineInput } from '../../store/methodModel.js';
 import { fmtX, fmtPct, fmtNum, fmtTpl, fmtDate, CURRENCIES } from '../../lib/format.js';
 import { YearCheck, YearEndSwitch } from '../../home/CompanyForms.jsx';
 import { updateCompany } from '../../store/store.js';
+import PeerMap from '../../components/PeerMap.jsx';
 import { latestYearErrors } from './dcfSteps.jsx';
 
 /**
@@ -148,6 +149,98 @@ function LabelsEditor({ labels, ytd, forward = false, onChange }) {
   );
 }
 
+/**
+ * Settings for Comps and Precedent exactly as the approved samples (page 1,
+ * option B): the periods as a strip (click a label to rename it), then the
+ * multiples as a grid — what is measured (rows) against which basis
+ * (columns) — with low / mid / high, and the treatments beside it.
+ */
+function MultiplesSettingsLayout({ F, settings, onSettings, labels, onLabels, ytd, n, grid, title = 'What values the company', datePath, yearsPath, ytdPath, leasePath, invPath, sameAs }) {
+  const st = statsSettings(settings?.stats || {});
+  const sel = settings?.multiples || {};
+  const setStats = (patch) => onSettings({ ...settings, stats: { ...st, ...patch } });
+  const setMult = (key, on) => onSettings({ ...settings, multiples: { ...sel, [key]: on } });
+  const used = grid.rows.flatMap((r) => r.cells).filter((c) => c && sel[c.key] !== false).length;
+  const cells = [
+    ...labels.fy.map((l, i) => ({ id: i, l, k: 'h' })),
+    ...(ytd ? [{ id: 'p', l: labels.p, k: 'y' }, { id: 'c', l: labels.c, k: 'y' }] : []),
+    { id: 'ltm', l: labels.ltm, k: 'l' },
+  ];
+  const setLab = (id, v) => {
+    if (!onLabels) return;
+    const cur = { ...labels, fy: [...labels.fy] };
+    if (typeof id === 'number') cur.fy[id] = v; else cur[id] = v;
+    onLabels(cur);
+  };
+  return (
+    <>
+      <div className="box2">
+        <h3>Periods</h3>
+        <div className="box2-s">{n} fiscal year{n === 1 ? '' : 's'}{ytd ? ', two YTD columns, and the LTM they make' : ' — no YTD columns, so the LTM is the latest fiscal year'}{onLabels ? ' · click a label to rename it' : ''}</div>
+        <div className="pstrip" style={{ gridTemplateColumns: `repeat(${cells.length}, minmax(0, 1fr))` }}>
+          {cells.map((c) => (
+            <label key={String(c.id)} className={`ps ${c.k}`}>
+              {onLabels ? <input value={c.l || ''} onChange={(e) => setLab(c.id, e.target.value)} aria-label={`Label for ${c.k === 'h' ? 'a fiscal year' : c.k === 'y' ? 'a YTD column' : 'the LTM'}`} /> : <span>{c.l}</span>}
+            </label>
+          ))}
+        </div>
+        <div className="ps-f">{ytd ? `${labels.ltm} = ${labels.fy[n - 1]} + ${labels.c} − ${labels.p}` : `${labels.ltm} = ${labels.fy[n - 1]}`}</div>
+        <div className="tl-ctls">
+          {F(datePath, { inline: true })}
+          {F(yearsPath, { inline: true, label: 'Years per page' })}
+          {F(ytdPath, { row: true, label: 'YTD columns', sub: 'needed for an LTM' })}
+        </div>
+      </div>
+      <div className="gLb">
+        <div className="box2">
+          <h3>{title}</h3>
+          <table className="mgrid">
+            <thead><tr><th />{grid.cols.map((c) => <th key={c}>{c}</th>)}</tr></thead>
+            <tbody>
+              {grid.rows.map((r) => (
+                <tr key={r.name}>
+                  <td>{r.name}</td>
+                  {r.cells.map((c, i) => (c ? (
+                    <td key={i}><button type="button" className={`mg${sel[c.key] !== false ? ' on' : ''}`} aria-pressed={sel[c.key] !== false} onClick={() => setMult(c.key, sel[c.key] === false)} title={c.tip || c.label}>
+                      {sel[c.key] !== false ? `✓ ${c.short}` : c.short}
+                    </button></td>
+                  ) : <td key={i} className="mg-na">—</td>))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {!used && <div className="fld-e">Tick at least one — the implied valuation needs a multiple.</div>}
+          <div className="g3f">
+            {[['low', 'Low'], ['mid', 'Mid'], ['high', 'High']].map(([k, lab]) => (
+              <div className="fld" key={k}>
+                <div className="fld-l"><label>{lab}</label></div>
+                <select className="fld-in" value={st[k]} onChange={(e) => setStats({ [k]: e.target.value })}>
+                  {STAT_KEYS.map((x) => <option key={x} value={x}>{STAT_LABELS[x]}</option>)}
+                </select>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="box2">
+          <h3>Treatments</h3>
+          {F(leasePath, { row: true, label: 'Leases as debt', sub: sameAs || 'lease liabilities in EV' })}
+          {F(invPath, { row: true, label: 'Deduct investments', sub: sameAs || 'non-operating' })}
+          <div className="fr">
+            <div className="fr-l"><b>Percentile method<Tip title="Percentile method" body="Inclusive matches Excel's QUARTILE.INC; exclusive (QUARTILE.EXC) needs enough values — with too few it shows NM." /></b></div>
+            <span className="seg2"><button type="button" className={st.method === 'inc' ? 'on' : ''} onClick={() => setStats({ method: 'inc' })}>Incl.</button><button type="button" className={st.method === 'exc' ? 'on' : ''} onClick={() => setStats({ method: 'exc' })}>Excl.</button></span>
+          </div>
+          <div className="fr-col">
+            <b>Statistics rows shown</b>
+            <div className="chips2">{STAT_KEYS.map((x) => (
+              <button type="button" key={x} className={st.show.includes(x) ? 'on' : ''} onClick={() => setStats({ show: st.show.includes(x) ? st.show.filter((y) => y !== x) : [...st.show, x] })}>{STAT_LABELS[x]}</button>
+            ))}</div>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
 /* ============================== COMPS ============================== */
 
 /**
@@ -176,6 +269,30 @@ function CompsSettingsExtra({ data, setData, company }) {
   );
 }
 
+function CompsSettingsLayout({ data, setData, company, F }) {
+  const s = data.comps.settings || {};
+  const setSettings = (next) => setData((d) => ({ ...d, comps: { ...d.comps, settings: next } }));
+  const n = compsN(data);
+  const lab = editorLabels(s.labels, n, company?.startYear);
+  const shown = compsLabels(data, company);
+  const by = (name, period) => COMPS_MULTIPLES.find((m) => m.name === name && m.period === period);
+  const cell = (name, period, short) => { const m = by(name, period); return m ? { key: m.key, short, label: multipleLabel(m, shown) } : null; };
+  const names = ['EV / Revenue', 'EV / EBITDA', 'EV / EBIT', 'P / E', 'P / B (latest)'];
+  const grid = {
+    cols: [`Latest FY (${shown.fy[n - 1]})`, `LTM (${shown.ltm})`, 'Latest book', 'Forecast yr 1', 'Forecast yr 2'],
+    rows: names.map((nm) => ({ name: nm.replace(' (latest)', ''), cells: [cell(nm, 'fy', shown.fy[n - 1]), cell(nm, 'ltm', 'LTM'), cell(nm, 'book', 'Book'),
+      (() => { const c = cell(nm, 'f1', 'Fwd 1'); return c && { ...c, tip: 'Needs consensus forecasts, which are not asked for — shows NM' }; })(),
+      (() => { const c = cell(nm, 'f2', 'Fwd 2'); return c && { ...c, tip: 'Needs consensus forecasts, which are not asked for — shows NM' }; })()] })),
+  };
+  return (
+    <>
+      <MultiplesSettingsLayout F={F} settings={s} onSettings={setSettings} labels={lab} onLabels={(labels) => setSettings({ ...s, labels })} ytd={compsYtd(data)} n={n} grid={grid}
+        title="Multiples" datePath="comps.settings.priceDate" yearsPath="comps.settings.years" ytdPath="comps.settings.ytd" leasePath="comps.settings.lease" invPath="comps.settings.inv" sameAs="same as your DCF" />
+      <YearCheck startYear={company?.startYear} fyEndMonth={company?.fyEndMonth} onUse={(y) => company?.id && updateCompany(company.id, { startYear: y })} />
+    </>
+  );
+}
+
 export const compsSettingsStep = () => ({
   id: 'compsSettings',
   title: 'Settings',
@@ -189,37 +306,93 @@ export const compsSettingsStep = () => ({
   ],
   Extra: CompsSettingsExtra,
   extraBelow: true,
+  Layout: CompsSettingsLayout,
+  summary: (data) => { const k = usedMultiples(COMPS_MULTIPLES, data.comps?.settings?.multiples).length; const st = statsSettings(data.comps?.settings?.stats || {}); return `${k} multiples · ${STAT_LABELS[st.low] || ''} / ${STAT_LABELS[st.mid] || ''} / ${STAT_LABELS[st.high] || ''}`.replace(/percentile/gi, '').replace(/\s+/g, ' '); },
   validate: (data) => needOneMethod(COMPS_MULTIPLES, data.comps?.settings),
 });
 
+
+/**
+ * The valued company as a profile card and its LTM built in plain sight (the
+ * chosen Comps / Precedent design): FY + current YTD − prior YTD = LTM, for the
+ * EBITDA the multiples are applied to; revenue, EBIT and PAT alongside.
+ */
+export function ProfileLtm({ name, sub, page, n, ytd, labels, toggle, inv, price, shares, company }) {
+  const locale = CURRENCIES[company.currency]?.locale;
+  const sym = CURRENCIES[company.currency]?.symbol || '';
+  let pg = null;
+  try { pg = computePage(page, { n, toggle, ytd, market: { price, shares }, inv }); } catch { pg = null; }
+  const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? fmtTpl(v, 'n0', locale) : '—');
+  const { P, C, L } = pg ? pg.cols : {};
+  const e = pg?.v?.ebitda || [];
+  const initials = (name || '?').split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
+  const tiles = [
+    ['Share price', typeof price === 'number' ? `${sym}${fmtTpl(price, 'n2', locale)}` : '—'],
+    ['Shares', typeof shares === 'number' ? fmtTpl(shares, 'n2', locale) : '—'],
+    ['Market cap', pg && typeof pg.market.equity === 'number' && pg.market.equity ? `${sym}${num(pg.market.equity)}` : '—'],
+    ['Enterprise value', pg && typeof pg.market.ev === 'number' && pg.market.equity ? `${sym}${num(pg.market.ev)}` : '—'],
+  ];
+  return (
+    <>
+      <div className="pf-card">
+        <span className="pf-av">{initials}</span>
+        <div className="pf-n"><b>{name}</b><small>{sub}</small></div>
+        <div className="pf-tiles">{tiles.map(([a, b]) => <div key={a}><span>{a}</span><b>{b}</b></div>)}</div>
+      </div>
+      {pg && (
+        <div className="tool-card">
+          <div className="tool-h">How the LTM is built · EBITDA <span className="fld-opt">the multiples are applied to these LTM figures</span></div>
+          <div className="ltm">
+            <div className="ltm-b"><small>{labels.fy[n - 1]}</small><b>{num(e[n - 1])}</b></div>
+            {ytd ? (
+              <>
+                <span className="ltm-op">+</span>
+                <div className="ltm-b y"><small>{labels.c || 'Current YTD'}</small><b>{num(e[C])}</b></div>
+                <span className="ltm-op">−</span>
+                <div className="ltm-b y"><small>{labels.p || 'Prior YTD'}</small><b>{num(e[P])}</b></div>
+              </>
+            ) : <span className="ltm-note">no YTD columns — the LTM is the latest fiscal year</span>}
+            <span className="ltm-op">=</span>
+            <div className="ltm-b r"><small>{labels.ltm || 'LTM'}</small><b>{num(e[L])}</b></div>
+            <span className="ltm-also">Same for revenue ({num(pg.v.rev?.[L])}), EBIT ({num(pg.v.ebit?.[L])}) and PAT ({num(pg.v.patOwners?.[L])})</span>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 /** The target company page. */
+function CompsTargetFetch({ data, setData, company }) {
+  const t = data.comps.target;
+  const n = compsN(data);
+  const setTarget = (fn) => setData((d) => ({ ...d, comps: { ...d.comps, target: fn(d.comps.target) } }));
+  return (
+    <div className="tool-card fetchbar">
+      <div className="tool-h">Fill from Yahoo Finance <span className="fld-opt">or paste from Excel into the page below</span></div>
+      <YahooSearch company={company} action="Fill the page"
+        onPick={(m) => setTarget((cur) => mergeFetch(cur, m, company, { n, alignTo: compsLabels(data, company).fy, basic: true }))} />
+      {t._fetched && <FetchNote f={t._fetched} company={company} />}
+    </div>
+  );
+}
+
 function CompsTargetExtra({ data, setData, company }) {
   const t = data.comps.target;
   const n = compsN(data);
   const setTarget = (fn) => setData((d) => ({ ...d, comps: { ...d.comps, target: fn(d.comps.target) } }));
   const toggle = data.comps.settings?.lease === 0 ? 0 : 1;
   const inv = data.comps.settings?.inv === 0 ? 0 : 1;
-  const locale = CURRENCIES[company.currency]?.locale;
+  const lab = compsLabels(data, company);
   return (
     <div className="step-tools">
-      <div className="tool-card">
-        <div className="tool-h">Diluted shares (treasury stock method)</div>
-        <div className="fld-h">
-          {fmtTpl(tsmShares(t), 'n2', locale)} = basic shares + in-the-money options × (1 − exercise price ÷ share price) + in-the-money convertibles.
-          With no options or convertibles entered it equals the basic share count.
-        </div>
-      </div>
-      <div className="tool-card">
-        <div className="tool-h">Fill from Yahoo Finance <span className="fld-opt">optional</span></div>
-        <YahooSearch company={company} action="Fill the page"
-          onPick={(m) => setTarget((cur) => mergeFetch(cur, m, company, { n, alignTo: compsLabels(data, company).fy, basic: true }))} />
-        {t._fetched && <FetchNote f={t._fetched} company={company} />}
-      </div>
+      <ProfileLtm name={company.name} sub={[t.ticker, t.sector].filter(Boolean).join(' · ') || 'the company being valued'} page={t.page} n={n} ytd={compsYtd(data)} labels={lab}
+        toggle={toggle} inv={inv} price={t.price} shares={tsmShares(t)} company={company} />
       <div className="tool-card">
         <div className="tool-h">{company.name} — company page</div>
         <TemplatePageEditor
           page={t.page} onChange={(page) => setTarget((cur) => ({ ...cur, page }))}
-          n={n} ytd={compsYtd(data)} labels={compsLabels(data, company)} toggle={toggle} inv={inv}
+          n={n} ytd={compsYtd(data)} labels={lab} toggle={toggle} inv={inv}
           market={{ price: t.price, shares: tsmShares(t) }} company={company}
         />
       </div>
@@ -253,6 +426,7 @@ export const compsTargetStep = () => ({
   ],
   Extra: CompsTargetExtra,
   extraBelow: true,
+  Top: CompsTargetFetch,
   // the LTM is built on the latest FY column: with no figures there the target's multiples base is 0
   validate: (data, ctx) => latestYearErrors(pageRevShape(data.comps.target?.page, compsN(data), compsLabels(data, ctx.company).fy), ctx.company, "the target's LTM"),
 });
@@ -434,6 +608,27 @@ function PeersExtra({ data, setData, company }) {
   );
 }
 
+function PeerMapTop({ data, setData, company }) {
+  const res = useMemo(() => { try { return computeComps(toEngineInput(company, data)); } catch { return null; } }, [company, data]);
+  if (!res) return null;
+  const toggle = (id) => setData((d) => {
+    const cur = peerSlots(d.comps);
+    const stored = [...(d.comps.peers || [])];
+    cur.forEach((p, k) => { if (!stored[k]) stored[k] = p; });
+    const k = cur.findIndex((p) => p.id === id);
+    if (k < 0) return d;
+    stored[k] = { ...cur[k], include: cur[k].include === 0 ? 1 : 0 };
+    return { ...d, comps: { ...d.comps, peers: stored } };
+  });
+  return (
+    <div className="tool-card">
+      <div className="tool-h">Peer map <span className="fld-opt">where each peer sits · click a dot to include or exclude it</span></div>
+      <PeerMap peers={res.peers} target={res.target} company={company} onToggle={toggle}
+        options={[{ key: 'evEbitdaLtm', label: 'EV / EBITDA' }, { key: 'peLtm', label: 'P / E' }, { key: 'evRevLtm', label: 'EV / Revenue' }]} />
+    </div>
+  );
+}
+
 export const peersStep = () => ({
   id: 'peers',
   title: 'Peers',
@@ -445,6 +640,8 @@ export const peersStep = () => ({
   },
   Extra: PeersExtra,
   extraBelow: true,
+  Top: PeerMapTop,
+  summary: (data) => { const ps = peerSlots(data.comps).filter((p) => !isBlankPeer(p)); return ps.length ? `${ps.length} peers · ${ps.filter((p) => p.include !== 0).length} included` : null; },
 });
 
 /* ============================ Regression ============================ */
@@ -637,6 +834,30 @@ function PrecSettingsExtra({ data, setData }) {
   );
 }
 
+function PrecSettingsLayout({ data, setData, company, F }) {
+  const s = data.precedent.settings || {};
+  const setSettings = (next) => setData((d) => ({ ...d, precedent: { ...d.precedent, settings: next } }));
+  const n = precN(data);
+  const lab = editorLabels(data.precedent.company?.page?.labels, n, null);
+  const by = (k) => PREC_METHODS.find((m) => m.key === k);
+  const cell = (k, short) => { const m = by(k); return m ? { key: m.key, short, label: m.label } : null; };
+  const grid = {
+    cols: ['LTM at announcement', 'Latest book', 'Offer vs unaffected price'],
+    rows: [
+      { name: 'EV / Revenue', cells: [cell('evRev', 'LTM'), null, null] },
+      { name: 'EV / EBITDA', cells: [cell('evEbitda', 'LTM'), null, null] },
+      { name: 'EV / EBIT', cells: [cell('evEbit', 'LTM'), null, null] },
+      { name: 'P / E', cells: [cell('pe', 'LTM'), null, null] },
+      { name: 'P / B', cells: [null, cell('pb', 'Book'), null] },
+      { name: 'Control premium', cells: [null, null, { ...cell('premium', 'on today’s price'), tip: 'Median premium paid over the unaffected price, applied to the current share price' }] },
+    ],
+  };
+  return (
+    <MultiplesSettingsLayout F={F} settings={s} onSettings={setSettings} labels={lab} ytd={precYtd(data)} n={n} grid={grid}
+      datePath="precedent.settings.valDate" yearsPath="precedent.settings.years" ytdPath="precedent.settings.ytd" leasePath="precedent.settings.lease" invPath="precedent.settings.inv" sameAs="same as your comps" />
+  );
+}
+
 export const precSettingsStep = () => ({
   id: 'precSettings',
   title: 'Settings',
@@ -650,8 +871,24 @@ export const precSettingsStep = () => ({
   ],
   Extra: PrecSettingsExtra,
   extraBelow: true,
+  Layout: PrecSettingsLayout,
+  summary: (data) => { const k = usedMultiples(PREC_METHODS, data.precedent?.settings?.multiples).length; return `${k} method${k === 1 ? '' : 's'}`; },
   validate: (data) => needOneMethod(PREC_METHODS, data.precedent?.settings),
 });
+
+function PrecCompanyFetch({ data, setData, company }) {
+  const c = data.precedent.company;
+  const n = precN(data);
+  const setCo = (fn) => setData((d) => ({ ...d, precedent: { ...d.precedent, company: fn(d.precedent.company) } }));
+  return (
+    <div className="tool-card fetchbar">
+      <div className="tool-h">Fill from Yahoo Finance <span className="fld-opt">listed companies — or paste from Excel into the page below</span></div>
+      <YahooSearch company={company} action="Fill the page"
+        onPick={(m) => setCo((cur) => mergeFetch(cur, m, company, { n, labels: true }))} />
+      {c._fetched && <FetchNote f={c._fetched} company={company} />}
+    </div>
+  );
+}
 
 function PrecCompanyExtra({ data, setData, company }) {
   const c = data.precedent.company;
@@ -660,14 +897,10 @@ function PrecCompanyExtra({ data, setData, company }) {
   const labels = editorLabels(c.page?.labels, n, null);
   return (
     <div className="step-tools">
+      <ProfileLtm name={company.name} sub={c.ticker ? `${c.ticker} · listed` : 'unlisted — the control-premium method shows NM'} page={c.page} n={n} ytd={precYtd(data)} labels={labels}
+        toggle={precToggle(data)} inv={precInv(data)} price={c.price} shares={c.shares} company={company} />
       <div className="tool-card">
-        <div className="tool-h">Fill from Yahoo Finance <span className="fld-opt">optional — listed companies</span></div>
-        <YahooSearch company={company} action="Fill the page"
-          onPick={(m) => setCo((cur) => mergeFetch(cur, m, company, { n, labels: true }))} />
-        {c._fetched && <FetchNote f={c._fetched} company={company} />}
-      </div>
-      <div className="tool-card">
-        <div className="tool-h">Company Being Valued: {company.name}</div>
+        <div className="tool-h">Company being valued: {company.name}</div>
         <TemplatePageEditor
           page={c.page} onChange={(page) => setCo((cur) => ({ ...cur, page }))}
           n={n} ytd={precYtd(data)} labels={labels}
@@ -690,6 +923,7 @@ export const precCompanyStep = () => ({
   ],
   Extra: PrecCompanyExtra,
   extraBelow: true,
+  Top: PrecCompanyFetch,
 });
 
 /** The deal list (the template's Inputs rows 17…). */
@@ -763,6 +997,95 @@ function DealListExtra({ data, setData, company }) {
   );
 }
 
+/** Deal list exactly as the approved sample (Precedent page 3, option B): a timeline, then a card per deal. */
+function DealCardsLayout({ data, setData, company, F }) {
+  const deals = dealSlots(data.precedent);
+  const locale = CURRENCIES[company.currency]?.locale;
+  const sym = CURRENCIES[company.currency]?.symbol || '';
+  const [edit, setEdit] = useState(null);
+  const res = useMemo(() => { try { return computePrecedent(toEngineInput(company, data)); } catch { return null; } }, [company, data]);
+  const setDeal = (k, patch) => setData((d) => {
+    const cur = dealSlots(d.precedent);
+    const stored = [...(d.precedent.deals || [])];
+    cur.forEach((x, i) => { if (!stored[i]) stored[i] = x; });
+    stored[k] = { ...cur[k], ...patch };
+    return { ...d, precedent: { ...d.precedent, deals: stored } };
+  });
+  const addDeal = () => { setData((d) => ({ ...d, precedent: { ...d.precedent, dealCount: dealSlots(d.precedent).length + 1 } })); setEdit(deals.length); };
+  const x = (v) => (typeof v === 'number' && fin(v) ? `${v.toFixed(1)}x` : 'NM');
+  const dated = deals.map((d, k) => ({ d, k, t: d.date ? Date.parse(d.date) : NaN })).filter((o) => fin(o.t));
+  const now = Date.now();
+  const t0 = dated.length ? Math.min(...dated.map((o) => o.t)) : now - 3 * 365 * 864e5;
+  const span = Math.max(now - t0, 365 * 864e5) * 1.04;
+  const pos = (t) => 2 + ((t - t0) / span) * 94;
+  const years = [];
+  for (let y = new Date(t0).getFullYear(); y <= new Date(now).getFullYear(); y++) years.push(y);
+  const txt = (k, key, ph) => <input className="fld-in txt" value={deals[k][key] || ''} placeholder={ph || ''} onChange={(e) => setDeal(k, { [key]: e.target.value })} />;
+  const num = (k, key) => <NumBox value={deals[k][key] ?? null} onChange={(v) => setDeal(k, { [key]: v })} />;
+  return (
+    <>
+      <div className="box2">
+        <div className="dl-top"><h3>Deals over time</h3><span className="box2-s">newer deals reflect today’s market better · hollow = left out</span><span style={{ flex: 1 }} />{F('precedent.dealCount', { inline: true, label: 'Number of deals' })}</div>
+        <div className="dtl">
+          <div className="dtl-ax" />
+          {years.map((y) => <span key={y} className="dtl-y" style={{ left: `${pos(Date.parse(`${y}-01-01`))}%` }}>{y}</span>)}
+          {dated.map(({ d, k, t }) => {
+            const on = !(d.include === 0);
+            return <button type="button" key={d.id} className={`dtl-p${on ? '' : ' off'}`} style={{ left: `${pos(t)}%` }} onClick={() => setEdit(k)} title={`${d.target || 'Deal ' + (k + 1)} · ${fmtDate(d.date)}`}><i /><span>{d.target || `Deal ${k + 1}`}</span></button>;
+          })}
+          <span className="dtl-p today" style={{ left: `${pos(now)}%` }}><i /><span>Today</span></span>
+        </div>
+      </div>
+      <div className="dcards">
+        {deals.map((d, k) => {
+          const row = res?.deals?.[k];
+          const on = !(d.include === 0) && !isBlankDeal(d);
+          const eq = impliedEquity100(d);
+          const prem = controlPremium(d);
+          return (
+            <div key={d.id} className={`dcard${on ? '' : ' off'}${edit === k ? ' open' : ''}`}>
+              <div className="dc-top">
+                <span className="dc-date">{d.date ? fmtDate(d.date) : 'no date'}</span>
+                {d.acquirerType && <span className="badge2">{d.acquirerType}</span>}
+                {d.status && <span className={`pill2 ${/complet/i.test(d.status) ? 'ok' : 'pr'}`}>{d.status}</span>}
+                <span style={{ flex: 1 }} />
+                <button type="button" role="switch" aria-checked={on} aria-label="Include in the statistics" className={`sw${on ? ' on' : ''}`} disabled={isBlankDeal(d)} onClick={() => setDeal(k, { include: on ? 0 : 1 })} />
+              </div>
+              <div className="dc-t">{d.target || `Deal ${k + 1}`}</div>
+              <div className="dc-s">{d.acquirer ? `acquired by ${d.acquirer}` : 'acquirer not set'}{fin(d.stakePct) ? ` · ${d.stakePct}%` : ''}{fin(d.consideration) ? ` for ${sym}${fmtNum(d.consideration, 0, locale)} ${company.unit}` : ''}{d.form ? ` (${d.form.toLowerCase()})` : ''}</div>
+              <div className="dc-m">
+                <div><small>100% equity</small><b>{typeof eq === 'number' ? `${sym}${fmtNum(eq, 0, locale)}` : '—'}</b></div>
+                <div><small>EV/EBITDA</small><b>{x(row?.mult?.evEbitda)}</b></div>
+                <div><small>P/E</small><b>{x(row?.mult?.pe)}</b></div>
+                <div><small>Premium</small><b>{typeof prem === 'number' && fin(prem) ? `${(prem * 100).toFixed(1)}%` : '—'}</b></div>
+              </div>
+              {!on && !isBlankDeal(d) && <div className="warn2 sm">Left out of the statistics</div>}
+              <button type="button" className="dc-e" onClick={() => setEdit(edit === k ? null : k)}>{edit === k ? 'Close ▴' : 'Edit deal ›'}</button>
+              {edit === k && (
+                <div className="dc-form">
+                  <label>Announcement date<input type="date" className="fld-in txt" value={d.date || ''} onChange={(e) => setDeal(k, { date: e.target.value })} /></label>
+                  <label>Target{txt(k, 'target')}</label>
+                  <label>Acquirer{txt(k, 'acquirer')}</label>
+                  <label>Acquirer type{txt(k, 'acquirerType', 'Strategic / Financial')}</label>
+                  <label>Stake acquired (%){num(k, 'stakePct')}</label>
+                  <label>Consideration paid ({company.unit}){num(k, 'consideration')}</label>
+                  <label>Consideration form{txt(k, 'form', 'Cash / stock')}</label>
+                  <label>Status{txt(k, 'status', 'Completed / Pending')}</label>
+                  <label>Listed target?<select className="fld-in" value={d.listed || ''} onChange={(e) => setDeal(k, { listed: e.target.value })}><option value="">—</option><option value="Yes">Yes</option><option value="No">No</option></select></label>
+                  {d.listed === 'Yes' && <label>Offer price ({sym}){num(k, 'offerPrice')}</label>}
+                  {d.listed === 'Yes' && <label>Unaffected price ({sym}){num(k, 'unaffectedPrice')}</label>}
+                  <label className="wide">Source / notes{txt(k, 'source')}</label>
+                </div>
+              )}
+            </div>
+          );
+        })}
+        <button type="button" className="dcard add" onClick={addDeal}><span>+</span><b>Add a deal</b></button>
+      </div>
+    </>
+  );
+}
+
 export const dealListStep = () => ({
   id: 'deals',
   title: 'Deal list',
@@ -774,6 +1097,8 @@ export const dealListStep = () => ({
   },
   Extra: DealListExtra,
   extraBelow: true,
+  Layout: DealCardsLayout,
+  summary: (data) => { const ds = dealSlots(data.precedent).filter((d) => !isBlankDeal(d)); return ds.length ? `${ds.length} deals · ${ds.filter((d) => d.include !== 0).length} included` : null; },
 });
 
 /** One company page per deal, as at announcement. */
@@ -831,11 +1156,99 @@ function DealPagesExtra({ data, setData, company }) {
   );
 }
 
+/** Deal financials exactly as the approved sample (Precedent page 4, option C): page through the deals, checks on the right. */
+function DealPagerLayout({ data, setData, company }) {
+  const deals = dealSlots(data.precedent);
+  const n = precN(data);
+  const [k, setK] = useState(0);
+  const res = useMemo(() => { try { return computePrecedent(toEngineInput(company, data)); } catch { return null; } }, [company, data]);
+  const setDeal = (i, fn) => setData((d) => {
+    const cur = dealSlots(d.precedent);
+    const stored = [...(d.precedent.deals || [])];
+    cur.forEach((x, j) => { if (!stored[j]) stored[j] = x; });
+    stored[i] = fn(cur[i]);
+    return { ...d, precedent: { ...d.precedent, deals: stored } };
+  });
+  if (!deals.length) return <div className="box2">Set the number of deals on the Deal list step first.</div>;
+  const i = Math.min(k, deals.length - 1);
+  const d = deals[i];
+  const labels = editorLabels(d.page?.labels, n, null);
+  const row = res?.deals?.[i];
+  const filled = (x) => x.page && !pageIsEmptyLocal(x.page);
+  let check = null;
+  try { const pg = computePage(d.page, { n, toggle: precToggle(data), ytd: precYtd(data), inv: precInv(data), market: { dealEquity: impliedEquity100(d), stake: d.stakePct, consideration: d.consideration } }); check = pg.v.check.some((x) => typeof x === 'number' && Math.abs(x) > 0.5); } catch { check = null; }
+  const ok = (b) => (b ? <b className="up">✓</b> : <b className="fa">—</b>);
+  const x = (v) => (typeof v === 'number' && fin(v) ? `${v.toFixed(1)}x` : 'NM');
+  return (
+    <>
+      <div className="dchips">
+        {deals.map((dd, j) => (
+          <button type="button" key={dd.id} className={`dchip${j === i ? ' on' : ''}`} onClick={() => setK(j)}>
+            {j === i ? '● ' : filled(dd) ? '✓ ' : '○ '}{dd.target || `Deal ${j + 1}`}
+          </button>
+        ))}
+      </div>
+      <div className="gLb">
+        <div className="box2">
+          <div className="dp-h">
+            <div>
+              <div className="lbl">Deal {i + 1} of {deals.length}{d.date ? ` · announced ${fmtDate(d.date)}` : ''}</div>
+              <h3 className="dp-t">{d.target || `Deal ${i + 1}`} {d.acquirer && <span className="fa">acquired by {d.acquirer}</span>}</h3>
+            </div>
+            <span style={{ flex: 1 }} />
+            <input className="fld-in txt sm" style={{ width: 130 }} value={d.ticker || ''} placeholder="Ticker, e.g. ABC.NS" onChange={(e) => setDeal(i, (y) => ({ ...y, ticker: e.target.value }))} />
+            <RowFetch query={d.ticker} company={company}
+              title={d.date ? `Fill the fiscal years ending before ${d.date} from Yahoo Finance` : 'Enter the announcement date on the Deal list first'}
+              onFilled={(m) => d.date && setDeal(i, (y) => mergeFetch(y, m, company, { n, before: d.date, labels: true, market: false }))} />
+          </div>
+          {!d.date && <div className="fld-e">Needs the announcement date (Deal list) — only years ending before it are used.</div>}
+          {d._fetched && <FetchNote f={d._fetched} />}
+          <TemplatePageEditor
+            page={d.page} onChange={(page) => setDeal(i, (y) => ({ ...y, page }))}
+            n={n} ytd={precYtd(data)} labels={labels}
+            onLabels={(lab) => setDeal(i, (y) => ({ ...y, page: { ...y.page, labels: lab } }))}
+            toggle={precToggle(data)} inv={precInv(data)}
+            market={{ dealEquity: impliedEquity100(d), stake: d.stakePct, consideration: d.consideration }}
+            company={company}
+            notes={<div className="fld-h">The target’s figures as at the announcement date, not today. Click a column header to rename it — labels differ deal to deal.</div>}
+          />
+          <div className="dp-nav">
+            <button type="button" className="btn ghost" disabled={i === 0} onClick={() => setK(i - 1)}>← Previous deal</button>
+            <span style={{ flex: 1 }} />
+            {i < deals.length - 1 && <button type="button" className="btn primary" onClick={() => setK(i + 1)}>Next deal: {deals[i + 1].target || `Deal ${i + 2}`} →</button>}
+          </div>
+        </div>
+        <div className="col16 stick">
+          <div className="box2">
+            <h3>Checks</h3>
+            <div className="kv3"><span>Announcement date set</span>{ok(!!d.date)}</div>
+            <div className="kv3"><span>Figures entered</span>{ok(filled(d))}</div>
+            <div className="kv3"><span>Balance sheet balances</span>{check === null ? <b className="fa">—</b> : check ? <b className="dn">✕</b> : <b className="up">✓</b>}</div>
+            <div className="kv3"><span>EV / EBITDA</span><b>{x(row?.mult?.evEbitda)}</b></div>
+            <div className="kv3"><span>P / E</span><b>{x(row?.mult?.pe)}</b></div>
+          </div>
+          {res?.summary && (
+            <div className="live2">
+              <div className="live2-l">Precedent value, live</div>
+              <div className="live2-v">{fin(res.summary?.medianMid) ? `${CURRENCIES[company.currency]?.symbol || ""}${fmtNum(res.summary.medianMid, 2, CURRENCIES[company.currency]?.locale)}` : "—"}</div>
+              <div className="live2-kv"><span>Deals included</span><b>{res.deals.filter((y) => y.include === 1).length} of {res.deals.length}</b></div>
+              <div className="live2-kv"><span>Median EV / EBITDA</span><b>{x(res.stats1?.evEbitda?.median)}</b></div>
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+const pageIsEmptyLocal = (pg) => !Object.values(pg?.lines || {}).some((l) => (l?.fy || []).some((v) => typeof v === 'number') || typeof l?.p === 'number' || typeof l?.c === 'number');
+
 export const dealPagesStep = () => ({
   id: 'dealPages',
   title: 'Deal financials',
   blurb: 'Each deal target’s financials as at announcement — income statement, balance sheet and cash flow.',
   fields: () => [],
   Extra: DealPagesExtra,
+  Layout: DealPagerLayout,
+  summary: (data) => { const ds = dealSlots(data.precedent); const k = ds.filter((d) => !pageIsEmptyLocal(d.page)).length; return ds.length ? `${k} of ${ds.length} filled` : null; },
 });
 

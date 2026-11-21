@@ -64,6 +64,7 @@ export const financingSpecs = ({ ppe = false } = {}) => [
 
 export const ipoFinancingStep = () => ({
   id: 'ipoFinancing',
+  summary: (data) => (Number.isFinite(data.ts?.interestRateDebt) ? `debt ${data.ts.interestRateDebt}% · payout ${data.ts?.dividendPayout ?? '—'}%` : null),
   title: 'Financing rates',
   blurb: 'Needed to take the forecast down to net income (the P/E basis and the pro-forma EPS).',
   fields: () => financingSpecs(),
@@ -71,6 +72,7 @@ export const ipoFinancingStep = () => ({
 
 export const ipoPricingStep = () => ({
   id: 'ipoPricing',
+  summary: (data) => { const p = data.ipo || {}; const x = p.basis === 'pe' ? p.offerPE : p.offerEvEbitda; return p.basis && Number.isFinite(x) ? `${p.basis === 'pe' ? 'P/E' : 'EV/EBITDA'} ${x}x · ${p.ipoDiscount ?? '—'}% discount` : null; },
   title: 'Pricing basis',
   blurb: 'Fair value from a multiple on next-year (Year 1) earnings, less the discount offered to IPO investors.',
   fields: (data) => [
@@ -90,6 +92,7 @@ const noGreenshoe = (ipo) => ipo?.greenshoePct === 0 || ipo?.greenshoeExercisedP
 
 export const ipoStructureStep = () => ({
   id: 'ipoStructure',
+  summary: (data) => (Number.isFinite(data.ipo?.primaryRaise) ? `${data.ipo.primaryRaise} primary` : null),
   title: 'Offer structure',
   blurb: 'New money, shares sold by existing holders, the over-allotment, fees and what the proceeds do.',
   fields: (data) => [

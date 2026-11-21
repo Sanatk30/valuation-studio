@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import * as echarts from 'echarts';
+import { COL } from './chartkit.js';
 
 /* The theme/helpers live in chartkit.js (pure, no echarts) so option
    builders don't drag echarts into the main bundle; re-export them here
@@ -32,8 +33,8 @@ function makeGhosts(prev, next) {
       id: `ghost:${s.name}`, name: '\u200b' + s.name, type: 'line',
       smooth: s.smooth ?? false, showSymbol: false, silent: true, animation: false, z: 1,
       xAxisIndex: s.xAxisIndex || 0, yAxisIndex: s.yAxisIndex || 0,
-      lineStyle: { color: '#8B95A7', width: 1.3, type: [3, 4], opacity: 0.8 },
-      itemStyle: { color: '#8B95A7' },
+      lineStyle: { color: COL.ref, width: 1.3, type: [3, 4], opacity: 0.8 },
+      itemStyle: { color: COL.ref },
       data: s.data,
     });
   }

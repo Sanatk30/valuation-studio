@@ -9,6 +9,8 @@ import ChartBox, { EngineError } from './parts/ChartBox.jsx';
 import { StatRows } from './CompsOutput.jsx';
 import { makeFmt, fin, upsidePct, attempt, tone } from './parts/format.js';
 import { boxOption } from './parts/charts.js';
+import { useThemeMode } from '../lib/theme.js';
+
 
 /**
  * Precedent Transactions output — the template's Transaction Summary
@@ -39,12 +41,13 @@ function PrecPage({ a, f, set, p }) {
 
   const ffItems = p.implied.map((r) => {
     const v = [r.price.low, r.price.mid, r.price.high].filter(fin);
-    return { label: r.label, low: v.length ? Math.min(...v) : NaN, mid: num(r.price.mid), high: v.length ? Math.max(...v) : NaN, color: r.key === headline ? '#F5B942' : undefined };
+    return { label: r.label, low: v.length ? Math.min(...v) : NaN, mid: num(r.price.mid), high: v.length ? Math.max(...v) : NaN, highlight: r.key === headline };
   }).filter((it) => fin(it.low));
 
+  const theme = useThemeMode();
   const boxOpt = useMemo(() => boxOption(PREC.DEAL_MULTIPLES.map((m) => ({
     label: m.label, values: p.deals.filter((d) => d.include === 1).map((d) => d.mult[m.key]).filter(fin),
-  }))), [p]);
+  }))), [p, theme]);
 
   const idCols = [
     { key: 'date', label: 'Date', get: (d) => fmtDate(d.deal.date) },

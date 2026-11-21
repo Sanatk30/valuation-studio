@@ -12,7 +12,7 @@ export default function Collapsible({ title, tag, note, defaultOpen = false, chi
   const [open, setOpen] = useState(defaultOpen);
   const id = useId();
   return (
-    <section className={`qo-coll${open ? ' open' : ''}`}>
+    <section className={`qo-coll${open ? ' open' : ''}`} data-title={String(title)}>
       <button
         type="button" className="qo-coll-head"
         aria-expanded={open} aria-controls={id}
@@ -28,7 +28,33 @@ export default function Collapsible({ title, tag, note, defaultOpen = false, chi
   );
 }
 
-/** Vertical stack of collapsible sections. */
+/**
+ * Vertical stack of collapsible sections, with a sticky bar of their titles:
+ * a click opens that section (if closed) and scrolls to it.
+ */
 export function Sections({ children }) {
-  return <div className="qo-sections">{children}</div>;
+  const items = React.Children.toArray(children).filter((c) => c && c.props && c.props.title);
+  const go = (title) => {
+    const el = document.querySelector(`.qo-coll[data-title="${CSS.escape(String(title))}"]`);
+    if (!el) return;
+    if (!el.classList.contains('open')) el.querySelector('.qo-coll-head')?.click();
+    setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }), 30);
+  };
+  return (
+    <>
+      {items.length > 1 && (
+        <nav className="sec-bar" aria-label="Sections">
+          {items.map((c) => <button key={c.props.title} type="button" onClick={() => go(c.props.title)}>{shortTitle(c.props)}</button>)}
+        </nav>
+      )}
+      <div className="qo-sections">{children}</div>
+    </>
+  );
 }
+
+/** A section's chip label: its tag in words when it has one, else the title up to the first dash or colon. */
+const shortTitle = ({ title, tag }) => {
+  const t = String(title);
+  const head = t.split(/ — |: /)[0];
+  return head.length > 34 ? `${head.slice(0, 32)}…` : head || tag;
+};

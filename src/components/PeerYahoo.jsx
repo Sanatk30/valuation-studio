@@ -282,6 +282,7 @@ export function YahooSearch({ company, onPick, placeholder = 'Name or ticker (RE
         />
         <button className="btn" onClick={search} disabled={busy || !q.trim()}>{busy ? '…' : 'Search'}</button>
       </div>
+      {(busy || picking) && <div className="pbar" style={{ marginTop: 8 }}><div /></div>}
       {err && <div className="fld-e" style={{ marginTop: 6 }}>{err}</div>}
       {results && (
         <div className="yf-results">

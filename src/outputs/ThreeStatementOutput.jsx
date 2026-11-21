@@ -5,8 +5,11 @@ import { periodLabels } from '../lib/period.js';
 import { buildHistoryStatements, hasQuarterly, hasStatements } from '../lib/history.js';
 import { hasHistory, HISTORY_LINES, HISTORY_GROUPS, fyLabel } from '../lib/historyModel.js';
 import Headline from './parts/Headline.jsx';
+import LabelBars from '../components/LabelBars.jsx';
 import Collapsible, { Sections } from './parts/Collapsible.jsx';
 import ChartBox, { EngineError } from './parts/ChartBox.jsx';
+import { useThemeMode } from '../lib/theme.js';
+
 import { makeFmt, fin, rnd, attempt, tone } from './parts/format.js';
 import { themed, xCat, tipBy, COL, barSeries, lineSeries, moneyAxis, stackedOption } from './parts/charts.js';
 
@@ -41,6 +44,7 @@ function TsPage({ a, f, ts, showHistory }) {
   const hasOther = fin(ts.otherNetAssets) && Math.abs(ts.otherNetAssets) > 1e-9;
   const nolAdded = ts.nolClose.map((c, i) => c - ts.nolOpen[i] + ts.nolUsed[i]);
 
+  const theme = useThemeMode();
   const mainOpt = useMemo(() => themed({
     tooltip: tipBy({}, f.num),
     xAxis: xCat(labels), yAxis: moneyAxis(f),
@@ -50,37 +54,33 @@ function TsPage({ a, f, ts, showHistory }) {
       lineSeries('Closing cash', COL.gold, ts.closeCash.map((v) => rnd(v)), { dashed: true, symbol: false }),
       lineSeries('Closing debt', COL.red, ts.closeDebt.map((v) => rnd(v)), { symbol: false, width: 1.8 }),
     ],
-  }, { zoom: n > 9 }), [ts, labels, f, n]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, { zoom: n > 9 }), [ts, labels, f, n, theme]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const bsOpt = useMemo(() => stackedOption(f, labels, [
     { name: 'Cash', color: COL.gold, data: ts.closeCash },
     { name: 'Net working capital', color: COL.cyan, data: ops.nwcBalance },
     { name: 'Net PP&E', color: COL.teal, data: ts.ppe },
     ...(hasOther ? [{ name: 'Other net assets', color: COL.violet, data: ops.nwcBalance.map(() => ts.otherNetAssets) }] : []),
-  ], { line: { name: "Shareholders' equity", color: COL.green, data: ts.equity } }), [ts, labels, f, hasOther]); // eslint-disable-line react-hooks/exhaustive-deps
+  ], { line: { name: "Shareholders' equity", color: COL.green, data: ts.equity } }), [ts, labels, f, hasOther, theme]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="qo">
-      <Headline
-        eyebrow={`Three-statement model — net income, ${labels[last]}`}
-        value={ts.netIncome[last]}
-        fmt={(v) => f.money(v)}
-        sub={`Linked income statement, cash flow and balance sheet over ${labels[0]}–${labels[last]}. Interest runs on opening balances and cash is the balancing item, so the balance sheet ties every year. Opening equity is the reported ${f.money(ts.equity0)}.`}
-        warnings={[!ties && 'The balance sheet does not tie — an input is NA. Use Edit on the steps to complete it.',
-          negCash.length > 0 && `Closing cash goes negative in ${negCash.join(', ')} — the plan needs funding (a revolver or new debt), or lower payouts.`]}
-        kpis={[
-          { label: 'Net margin', value: ops.revenue[last] ? (ts.netIncome[last] / ops.revenue[last]) * 100 : NaN, fmt: (v) => f.pct(v), sub: labels[last] },
-          { label: `Closing cash, ${labels[last]}`, value: ts.closeCash[last], fmt: (v) => f.money(v), sub: `from ${f.money(ts.cash0)} opening` },
-          { label: `Closing debt, ${labels[last]}`, value: ts.closeDebt[last], fmt: (v) => f.money(v), sub: `from ${f.money(ts.debt0)} opening` },
-          { label: `EPS, ${labels[last]}`, value: shares > 0 ? ts.netIncome[last] / shares : NaN, fmt: (v) => f.price(v), sub: 'on today’s share count' },
-          { label: 'Balance check', text: ties ? '✓ ties' : '✗ off', tone: ties ? 'pos' : 'neg', sub: fin(maxCheck) ? `max |A − (D + E)| ${f.dec(maxCheck, 4)}` : 'NA' },
-        ]}
-      >
-        <div className="grid2">
-          <ChartBox title={`Revenue, net income, cash and debt (${f.unitLabel})`} option={mainOpt} />
-          <ChartBox title={`Balance sheet — assets by type and equity (${f.unitLabel})`} option={bsOpt} />
-        </div>
-      </Headline>
+      {[!ties && 'The balance sheet does not tie — an input is NA. Use the steps above to complete it.',
+        negCash.length > 0 && `Closing cash goes negative in ${negCash.join(', ')} — the plan needs funding (a revolver or new debt), or lower payouts.`].filter(Boolean).map((x) => <div key={x} className="warn2" style={{ marginBottom: 10 }}>{x}</div>)}
+      <div className="mp-ok">{ties ? <span className="up">✓ The balance sheet ties every year</span> : <span className="dn">✕ The balance sheet does not tie</span>}</div>
+      <TsBlock title="Income statement" f={f} labels={labels}
+        chart={<LabelBars labels={labels} fmt={f.num} series={[{ name: 'Revenue', data: ops.revenue, color: 'var(--accent)' }, { name: 'EBITDA', data: ops.ebitda, color: '#9CCBCF' }, { name: 'Net income', data: ts.netIncome, color: 'var(--green)' }]}
+          lines={[{ name: 'Net margin', data: ts.netIncome.map((v, i) => (ops.revenue[i] ? (v / ops.revenue[i]) * 100 : NaN)), color: '#E0A33A' }]} />}
+        notes={tsNotes('is', { ops, ts, labels, f, last })}
+        rows={[['Revenue', ops.revenue, 1, 1], ['EBITDA', ops.ebitda, 1, 1], ['Depreciation', ops.da.map((x) => -x)], ['Interest (net)', ts.interestExp.map((x, i) => -(x - ts.interestInc[i]))], ['Tax', ts.taxAmt.map((x) => -x)], ['Net income', ts.netIncome, 1, 1]]} />
+      <TsBlock title="Cash flow" f={f} labels={labels}
+        chart={<LabelBars labels={labels} fmt={f.num} series={[{ name: 'From operations', data: ts.cfo, color: 'var(--green)' }, { name: 'Investing', data: ts.cfi, color: 'var(--red)' }, { name: 'Financing', data: ts.cff, color: '#F5B4B6' }, { name: 'Change in cash', data: ts.deltaCash, color: 'var(--accent)' }]} />}
+        notes={tsNotes('cf', { ops, ts, labels, f, last })}
+        rows={[['Cash from operations', ts.cfo, 1], ['Investing', ts.cfi], ['Financing', ts.cff], ['Change in cash', ts.deltaCash, 1], ['Closing cash', ts.closeCash, 1]]} />
+      <TsBlock title="Balance sheet" f={f} labels={labels}
+        chart={<LabelBars labels={labels} fmt={f.num} series={[{ name: 'Cash', data: ts.closeCash, color: 'var(--green)' }, { name: 'Net PP&E', data: ts.ppe, color: 'var(--accent)' }, { name: 'Working capital', data: ops.nwcBalance, color: '#9CCBCF' }, { name: 'Debt', data: ts.closeDebt, color: 'var(--red)' }]} />}
+        notes={tsNotes('bs', { ops, ts, labels, f, last })}
+        rows={[['Cash', ts.closeCash], ['Net PP&E', ts.ppe], ['Net working capital', ops.nwcBalance], ['Total assets', ts.assets, 1, 1], ['Debt', ts.closeDebt], ["Shareholders' equity", ts.equity, 1, 1]]} />
 
       <Sections>
         <Collapsible title={`Income statement (${f.unitLabel})`} tag="IS">
@@ -210,4 +210,49 @@ export function ReportedHistory({ a, f }) {
       </div>
     </Collapsible>
   );
+}
+
+/** One statement as the approved sample (option I): a labelled chart, the points worth knowing, every number underneath. */
+function TsBlock({ title, chart, notes, rows, labels, f }) {
+  const g = (v, i) => (i > 0 && fin(v[i]) && fin(v[i - 1]) && v[i - 1] !== 0 ? (v[i] / Math.abs(v[i - 1]) - 1) * 100 : null);
+  return (
+    <div className="box2 tsb">
+      <h3>{title}</h3>
+      <div className="tsb-g">
+        <div>{chart}</div>
+        <div className="tsb-n">{notes.map(([k, b, t]) => <div key={b} className={`ins2 ${k}`}><span className="ic2">{k === 'g' ? '▲' : k === 'r' ? '▼' : '!'}</span><div><b>{b}</b>{t}</div></div>)}</div>
+      </div>
+      <table className="alt">
+        <thead><tr><th>{f.unitLabel}</th>{labels.map((l) => <th key={l}>{l}</th>)}</tr></thead>
+        <tbody>{rows.map(([l, v, sub, gr]) => (
+          <tr key={l} className={sub ? 't' : ''}><td>{l}</td>{v.map((x, i) => { const gg = gr ? g(v, i) : null; return <td key={i}>{fin(x) ? (x < 0 ? `(${f.num(-x)})` : f.num(x)) : '—'}{gg !== null && <small className={gg >= 0 ? 'up' : 'dn'}>{gg >= 0 ? '+' : ''}{gg.toFixed(1)}%</small>}</td>; })}</tr>
+        ))}</tbody>
+      </table>
+    </div>
+  );
+}
+
+/** Three plain points per statement, from the figures. */
+function tsNotes(kind, { ops, ts, labels, f, last }) {
+  const pct = (v) => `${v.toFixed(1)}%`;
+  const out = [];
+  if (kind === 'is') {
+    const g = ops.revenue[0] > 0 && ops.revenue[last] > 0 && last > 0 ? (Math.pow(ops.revenue[last] / ops.revenue[0], 1 / last) - 1) * 100 : NaN;
+    if (fin(g)) out.push([g >= 0 ? 'g' : 'r', `Revenue ${g >= 0 ? 'grows' : 'shrinks'} ${pct(Math.abs(g))} a year`, ` ${f.money(ops.revenue[0])} in ${labels[0]} → ${f.money(ops.revenue[last])} in ${labels[last]}.`]);
+    const m0 = ops.revenue[0] ? ops.ebitda[0] / ops.revenue[0] * 100 : NaN, m1 = ops.revenue[last] ? ops.ebitda[last] / ops.revenue[last] * 100 : NaN;
+    if (fin(m0) && fin(m1)) out.push([m1 >= m0 ? 'g' : 'r', `EBITDA margin ${m1 >= m0 ? 'up' : 'down'} ${Math.abs(m1 - m0).toFixed(1)} pts`, ` ${pct(m0)} → ${pct(m1)}.`]);
+    const n0 = ts.netIncome[0], n1 = ts.netIncome[last];
+    if (fin(n0) && fin(n1)) out.push([n1 >= n0 ? 'g' : 'r', `Net income ${f.money(n1)} by ${labels[last]}`, ` from ${f.money(n0)} in ${labels[0]}.`]);
+  } else if (kind === 'cf') {
+    const cov = ts.cfo[0] + ts.cfi[0];
+    if (fin(cov)) out.push([cov >= 0 ? 'g' : 'a', cov >= 0 ? 'Pays for its own investment' : 'Investment exceeds operating cash', ` Operations bring in ${f.money(ts.cfo[0])} in ${labels[0]}; investing uses ${f.money(-ts.cfi[0])}.`]);
+    if (fin(ts.closeCash[last])) out.push([ts.closeCash[last] >= ts.cash0 ? 'g' : 'a', `Cash ${ts.closeCash[last] >= ts.cash0 ? 'builds' : 'falls'} to ${f.money(ts.closeCash[last])}`, ` from ${f.money(ts.cash0)} today.`]);
+    const div = ts.dividends.reduce((a2, x) => a2 + (fin(x) ? x : 0), 0);
+    out.push(['a', `${f.money(div)} paid in dividends`, ` over ${labels[0]}–${labels[last]}.`]);
+  } else {
+    out.push([ts.closeDebt[last] <= ts.debt0 ? 'g' : 'a', `Debt ${ts.closeDebt[last] <= ts.debt0 ? 'falls' : 'rises'} to ${f.money(ts.closeDebt[last])}`, ` from ${f.money(ts.debt0)} today.`]);
+    out.push(['g', `Equity reaches ${f.money(ts.equity[last])}`, ` from the reported ${f.money(ts.equity0)}.`]);
+    out.push([ts.balanceOk ? 'g' : 'r', ts.balanceOk ? 'Ties every year' : 'Does not tie', ts.balanceOk ? ' Assets = debt + equity in every forecast year.' : ' An input is NA — check the steps.']);
+  }
+  return out;
 }

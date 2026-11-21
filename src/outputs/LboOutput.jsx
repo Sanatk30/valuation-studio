@@ -7,7 +7,7 @@ import Headline from './parts/Headline.jsx';
 import Collapsible, { Sections } from './parts/Collapsible.jsx';
 import ChartBox, { EngineError } from './parts/ChartBox.jsx';
 import { makeFmt, fin, rnd, tone, attempt } from './parts/format.js';
-import { themed, xCat, tipBy, COL, lineSeries, moneyAxis, yVal } from './parts/charts.js';
+import { themed, xCat, tipBy, COL, lineSeries, moneyAxis, yVal, axisName, alpha } from './parts/charts.js';
 
 /**
  * LBO output — the chosen template's Sources & Uses, Returns (exit waterfall,
@@ -51,13 +51,13 @@ function LboPage({ a, f, r }) {
   const debtOpt = themed({
     tooltip: { ...tipBy({ 'Net debt / EBITDA': (v) => `${v}x` }, f.num), axisPointer: { type: 'shadow' } },
     xAxis: xCat(yearsWithEntry),
-    yAxis: [moneyAxis(f), yVal({ position: 'right', splitLine: { show: false }, axisLabel: { color: COL.gold, formatter: '{value}x' } })],
+    yAxis: [moneyAxis(f, axisName(f.unitLabel, 14)), yVal({ position: 'right', splitLine: { show: false }, ...axisName('× EBITDA', 14), axisLabel: { color: COL.gold, formatter: '{value}x' } })],
     series: [
-      { name: 'Senior A', type: 'bar', stack: 'd', barMaxWidth: 36, itemStyle: { color: COL.tealDeep }, data: [r.tranches.senA.amount, ...S.aClose].map((v) => rnd(v)) },
-      { name: 'Senior B', type: 'bar', stack: 'd', barMaxWidth: 36, itemStyle: { color: COL.teal }, data: [r.tranches.senB.amount, ...S.bClose].map((v) => rnd(v)) },
-      { name: 'Mezzanine (incl. PIK)', type: 'bar', stack: 'd', barMaxWidth: 36, itemStyle: { color: COL.gold }, data: [r.tranches.mezz.amount, ...S.mClose].map((v) => rnd(v)) },
-      ...(r.rcf.commit > 0 ? [{ name: 'Revolver', type: 'bar', stack: 'd', barMaxWidth: 36, itemStyle: { color: COL.red }, data: [0, ...S.rClose].map((v) => rnd(v)) }] : []),
-      { ...lineSeries('Net debt / EBITDA', COL.green, C.ndEbitda.map((v) => rnd(v, 2)), { yAxisIndex: 1 }) },
+      { name: 'Senior A', type: 'bar', stack: 'd', barMaxWidth: 38, itemStyle: { color: COL.teal }, data: [r.tranches.senA.amount, ...S.aClose].map((v) => rnd(v)) },
+      { name: 'Senior B', type: 'bar', stack: 'd', barMaxWidth: 38, itemStyle: { color: alpha(COL.teal, 0.55) }, data: [r.tranches.senB.amount, ...S.bClose].map((v) => rnd(v)) },
+      { name: 'Mezzanine (incl. PIK)', type: 'bar', stack: 'd', barMaxWidth: 38, itemStyle: { color: COL.violet }, data: [r.tranches.mezz.amount, ...S.mClose].map((v) => rnd(v)) },
+      ...(r.rcf.commit > 0 ? [{ name: 'Revolver', type: 'bar', stack: 'd', barMaxWidth: 38, itemStyle: { color: COL.red }, data: [0, ...S.rClose].map((v) => rnd(v)) }] : []),
+      { ...lineSeries('Net debt / EBITDA', COL.gold, C.ndEbitda.map((v) => rnd(v, 2)), { yAxisIndex: 1 }), label: { show: C.ndEbitda.length <= 8, position: 'top', color: COL.gold, fontSize: 10, formatter: (p) => (Number.isFinite(p.value) ? `${p.value.toFixed(1)}x` : '') } },
     ],
   });
 
@@ -110,10 +110,7 @@ function LboPage({ a, f, r }) {
 
   return (
     <div className="qo">
-      <Headline
-        eyebrow={`LBO — ${kind.label} (template ${kind.file})`}
-        sub={`Entry at ${t(r.entry.multiple, 'x')} ${r.labels.hist[n - 1]} EBITDA (EV ${f.money(r.entry.ev)}), ${m}-year hold, exit at ${t(w.multiple, 'x')} ${hold[m - 1]} EBITDA (EV ${f.money(w.ev)}). ${kind.note}`}
-        warnings={[
+      {[
           blankYears.length ? `Blank operating drivers in ${blankYears.join(', ')} count as 0, as in the template — fill them on the Assumptions step.` : null,
           shortYears.length ? `Cash goes negative in ${shortYears.join(', ')} — ${r.repay === 'sweep'
             ? 'free cash flow is negative and larger than the cash on hand (there are no mandatory repayments)'
@@ -123,23 +120,28 @@ function LboPage({ a, f, r }) {
           su.sponsor < 0 ? 'Sponsor equity is negative — the structure is over-levered.' : null,
           r.entry.cashWarn ? 'The existing cash used exceeds the existing cash on the balance sheet.' : null,
           su.check !== 0 ? `Sources − uses = ${t(su.check)} (must be 0).` : null,
-        ]}
-        kpis={[
-          { label: 'Sponsor IRR', text: fin(r.irr) ? t(r.irr, 'pct') : 'NM', hero: true, tone: fin(r.irr) ? tone(r.irr) : undefined, sub: `${m}-year hold, single entry and exit` },
-          { label: 'MOIC', text: x2(r.moic), sub: `${f.money(su.sponsor)} in → ${f.money(w.equity)} out` },
-          { label: 'Sponsor equity', value: num(su.sponsor), fmt: (v) => f.money(v), sub: `${t(su.stats.equityPct, 'pct')} of sources` },
-          { label: 'Total debt at entry', value: r.totalDebt.amount, fmt: (v) => f.money(v), sub: `${t(r.totalDebt.x, 'x')} EBITDA` },
-          { label: 'Net debt / EBITDA', text: `${t(C.ndEbitda[0], 'x')} → ${t(C.ndEbitda[m], 'x')}`, sub: 'entry → exit' },
-        ]}
-      >
-        <div className="grid2">
-          <div className="chartbox">
-            <div className="ct">Value creation bridge — sponsor equity ({f.unitLabel})</div>
-            {bridgeItems.every((it) => fin(it.value)) ? <Waterfall items={bridgeItems} fmt={f.num} /> : <div className="empty">Not available.</div>}
-          </div>
-          <ChartBox title={`Debt by tranche (${f.unitLabel}) and net debt / EBITDA`} option={debtOpt} />
+        ].filter(Boolean).map((x) => <div key={x} className="warn2" style={{ marginBottom: 10 }}>{x}</div>)}
+      <div className="yby">
+        <div className="yc dark"><h4>Entry <span>{r.labels.hist[n - 1]}</span></h4>
+          <div className="r"><span>EBITDA</span><b>{f.num(F.ebitda[n - 1])}</b></div><div className="r"><span>Debt</span><b>{f.num(C.totalDebt[0])}</b></div>
+          <div className="r"><span>Leverage</span><b>{t(C.debtEbitda[0], 'x')}</b></div><div className="r"><span>Equity in</span><b>{f.num(su.sponsor)}</b></div></div>
+        {hold.map((lab, j) => (
+          <div className="yc" key={lab}><h4>Year {j + 1} <span>{lab}</span></h4>
+            <div className="r"><span>EBITDA</span><b>{f.num(F.ebitda[n + j])}</b></div><div className="r"><span>Debt</span><b>{f.num(C.totalDebt[j + 1])}</b></div>
+            <div className="r"><span>Leverage</span><b>{t(C.debtEbitda[j + 1], 'x')}</b></div>
+            <div className="r"><span>Repaid</span><b className={C.totalDebt[j] - C.totalDebt[j + 1] >= 0 ? 'up' : 'dn'}>{f.num(C.totalDebt[j] - C.totalDebt[j + 1])}</b></div></div>
+        ))}
+        <div className="yc teal"><h4>Exit</h4>
+          <div className="r"><span>Exit EV</span><b>{f.num(w.ev)}</b></div><div className="r"><span>Equity out</span><b>{f.num(w.equity)}</b></div>
+          <div className="yc-big">{fin(r.irr) ? t(r.irr, 'pct') : 'NM'}</div><div className="yc-s">IRR · {x2(r.moic)}</div></div>
+      </div>
+      <div className="grid2" style={{ marginBottom: 18 }}>
+        <ChartBox title={`Debt paydown by tranche (${f.unitLabel}) and leverage`} sub="Closing debt stacked by tranche; net debt / EBITDA on the right axis" option={debtOpt} />
+        <div className="chartbox">
+          <div className="ct">IRR sensitivity — entry multiple ↓ · exit multiple →</div>
+          <Heatmap corner="Entry ↓ / exit →" rowLabels={ss.entryRows} colLabels={ss.exitRows} grid={heat(ss.multIrr)} fmt={(v) => t(v, 'pct')} fmtRow={(v) => t(v, 'x')} fmtCol={(v) => t(v, 'x')} />
         </div>
-      </Headline>
+      </div>
 
       <Sections>
         <Collapsible title="Sources & Uses of funds (at entry)" tag="S&U" defaultOpen>

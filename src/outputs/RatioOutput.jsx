@@ -3,6 +3,7 @@ import LiveChart from '../components/LiveChart.jsx';
 import { computeForecastRatios, computeHistoryRatios } from '../lib/engine/ratios.js';
 import { hasHistory } from '../lib/historyModel.js';
 import Headline from './parts/Headline.jsx';
+import LabelBars from '../components/LabelBars.jsx';
 import Collapsible, { Sections } from './parts/Collapsible.jsx';
 import ChartBox, { EngineError } from './parts/ChartBox.jsx';
 import { ReportedHistory } from './ThreeStatementOutput.jsx';
@@ -61,7 +62,7 @@ function RatioPage({ a, set, f, R, past, freq }) {
     tooltip: tipBy({}, (v) => f.pct(v)),
     xAxis: xCat(labels, { boundaryGap: false }),
     yAxis: yVal({ scale: true, axisLabel: { color: COL.axis, formatter: '{value}%' } }),
-    series: rows.filter(Boolean).map((r, i) => lineSeries(r.label, [COL.teal, COL.green, COL.gold, COL.violet][i], r.vals.map((v) => rnd(v, 2)))),
+    series: rows.filter(Boolean).map((r, i) => lineSeries(r.label, [COL.teal, COL.green, COL.gold, COL.violet][i], r.vals.map((v) => rnd(v, 2)), { area: i === 0 })),
   });
   const marginRows = ['EBITDA margin', 'Net profit margin', 'Return on equity (ROE)'].map(find).filter(Boolean);
   // the past annual table labels it without "(ann.)"; the forecast and past quarterly ones annualise
@@ -78,7 +79,7 @@ function RatioPage({ a, set, f, R, past, freq }) {
     tooltip: tipBy({}, (v) => cell(r.fmt, v)),
     xAxis: xCat(R.labels, { boundaryGap: false }),
     yAxis: yVal({ scale: true, axisLabel: { color: COL.axis, formatter: r.fmt === 'pct' ? '{value}%' : r.fmt === 'x' ? '{value}x' : undefined } }),
-    series: [lineSeries(r.label, COL.teal, r.vals.map((v) => rnd(v, 4)))],
+    series: [lineSeries(r.label, COL.teal, r.vals.map((v) => rnd(v, 4)), { area: true })],
   });
 
   const nRatios = R.sections.reduce((s, x) => s + x.rows.length, 0);
@@ -119,44 +120,37 @@ function RatioPage({ a, set, f, R, past, freq }) {
             </label>
           </div>
         )}
-        <div className="grid2">
-          <ChartBox title="Margins and return on equity (%)" option={marginRows.length ? trend(R.labels, marginRows) : null} />
-          <ChartBox title="Leverage and interest coverage (x)" option={levOpt} />
-        </div>
       </Headline>
 
-      <Sections>
-        {R.sections.map((sec) => (
-          <Collapsible key={sec.title} title={sec.title} tag={TAGS[sec.title] || 'RATIO'} note={`${sec.rows.length} ratios · click a row to chart it`}>
-            <div className="tablewrap">
-              <table className="fin ratio-table">
-                <thead><tr><th>Ratio</th>{R.labels.map((l, i) => <th key={i}>{l}</th>)}</tr></thead>
-                <tbody>
-                  {sec.rows.map((r) => {
-                    const key = `${sec.title}::${r.label}`;
-                    const isOpen = open.has(key);
-                    return (
-                      <React.Fragment key={key}>
-                        <tr className={`ratio-row${isOpen ? ' open' : ''}`} onClick={() => toggle(key)} title={r.note || 'Click to chart this ratio'}>
-                          <td><span className="ratio-caret">{isOpen ? '▾' : '▸'}</span>{r.label}</td>
-                          {r.vals.map((v, i) => <td key={i}>{cell(r.fmt, v)}</td>)}
-                        </tr>
-                        {isOpen && (
-                          <tr className="ratio-chart-row">
-                            <td colSpan={R.labels.length + 1}>
-                              <div className="ratio-chart-cap">{r.label}{r.note ? <span> · {r.note}</span> : null}</div>
-                              <LiveChart option={rowOption(r)} height={220} />
-                            </td>
-                          </tr>
-                        )}
-                      </React.Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
+      {R.sections.map((sec) => {
+        const lowBetter = (r) => /debt|gearing|days|cycle|leverage|payout|tax rate/i.test(r.label);
+        const better = (r) => { const v = r.vals.filter(fin); if (v.length < 2) return null; return lowBetter(r) ? v[v.length - 1] <= v[0] : v[v.length - 1] >= v[0]; };
+        const okN = sec.rows.filter((r) => better(r) === true).length, known = sec.rows.filter((r) => better(r) !== null).length;
+        const avg = (r) => { const v = r.vals.filter(fin); return v.length ? v.reduce((x, y) => x + y, 0) / v.length : NaN; };
+        return (
+          <div className="box2 rgp" key={sec.title}>
+            <div className="rgp-h"><h3>{sec.title}</h3>{known > 0 && <span className={`pill2 ${okN === known ? 'ok' : okN ? 'pr' : 'bad'}`}>{okN} of {known} improving</span>}</div>
+            <div className="rgp-g">
+              {sec.rows.map((r) => {
+                const lb = lowBetter(r), av = avg(r);
+                return (
+                  <div key={r.label} className="rgp-c">
+                    <div className="rgp-ct"><b>{r.label}</b>{r.note && <span className="fa" title={r.note}>{r.note.length > 46 ? `${r.note.slice(0, 44)}…` : r.note}</span>}<span className="rgp-avg">--- avg {cell(r.fmt, av)}</span></div>
+                    <LabelBars labels={R.labels} small h={170} w={460} legend={false} fmt={(v) => cell(r.fmt, v)}
+                      series={[{ name: r.label, data: r.vals, color: 'var(--accent)' }]} refLine={fin(av) ? { value: av, label: 'average' } : undefined}
+                      colorOf={(_, i, v) => (fin(av) && (lb ? v > av : v < av) ? '#E5484D' : 'var(--accent)')} />
+                  </div>
+                );
+              })}
             </div>
-          </Collapsible>
-        ))}
+            <table className="alt">
+              <thead><tr><th>Ratio</th>{R.labels.map((l, i) => <th key={i}>{l}</th>)}<th>Average</th></tr></thead>
+              <tbody>{sec.rows.map((r) => <tr key={r.label}><td title={r.note || ''}>{r.label}</td>{r.vals.map((v, i) => <td key={i}>{cell(r.fmt, v)}</td>)}<td className="am">{cell(r.fmt, avg(r))}</td></tr>)}</tbody>
+            </table>
+          </div>
+        );
+      })}
+      <Sections>
         {past && <ReportedHistory a={a} f={f} />}
       </Sections>
       <div className="qo-note">

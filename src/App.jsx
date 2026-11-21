@@ -4,6 +4,7 @@ import { METHODS } from './methods/registry.js';
 import { routeOf } from './methods/labels.js';
 import MethodPage from './wizard/MethodPage.jsx';
 import { TopBar, Home, FirstRun, NewCompanyForm, CompanySettings } from './home/Home.jsx';
+import { ThemeContext, useThemeState } from './lib/theme.js';
 
 /** `#/dcf` opens a method; `#/` (or nothing, or anything unknown) is the method picker. */
 const readRoute = () => routeOf(window.location.hash);
@@ -47,6 +48,7 @@ export default function App() {
   const [method, setMethod] = useState(readRoute);
   const [newOpen, setNewOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [theme, toggleTheme] = useThemeState();
 
   useEffect(() => {
     const onHash = () => setMethod(readRoute());
@@ -59,18 +61,26 @@ export default function App() {
     document.title = record ? `${record.name}${method ? ` · ${METHODS[method].short}` : ''} — Quant Value` : 'Quant Value';
   }, [record, method]);
 
+  if (!record) {
+    return (
+      <ThemeContext.Provider value={theme}>
+        <FirstRun state={state} />
+      </ThemeContext.Provider>
+    );
+  }
+
   return (
+    <ThemeContext.Provider value={theme}>
     <div className="qv">
       <TopBar
-        state={state} record={record}
+        state={state} record={record} theme={theme} onTheme={toggleTheme} method={method} onOpen={open}
         onHome={() => open(null)}
         onNew={() => setNewOpen(true)}
         onSettings={() => setSettingsOpen(true)}
       />
       <main className="qv-main">
         <ViewBoundary key={`${record?.id}-${method}`} record={record} method={method} onHome={() => open(null)}>
-          {!record ? <FirstRun />
-            : method ? <MethodPage key={`${record.id}-${method}`} record={record} methodId={method} onHome={() => open(null)} />
+          {method ? <MethodPage key={`${record.id}-${method}`} record={record} methodId={method} onHome={() => open(null)} />
               : <Home record={record} onOpen={open} />}
         </ViewBoundary>
       </main>
@@ -84,5 +94,6 @@ export default function App() {
       )}
       {settingsOpen && record && <CompanySettings record={record} onClose={() => setSettingsOpen(false)} />}
     </div>
+    </ThemeContext.Provider>
   );
 }

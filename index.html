@@ -3,16 +3,26 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="dark" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#F3F5F5" />
     <title>Quant Value</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Roboto+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
-    <style>body { background: #0D1120; }</style>
+    <script>
+      // the theme before the first paint (src/lib/theme.js keeps it from here)
+      (function () {
+        var t = null;
+        try { t = localStorage.getItem('qv-theme'); } catch (e) {}
+        if (t !== 'light' && t !== 'dark') t = 'light';   // light unless dark was chosen
+        document.documentElement.setAttribute('data-theme', t);
+      })();
+    </script>
+    <style>html[data-theme='dark'] body { background-color: #0C1112; } html[data-theme='light'] body { background-color: #F3F5F5; }</style>
   </head>
   <body>
     <div id="root"></div>

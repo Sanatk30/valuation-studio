@@ -132,12 +132,29 @@ function CompanyExtras({ data, setData, company, ctx, specs }) {
   );
 }
 
+/** Company & balance sheet in the approved DCF style: the listing search on top, the figures as one card. */
+function CompanyLayout({ data, setData, company, ctx, F, Extra }) {
+  const paths = ['company.sharesOut', 'company.currentPrice', 'company.grossDebt', 'company.cash', 'company.taxRate', 'company.nol0'];
+  return (
+    <>
+      <div className="box2 fetchbar2"><Extra data={data} setData={setData} company={company} ctx={ctx} /></div>
+      <div className="box2">
+        <h3>Share data and balance sheet</h3>
+        <div className="box2-s">today’s figures · every number stays editable</div>
+        <div className="g3f">{paths.map((p) => F(p))}</div>
+      </div>
+    </>
+  );
+}
+
 export const companyStep = (opts = {}) => ({
   id: 'company',
   title: 'Company & balance sheet',
   blurb: 'Share count, today’s debt and cash, and — where the method forecasts — tax and tax losses.',
   Extra: CompanyExtras,
+  Layout: CompanyLayout,
   fields: () => companySpecs(opts),
+  summary: (data) => (Number.isFinite(data.company?.sharesOut) ? `${data.company.sharesOut} shares${Number.isFinite(data.company?.currentPrice) ? ` · price ${data.company.currentPrice}` : ''}` : null),
 });
 
 /* ======================================================================
@@ -386,6 +403,28 @@ export function onForecastSet(data, path, value) {
   return null;
 }
 
+/** Operating forecast in the approved style: today's figures, then how the forecast runs. */
+function ForecastLayout({ data, setData, company, ctx, F, rest, Extra }) {
+  const used = ['drivers.revenue0', 'drivers.ebitda0', 'drivers.nwc0', 'drivers.years', 'drivers.mode'];
+  return (
+    <>
+      <div className="g2b">
+        <div className="box2">
+          <h3>Today (LTM)</h3>
+          <div className="box2-s">the trailing twelve months the forecast starts from</div>
+          <div className="g2f">{F('drivers.revenue0')}{F('drivers.ebitda0')}{F('drivers.nwc0')}{F('drivers.years')}</div>
+        </div>
+        <div className="box2">
+          <h3>How the forecast runs</h3>
+          {F('drivers.mode', { row: true, label: 'Entry', sub: 'a fade from Year 1 to the last year, or every year by hand' })}
+          <div className="fc-rest">{rest(used)}</div>
+        </div>
+      </div>
+      {Extra && <div className="box2"><Extra data={data} setData={setData} company={company} ctx={ctx} /></div>}
+    </>
+  );
+}
+
 export const forecastStep = () => ({
   id: 'forecast',
   title: 'Operating forecast',
@@ -393,6 +432,8 @@ export const forecastStep = () => ({
   fields: (data) => forecastSpecs(data),
   Extra: ForecastExtras,
   extraBelow: true,
+  Layout: ForecastLayout,
+  summary: (data) => (Number.isInteger(data.drivers?.years) ? `${data.drivers.years} years` : null),
   onSet: onForecastSet,
   validate: (data) => gridErrors(data.drivers || {}),
 });

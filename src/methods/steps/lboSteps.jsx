@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { f } from '../fields.js';
 import { NumBox } from '../../wizard/Field.jsx';
 import TemplatePageEditor from '../../components/TemplatePageEditor.jsx';
 import DriversGrid from '../../components/DriversGrid.jsx';
+import { DriversView } from '../../components/DriverCharts.jsx';
 import { YahooSearch, mergeFetch } from '../../components/PeerYahoo.jsx';
 import { FetchNote } from './templateSteps.jsx';
 import { PeriodLabelsCard, emptyHistYears, latestYearErrors } from './dcfSteps.jsx';
@@ -13,6 +14,12 @@ import { MIN_YEARS, MAX_YEARS } from '../../lib/engine/companyPage.js';
 import { fmtTpl, CURRENCIES, UNITS } from '../../lib/format.js';
 import { YearCheck } from '../../home/CompanyForms.jsx';
 import { updateCompany } from '../../store/store.js';
+import Timeline from '../../components/Timeline.jsx';
+import StatementPanels from '../../components/StatementPanels.jsx';
+import PasteDialog from '../../components/PasteDialog.jsx';
+import Heatmap from '../../components/Heatmap.jsx';
+import { fmtNum } from '../../lib/format.js';
+import { CountUp } from '../../lib/motion.jsx';
 
 /**
  * Wizard steps for the LBO, following the user's three LBO templates:
@@ -33,7 +40,49 @@ function resultOf(company, data) {
   try { return computeLboT(toEngineInput(company, data)); } catch { return null; }
 }
 
+/** The teal "Sponsor returns, live" card of the approved LBO samples. */
+export function LboLiveCard({ company, data }) {
+  const r = resultOf(company, data);
+  const locale = CURRENCIES[company.currency]?.locale;
+  const sym = CURRENCIES[company.currency]?.symbol || '';
+  const unit = UNITS[company.unit] || '';
+  const m = (x) => (fin(x) ? `${sym}${fmtNum(x, 0, locale)} ${unit}` : '—');
+  return (
+    <div className="live2">
+      <div className="live2-l">Sponsor returns, live</div>
+      <div className="live2-v"><CountUp>{r && fin(r.irr) ? `${(r.irr * 100).toFixed(1)}% IRR` : '—'}</CountUp></div>
+      <div className="live2-g up">{r && fin(r.moic) ? `${r.moic.toFixed(2)}x money multiple over ${r.m} years` : 'finish the steps to see the returns'}</div>
+      <div className="live2-kv"><span>Equity in</span><b>{m(r?.su?.sponsor)}</b></div>
+      <div className="live2-kv"><span>Equity out</span><b>{m(r?.exit?.equity)}</b></div>
+      <div className="live2-kv"><span>Debt at entry</span><b>{r && fin(r.totalDebt?.x) ? `${r.totalDebt.x.toFixed(1)}x EBITDA` : '—'}</b></div>
+    </div>
+  );
+}
+
 /* ============================== Settings ============================== */
+
+/** Settings as the approved LBO sample: the holding period as a timeline, repayment with hover detail. */
+function LboSettingsLayout({ data, setData, company, F, Extra, ctx }) {
+  const lab = labelsOf(data, company);
+  return (
+    <>
+      <div className="box2">
+        <h3>Timeline</h3>
+        <div className="box2-s">entry at the end of {lab.hist[lab.hist.length - 1]}, {lab.fcst.length} years of ownership, exit at the end of {lab.fcst[lab.fcst.length - 1]}</div>
+        <Timeline hist={lab.hist} fcst={lab.fcst} startYear={company?.startYear} fyEndMonth={company?.fyEndMonth} fcstSub="holding"
+          fcstTip={(i, n2) => (i === n2 - 1 ? 'The final holding year — the business is sold at its end.' : `Holding year ${i + 1}: cash pays interest and repays debt.`)}
+          tail={{ label: 'Exit', sub: 'sale', tip: 'The sponsor sells at an exit EV / EBITDA multiple at the end of the holding period.' }} />
+        <div className="tl-ctls">{F('lbo.settings.histYears', { inline: true })}{F('lbo.settings.holdYears', { inline: true, label: 'Holding period' })}</div>
+      </div>
+      <div className="g2b">
+        <div className="box2"><h3>Debt repayment</h3><div className="box2-s">picks one of the three LBO templates · hover for how each works</div>{F('lbo.settings.repay', { row: true, label: 'Repayment', sub: 'How the senior debt is paid down' })}</div>
+        <div className="box2"><h3>Conventions</h3>{F('lbo.settings.lease', { row: true, label: 'Leases count as debt', sub: 'In net debt at entry and exit' })}</div>
+      </div>
+      <div className="box2"><Extra data={data} setData={setData} company={company} ctx={ctx} /></div>
+    </>
+  );
+}
+
 
 function SettingsExtra({ data, setData, company }) {
   const s = S(data);
@@ -45,11 +94,6 @@ function SettingsExtra({ data, setData, company }) {
         fcstName={(i, m) => `Forecast year ${i + 1}${i === m - 1 ? ' (exit)' : ''}`}
         onChange={(labels) => setData((d) => ({ ...d, lbo: { ...d.lbo, settings: { ...d.lbo.settings, labels } } }))}
       />
-      {s.repay && (
-        <div className="readout">
-          Template <b>{repayKind(s.repay).file}.xlsx</b> — {repayKind(s.repay).note} Entry at the end of the latest actual year, exit at the end of forecast year {nHold(data)}.
-        </div>
-      )}
     </div>
   );
 }
@@ -68,6 +112,8 @@ export const lboSettingsStep = () => ({
   ],
   Extra: SettingsExtra,
   extraBelow: true,
+  Layout: LboSettingsLayout,
+  summary: (data) => { const s2 = S(data); return s2.repay ? `${repayKind(s2.repay).label.replace(' repayment', '').replace('Mandatory', 'Mandatory')} · ${nHold(data)} yrs` : null; },
 });
 
 /* ======================= Company & historicals ======================= */
@@ -96,6 +142,31 @@ function CompanyExtra({ data, setData, company }) {
   );
 }
 
+/** Company & historicals as the approved DCF design (page 2, option B), reused for the LBO. */
+function LboCompanyLayout({ data, setData, company }) {
+  const c = data.lbo.company;
+  const n = nHist(data);
+  const lab = labelsOf(data, company);
+  const [pasting, setPasting] = useState(false);
+  const setCo = (fn) => setData((d) => ({ ...d, lbo: { ...d.lbo, company: fn(d.lbo.company) } }));
+  return (
+    <>
+      <div className="box2 fetchbar2">
+        <div className="fb-row">
+          <div className="fb-q"><div className="fb-l">Fill from Yahoo Finance</div>
+            <YahooSearch company={company} action="Fetch" onPick={(m) => setCo((cur) => mergeFetch(cur, m, company, { n, market: false, alignTo: lab.hist }))} />
+          </div>
+          <button type="button" className="btn" onClick={() => setPasting(true)}>Paste from Excel</button>
+        </div>
+        {c._fetched ? <FetchNote f={c._fetched} company={company} /> : <div className="fb-s">The latest year is the entry year: entry EBITDA, the balance sheet refinanced and the cash available come from it.</div>}
+      </div>
+      <div className="hint">✎ Click any blue number to change it · paste a block of numbers straight from Excel · the trend and CAGR update as you type</div>
+      <StatementPanels page={c.page} onChange={(page) => setCo((cur) => ({ ...cur, page }))} n={n} labels={lab.hist} toggle={S(data).lease === 0 ? 0 : 1} company={company} />
+      {pasting && <PasteDialog mode="page" page={c.page} n={n} columns={lab.hist.map((l, i) => ({ id: i, label: l }))} onApply={(pg) => setCo((cur) => ({ ...cur, page: pg }))} onClose={() => setPasting(false)} />}
+    </>
+  );
+}
+
 export const lboCompanyStep = () => ({
   id: 'lboCompany',
   title: 'Company & historicals',
@@ -103,6 +174,8 @@ export const lboCompanyStep = () => ({
   fields: () => [],
   Extra: CompanyExtra,
   extraBelow: true,
+  Layout: LboCompanyLayout,
+  summary: (data, ctx) => { const l = labelsOf(data, ctx.company).hist; return l.length ? `${l[0]}–${l[l.length - 1]}` : null; },
   validate: (data, ctx) => latestYearErrors(resultOf(ctx.company, data), ctx.company, 'entry EBITDA and the projections'),
 });
 
@@ -122,7 +195,7 @@ function AssumptionsExtra({ data, setData, company }) {
     <div className="step-tools">
       <div className="tool-card">
         <div className="tool-h">Operating drivers</div>
-        <DriversGrid defs={LBO_DRIVERS} drivers={data.lbo.drivers} onChange={(drivers) => setData((d) => ({ ...d, lbo: { ...d.lbo, drivers } }))}
+        <DriversView Grid={DriversGrid} defs={LBO_DRIVERS} drivers={data.lbo.drivers} onChange={(drivers) => setData((d) => ({ ...d, lbo: { ...d.lbo, drivers } }))}
           m={r.m} labels={r.labels} refs={r.ref} locale={locale} unitLabel={unit} emptyHist={emptyHistYears(r)} />
       </div>
       <div className="tool-card">
@@ -213,6 +286,59 @@ function TransactionExtra({ data, setData, company }) {
   );
 }
 
+/** Transaction & debt exactly as the approved sample (LBO page 4, option A): uses must equal sources. */
+function LboTransactionLayout({ data, setData, company, F }) {
+  const r = resultOf(company, data);
+  const locale = CURRENCIES[company.currency]?.locale;
+  const sym = CURRENCIES[company.currency]?.symbol || '';
+  const m = (x) => (fin(x) ? `${sym}${fmtNum(x, 0, locale)}` : '—');
+  const su = r?.su;
+  const uses = su ? [['Equity purchase price', su.uses[0], 'u1'], ['Debt refinanced', su.uses[1], 'u2'], ['Transaction fees', su.uses[2], 'u3'], ['Financing fees', su.uses[3], 'u3']] : [];
+  const srcs = su ? [['Senior A', su.sources[0], 's1'], ['Senior B', su.sources[1], 's2'], ['Mezzanine', su.sources[2], 's3'], ['Existing cash', su.sources[3], 's4'], [`Sponsor equity ${fin(su.stats.equityPct) ? (su.stats.equityPct * 100).toFixed(0) + '%' : ''}`, su.sources[4], 's5']] : [];
+  const stack = (rows) => (
+    <div className="colstack">{rows.filter((x) => fin(x[1]) && x[1] > 0).map(([l, v, c]) => (
+      <div key={l} className={`cs ${c}`} style={{ flex: v }}><span>{l}</span><b>{m(v)}</b></div>
+    ))}</div>
+  );
+  const cover = r?.C?.intCover?.[0];
+  return (
+    <div className="gLb">
+      <div className="col16">
+        <div className="box2">
+          <div className="su2">
+            <div>
+              <h3>Uses · {m(su?.totalUses)}</h3>
+              {su ? stack(uses) : <div className="empty-s">Fill the earlier steps first.</div>}
+              <div className="g2f">{F('lbo.deal.entryMultiple', { label: 'Entry EV / EBITDA' })}{F('lbo.deal.txnFeePct', { label: 'Transaction fees' })}</div>
+            </div>
+            <div>
+              <h3>Sources · {m(su?.totalSources)}</h3>
+              {su && stack(srcs)}
+              <div className="g2f">{F('lbo.deal.cashUsed', { label: 'Existing cash used' })}</div>
+            </div>
+          </div>
+        </div>
+        <div className="box2">
+          <h3>Debt package</h3>
+          <TranchesCard data={data} setData={setData} company={company} r={r} />
+          <div className="g3f">{F('lbo.cash.minCash')}{F('lbo.cash.sweepPct', { label: 'Cash sweep' })}{F('lbo.cash.rcf', { label: 'Revolver commitment' })}{F('lbo.cash.rcfRate', { label: 'Revolver rate' })}{F('lbo.cash.rcfFee', { label: 'Undrawn fee' })}</div>
+        </div>
+      </div>
+      <div className="col16 stick">
+        <LboLiveCard company={company} data={data} />
+        <div className="box2">
+          <h3>Checks</h3>
+          <div className="kv3"><span>Sources = uses</span>{su && Math.abs(su.check) < 0.05 ? <b className="up">✓ {m(su.totalUses)}</b> : <b className="dn">✕ off by {m(su?.check)}</b>}</div>
+          <div className="kv3"><span>Interest cover year 1</span><b>{fin(cover) ? `${cover.toFixed(1)}x` : '—'}</b></div>
+          <div className="kv3"><span>Equity share</span><b className={su && su.sponsor < 0 ? 'dn' : ''}>{su ? pct1(su.stats.equityPct) : '—'}</b></div>
+          {r?.entry?.cashWarn && <div className="warn2 sm">The existing cash used exceeds the cash on the balance sheet.</div>}
+          {su && su.sponsor < 0 && <div className="warn2 sm">Sponsor equity is negative — the structure is over-levered.</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export const lboTransactionStep = () => ({
   id: 'lboTransaction',
   title: 'Transaction & debt',
@@ -233,6 +359,8 @@ export const lboTransactionStep = () => ({
   ],
   Extra: TransactionExtra,
   extraBelow: true,
+  Layout: LboTransactionLayout,
+  summary: (data) => { const d = data.lbo?.deal || {}; const db = data.lbo?.debt || {}; const x = ['senA', 'senB', 'mezz'].reduce((a, k) => a + (fin(db[k]?.x) ? db[k].x : 0), 0); return fin(d.entryMultiple) ? `${d.entryMultiple.toFixed(1)}x · ${x.toFixed(1)}x debt` : null; },
 });
 
 /* ========================= Exit & sensitivity ========================= */
@@ -249,6 +377,54 @@ function ExitReadout({ data, company }) {
   );
 }
 
+/** Exit & sensitivity exactly as the approved sample (LBO page 5, option A). */
+function LboExitLayout({ data, company, F }) {
+  const r = resultOf(company, data);
+  const locale = CURRENCIES[company.currency]?.locale;
+  const sym = CURRENCIES[company.currency]?.symbol || '';
+  const m = (x) => (fin(x) ? `${sym}${fmtNum(x, 0, locale)} ${UNITS[company.unit] || ''}` : '—');
+  const bad = r?.C?.shortfall?.some((x) => x === 'SHORTFALL');
+  const em = data.lbo?.deal?.entryMultiple, xm = data.lbo?.deal?.exitMultiple;
+  return (
+    <>
+      <div className="g2b">
+        <div className="opt2 on">
+          <div className="opt2-k"><span className="radio2" />EXIT MULTIPLE · IN USE</div>
+          <div className="opt2-r">
+            <div>{F('lbo.deal.exitMultiple', { label: 'Exit EV / EBITDA' })}</div>
+            <div><div className="lbl">Gives</div><div className="mid2">{r && fin(r.irr) ? `${(r.irr * 100).toFixed(1)}% IRR` : '—'} <span>{r && fin(r.moic) ? `· ${r.moic.toFixed(2)}x` : ''}</span></div></div>
+          </div>
+          <p>{r ? `Exit EV ${m(r.exit.ev)} on ${r.labels.fcst[r.m - 1]} EBITDA ${m(r.exit.ebitda)} · exit equity ${m(r.exit.equity)}` : 'Fill the earlier steps to see the exit.'}</p>
+        </div>
+        <div className="box2">
+          <div className="lbl">For reference</div>
+          <div className="kv3"><span>Entry multiple</span><b>{fin(em) ? `${em.toFixed(1)}x` : '—'}</b></div>
+          <div className="kv3"><span>Exit vs entry</span><b className={fin(em) && fin(xm) && xm < em ? 'dn' : 'up'}>{fin(em) && fin(xm) ? `${xm >= em ? '+' : '−'}${Math.abs(xm - em).toFixed(1)}x` : '—'}</b></div>
+          <div className="hint" style={{ marginTop: 8 }}>Exiting below the entry multiple (multiple contraction) is the cautious case.</div>
+          {bad && <div className="warn2 sm">Cash goes negative in at least one year even after the revolver — a larger revolver or lower leverage is needed.</div>}
+        </div>
+      </div>
+      <div className="gLb">
+        <div className="box2">
+          <h3>IRR sensitivity</h3>
+          <div className="box2-s">entry multiple across, exit multiple down · base outlined</div>
+          {r?.sens ? (
+            <div style={{ marginTop: 10 }}>
+              <Heatmap corner="Exit ↓ · Entry →" rowLabels={r.sens.exitRows} colLabels={r.sens.entryRows}
+                grid={r.sens.exitRows.map((_, i) => r.sens.entryRows.map((__, j) => { const v = r.sens.multIrr[j]?.[i]; return fin(v) ? v * 100 : NaN; }))}
+                fmt={(v) => `${v.toFixed(1)}%`} fmtRow={(v) => fmtTpl(v, 'x', locale)} fmtCol={(v) => fmtTpl(v, 'x', locale)} />
+            </div>
+          ) : <div className="empty-s">Fill the earlier steps to see the sensitivity.</div>}
+        </div>
+        <div className="box2">
+          <h3>Sensitivity steps</h3>
+          <div className="col12">{F('lbo.settings.exitStep', { label: 'Exit multiple step' })}{F('lbo.settings.entryStep', { label: 'Entry multiple step' })}{F('lbo.settings.growthStep', { label: 'Revenue growth shift step' })}</div>
+        </div>
+      </div>
+    </>
+  );
+}
+
 export const lboExitStep = () => ({
   id: 'lboExit',
   title: 'Exit & sensitivity',
@@ -260,4 +436,6 @@ export const lboExitStep = () => ({
     f.pct('lbo.settings.growthStep', 'Sensitivity: revenue growth shift step', { gt: 0, hint: 'e.g. 2.0% – shifts each year’s growth by ± this amount' }),
   ],
   Readout: ExitReadout,
+  Layout: LboExitLayout,
+  summary: (data) => (fin(data.lbo?.deal?.exitMultiple) ? `exit ${data.lbo.deal.exitMultiple.toFixed(1)}x` : null),
 });

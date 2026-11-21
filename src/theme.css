@@ -1,0 +1,132 @@
+/* ===================================================================
+   QUANT VALUE — theme tokens (calm finance dashboard: white cards on a
+   soft grey canvas, one teal accent, amber for the market, green / red
+   for gains and losses)
+   The theme is set on <html data-theme="light|dark"> by index.html (before
+   the first paint) and by the theme button (lib/theme.js). Light is the
+   default. Every colour in the app's CSS reads one of these tokens; charts
+   read the matching palette in lib/chartkit.js.
+   =================================================================== */
+
+:root,
+:root[data-theme='light'] {
+  --bg: #F3F5F5;                 /* the canvas */
+  --surface: #FFFFFF;            /* cards and widgets */
+  --surface-2: #F8FAFA;
+  --surface-3: #EEF2F2;
+  --border: #E4E8E8;
+  --border-strong: #CED6D6;
+  --rule: #E4E8E8;
+  --text: #15201F;
+  --muted: #5F6B6B;
+  --faint: #8E9999;
+  --ink: #15201F;
+  --shadow-ink: rgba(16, 22, 31, 0.2);
+
+  --accent: #2B7C85;             /* the one accent: teal — links, selection, primary buttons */
+  --accent-2: #1F646C;
+  --accent-deep: #18535A;
+  --accent-soft: #E6F2F2;
+  --accent-tint: #F3F9F9;
+  --btn-bg: #2B7C85;
+  --btn-bg-hover: #1F646C;
+  --on-accent: #FFFFFF;
+
+  --violet: #7C4DCC;
+  --violet-soft: #F1ECFB;
+  --green: #1E9E5A;              /* up */
+  --green-soft: #E6F5EC;
+  --red: #E5484D;                /* down */
+  --red-soft: #FDECEC;
+  --red-text: #C2373C;
+  --amber: #B76E00;              /* the market line, warnings */
+  --amber-soft: #FEF3E0;
+
+  --heat: #2B7C85;               /* sensitivity grid shading */
+  --heat-on: #FFFFFF;
+  --input-fg: #1F4FB4;           /* blue input cells, as in the workbooks */
+  --input-bg: #FFFFFF;
+  --field-bg: #FFFFFF;
+  --hist-fg: #6B7482;
+  --target-row: #FFF6E5;
+  --topbar-bg: #FFFFFF;
+  --rail-bg: #FFFFFF;
+  --side-bg: #FFFFFF;
+  --overlay: rgba(16, 22, 31, 0.42);
+  --scroll-thumb: #CDD2DA;
+  --scroll-thumb-hover: #AEB5C0;
+
+  --shadow-1: 0 1px 2px rgba(16, 22, 31, 0.04);
+  --shadow-2: 0 10px 28px rgba(16, 22, 31, 0.10);
+  --shadow-menu: 0 12px 30px rgba(16, 22, 31, 0.14);
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  --bg: #0C1112;
+  --surface: #131A1B;
+  --surface-2: #172021;
+  --surface-3: #1D2728;
+  --border: #243031;
+  --border-strong: #32403F;
+  --rule: #243031;
+  --text: #E6E9EE;
+  --muted: #9AA3B0;
+  --faint: #6B7480;
+  --ink: #FFFFFF;
+  --shadow-ink: #000000;
+
+  --accent: #5CC0C7;
+  --accent-2: #8AD6DA;
+  --accent-deep: #3AA3AB;
+  --accent-soft: #15292B;
+  --accent-tint: rgba(92, 192, 199, 0.06);
+  --btn-bg: #2F8E97;
+  --btn-bg-hover: #3AA3AB;
+  --on-accent: #FFFFFF;
+
+  --violet: #B79BF0;
+  --violet-soft: #221B33;
+  --green: #3DD68C;
+  --green-soft: #10261B;
+  --red: #FF6369;
+  --red-soft: #2E1517;
+  --red-text: #FF9497;
+  --amber: #FBBF24;
+  --amber-soft: #2A2112;
+
+  --heat: #2F8E97;
+  --heat-on: #FFFFFF;
+  --input-fg: #9EB4FF;
+  --input-bg: #0E1117;
+  --field-bg: #0E1117;
+  --hist-fg: #8C95A3;
+  --target-row: rgba(251, 191, 36, 0.09);
+  --topbar-bg: #131A1B;
+  --rail-bg: #0E1117;
+  --side-bg: #111718;
+  --overlay: rgba(2, 4, 8, 0.72);
+  --scroll-thumb: #303846;
+  --scroll-thumb-hover: #404A5A;
+
+  --shadow-1: none;
+  --shadow-2: 0 10px 28px rgba(0, 0, 0, 0.5);
+  --shadow-menu: 0 12px 30px rgba(0, 0, 0, 0.55);
+  color-scheme: dark;
+}
+
+:root {
+  --mono: 'Roboto Mono', ui-monospace, SFMono-Regular, monospace;
+  --sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --serif: 'Inter', system-ui, -apple-system, sans-serif;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --r: 14px;                     /* cards and widgets */
+  --r-sm: 8px;                   /* buttons and fields */
+  --r-pill: 999px;
+}
+
+/* the switch between themes fades instead of snapping */
+html.theme-fade, html.theme-fade * {
+  transition: background-color 0.25s ease, border-color 0.25s ease, color 0.2s ease !important;
+}

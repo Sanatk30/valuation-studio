@@ -5,6 +5,7 @@ import { SUPPORTED_CURRENCIES, fetchLiveRate } from '../lib/fx.js';
 import { convertCompanyRecord, rescaleUnit } from '../lib/currency.js';
 import { NumBox } from '../wizard/Field.jsx';
 import { latestCompletedFy, impliedYear1 } from '../lib/period.js';
+import { searchSymbols, fetchListing } from '../lib/yahoo.js';
 
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const fyTag = (y) => `FY${String(y).slice(-2)}`;
@@ -74,81 +75,185 @@ const UNIT_OPTIONS = Object.entries(UNITS).map(([k, v]) => ({ value: k, label: k
 
 /* ------------------------------------------------------------ new company */
 
-/** First card on first launch, and the "New company" dialog. Nothing pre-selected. */
+/**
+ * First page on first launch, and the "New company" dialog (the improved
+ * Option B the user approved): search a listed company — the currency and
+ * fiscal year come from Yahoo, tagged "filled" — or type any name; the unit is
+ * a one-click switch, the fiscal year four cards, and a preview shows which
+ * years are history and which is Year 1. Nothing is pre-selected.
+ */
 export function NewCompanyForm({ onDone, onCancel }) {
   const [name, setName] = useState('');
+  const [listing, setListing] = useState(null);       // { symbol, exchange }
   const [currency, setCurrency] = useState('');
   const [unit, setUnit] = useState('');
   const [startYear, setStartYear] = useState(null);
+  const [yearTouched, setYearTouched] = useState(false);
+  const [editYear, setEditYear] = useState(false);
   const [fy, setFy] = useState('');
+  const [filled, setFilled] = useState({});
   const [tried, setTried] = useState(false);
+  const [q, setQ] = useState('');
+  const [hits, setHits] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState('');
 
+  // Year 1 follows the fiscal year until the user changes it
+  useEffect(() => {
+    if (fy && !yearTouched) setStartYear(impliedYear1(Number(fy)));
+  }, [fy, yearTouched]);
+
+  // company search (Yahoo), debounced
+  useEffect(() => {
+    const t = q.trim();
+    if (t.length < 2 || listing) { setHits(null); return undefined; }
+    let live = true;
+    const id = setTimeout(async () => {
+      try { const r = await searchSymbols(t); if (live) setHits(r.slice(0, 6)); } catch { if (live) setHits([]); }
+    }, 300);
+    return () => { live = false; clearTimeout(id); };
+  }, [q, listing]);
+
+  const pick = async (h) => {
+    setName(h.name); setQ(h.name); setHits(null); setListing({ symbol: h.symbol, exchange: h.exchange }); setNote('');
+    setBusy(true);
+    try {
+      const raw = await fetchListing(h.symbol, { search: h });
+      const got = {};
+      const ccy = raw.financialCurrency || raw.price?.currency;
+      if (ccy && SUPPORTED_CURRENCIES.includes(ccy)) { setCurrency(ccy); got.currency = true; }
+      const dates = Object.values(raw.annual || {}).flat().map((p) => p?.date).filter(Boolean).sort();
+      const m = Number(String(dates[dates.length - 1] || '').slice(5, 7));
+      if (FY_OPTIONS.some((o) => o.value === m)) { setFy(String(m)); setYearTouched(false); got.fy = MON[m - 1]; }
+      setFilled(got);
+      if (!got.currency || !got.fy) setNote('Yahoo did not give everything — choose the rest below.');
+    } catch {
+      setNote('Could not reach Yahoo just now — choose the currency and fiscal year yourself.');
+    } finally { setBusy(false); }
+  };
+  const clearPick = () => { setListing(null); setFilled({}); setNote(''); };
+
+  const y1 = fy ? impliedYear1(Number(fy)) : null;
   const errs = {
-    name: !name.trim() ? 'Required' : null,
+    name: !name.trim() ? 'Type or pick the company' : null,
     currency: !currency ? 'Choose the valuation currency' : null,
     unit: !unit ? 'Choose a unit' : null,
     startYear: !(Number.isInteger(startYear) && startYear >= 1990 && startYear <= 2100) ? 'A year like 2026'
-      : fy && impliedYear1(Number(fy)) !== null && startYear > impliedYear1(Number(fy)) ? `At most ${impliedYear1(Number(fy))}: FY${String(impliedYear1(Number(fy))).slice(-2)} has not ended, so it can't be a historical year` : null,
+      : fy && y1 !== null && startYear > y1 ? `At most ${y1}: FY${String(y1).slice(-2)} has not ended, so it can't be a historical year` : null,
     fy: !fy ? 'Choose the fiscal year' : null,
   };
   const ok = Object.values(errs).every((e) => !e);
   const submit = () => {
     setTried(true);
     if (!ok) return;
-    const id = createCompany({ name, currency, unit, startYear, fyEndMonth: Number(fy) });
+    const id = createCompany({ name: name.trim(), currency, unit, startYear, fyEndMonth: Number(fy) });
     onDone?.(id);
   };
   const E = ({ k }) => (tried && errs[k] ? <div className="fld-e">{errs[k]}</div> : null);
+  const initials = (name || '?').split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
+  const m = Number(fy);
+  const span = (yEnd) => (m === 12 ? `Jan-${yEnd} – Dec-${yEnd}` : `${MON[m % 12]}-${yEnd - 1} – ${MON[m - 1]}-${yEnd}`);
+  const yrs = Number.isInteger(startYear) ? [startYear - 3, startYear - 2, startYear - 1, startYear, startYear + 1, startYear + 2] : [];
 
   return (
-    <div className="new-co">
-      <h2>Which company are you valuing?</h2>
-      <p className="fld-h">These settings apply to every method for this company. You can change them later (money is converted at a rate you confirm).</p>
-      <div className="fld-grid c2">
-        <div className={`fld${tried && errs.name ? ' bad' : ''}`}>
-          <div className="fld-l"><label>Company name</label></div>
-          <input className="fld-in txt" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Sample Industries Ltd" autoFocus />
-          <E k="name" />
-        </div>
+    <div className="nc">
+      <h1>Which company are you valuing?</h1>
+      <p className="nc-sub">Search a listed company to fill the rest for you — or type any name. You can change all of this later.</p>
+
+      <div className={`fld${tried && errs.name ? ' bad' : ''}`}>
+        <div className="fld-l"><label>Company</label></div>
+        {listing ? (
+          <div className="nc-picked">
+            <span className="nc-av">{initials}</span>
+            <span className="nc-pt"><b>{name}</b><small>{listing.symbol}{listing.exchange ? ` · ${listing.exchange}` : ''} · listed</small></span>
+            {busy ? <span className="nc-tag">filling…</span> : <span className="nc-tag ok">✓ from Yahoo</span>}
+            <button type="button" className="btn ghost sm" onClick={clearPick}>Change</button>
+          </div>
+        ) : (
+          <div className="nc-search">
+            <input className="fld-in txt" value={q} autoFocus placeholder="Search or type — e.g. Sample Industries Ltd"
+              onChange={(e) => { setQ(e.target.value); setName(e.target.value); }} />
+            {hits && (
+              <div className="nc-res">
+                {hits.map((h) => (
+                  <button type="button" key={h.symbol} onClick={() => pick(h)}>
+                    <span className="nc-av sm">{h.name.split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase()}</span>
+                    <span className="nc-pt"><b>{h.name}</b><small>{h.symbol} · {h.exchange}</small></span>
+                  </button>
+                ))}
+                {q.trim() && (
+                  <button type="button" onClick={() => setHits(null)}>
+                    <span className="nc-av sm plus">+</span>
+                    <span className="nc-pt"><b>Use “{q.trim()}” as typed</b><small>for an unlisted company — fill the rest yourself</small></span>
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+        {busy && <div className="pbar" style={{ marginTop: 8 }}><div /></div>}
+        {note && <div className="fld-h">{note}</div>}
+        <E k="name" />
+      </div>
+
+      <div className="nc-g2">
         <div className={`fld${tried && errs.currency ? ' bad' : ''}`}>
-          <div className="fld-l"><label>Valuation currency</label></div>
-          <select className="fld-in" value={currency} onChange={(e) => setCurrency(e.target.value)}>
+          <div className="fld-l"><label>Valuation currency {filled.currency && <span className="nc-tag ok">filled</span>}</label></div>
+          <select className="fld-in" value={currency} onChange={(e) => { setCurrency(e.target.value); setFilled((f) => ({ ...f, currency: false })); }}>
             <option value="">choose…</option>
             {SUPPORTED_CURRENCIES.map((c) => <option key={c} value={c}>{CURRENCIES[c].symbol} {c} — {CURRENCIES[c].name}</option>)}
           </select>
-          <div className="fld-h">Every figure, and every Yahoo pull, is in this currency.</div>
+          <div className="fld-h">Every figure and every Yahoo pull is in this currency.</div>
           <E k="currency" />
         </div>
         <div className={`fld${tried && errs.unit ? ' bad' : ''}`}>
           <div className="fld-l"><label>Money unit</label></div>
-          <select className="fld-in" value={unit} onChange={(e) => setUnit(e.target.value)}>
-            <option value="">choose…</option>
-            {UNIT_OPTIONS.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
-          </select>
+          <div className="nc-seg" role="radiogroup">
+            {UNIT_OPTIONS.map((u) => <button type="button" key={u.value} role="radio" aria-checked={unit === u.value} className={unit === u.value ? 'on' : ''} onClick={() => setUnit(u.value)}>{u.label.replace(/ \(.*\)/, '')}</button>)}
+          </div>
           <div className="fld-h">Share counts use the same unit.</div>
           <E k="unit" />
         </div>
-        <div className={`fld${tried && errs.startYear ? ' bad' : ''}`}>
-          <div className="fld-l"><label>First forecast year (Year 1)</label></div>
-          <NumBox plain value={startYear} onChange={(v) => setStartYear(v)} placeholder="e.g. 2027" />
-          <div className="fld-h">The LTM / base year is the year before it.</div>
-          {fy ? <YearCheck startYear={startYear} fyEndMonth={Number(fy)} onUse={setStartYear} /> : <div className="fld-h">Choose the fiscal year to see which year that is.</div>}
-          <E k="startYear" />
-        </div>
-        <div className={`fld${tried && errs.fy ? ' bad' : ''}`}>
-          <div className="fld-l"><label>Fiscal year</label></div>
-          <select className="fld-in" value={fy} onChange={(e) => setFy(e.target.value)}>
-            <option value="">choose…</option>
-            {FY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
-          <E k="fy" />
-        </div>
       </div>
-      <div className="step-foot">
+
+      <div className={`fld${tried && errs.fy ? ' bad' : ''}`}>
+        <div className="fld-l"><label>Fiscal year {filled.fy && <span className="nc-tag ok">filled — Yahoo says {filled.fy}</span>}</label></div>
+        <div className="nc-fy" role="radiogroup">
+          {FY_OPTIONS.map((o) => (
+            <button type="button" key={o.value} role="radio" aria-checked={Number(fy) === o.value} className={Number(fy) === o.value ? 'on' : ''} onClick={() => { setFy(String(o.value)); setFilled((f) => ({ ...f, fy: false })); }}>
+              <b>{{ 12: 'Jan – Dec', 3: 'Apr – Mar', 6: 'Jul – Jun', 9: 'Oct – Sep' }[o.value]}</b>
+              <small>{{ 12: 'calendar year', 3: 'most Indian companies' }[o.value] || ' '}</small>
+            </button>
+          ))}
+        </div>
+        <E k="fy" />
+      </div>
+
+      <div className="nc-years">
+        <div className="nc-years-h"><span>Your years</span>{fy && <button type="button" className="btn ghost sm" onClick={() => setEditYear(!editYear)}>{editYear ? 'Done' : 'Change Year 1'}</button>}</div>
+        {fy && Number.isInteger(startYear) ? (
+          <>
+            <div className="nc-yrs">
+              {yrs.map((y, i) => <span key={y} className={i < 3 ? 'h' : i === 3 ? 'one' : 'f'}>{fyTag(y)}{i >= 3 ? 'E' : ''}{i === 3 ? ' · Year 1' : ''}</span>)}
+            </div>
+            <div className="fld-h">{fyTag(startYear - 1)} ({span(startYear - 1)}) is the latest finished year — the base. Year 1 = {fyTag(startYear)}E, {span(startYear)}.{!yearTouched ? ' Worked out from today’s date.' : ''}</div>
+            {editYear && (
+              <div className="nc-y1">
+                <label>First forecast year (Year 1)</label>
+                <NumBox plain value={startYear} onChange={(v) => { setStartYear(v); setYearTouched(true); }} placeholder="e.g. 2027" />
+                <YearCheck startYear={startYear} fyEndMonth={Number(fy)} onUse={(v) => { setStartYear(v); setYearTouched(false); }} />
+              </div>
+            )}
+          </>
+        ) : <div className="fld-h">Pick the fiscal year to see which years are history and which is Year 1.</div>}
+        <E k="startYear" />
+      </div>
+
+      <div className="nc-foot">
         {onCancel && <button className="btn ghost" onClick={onCancel}>Cancel</button>}
-        <div className="spacer" />
-        <button className="btn primary" onClick={submit}>Create company →</button>
+        <button className="btn primary nc-go" onClick={submit}>Create company and open the overview →</button>
       </div>
+      <div className="nc-note">Saved on this computer only · nothing is uploaded</div>
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { f } from '../fields.js';
 import { NumBox } from '../../wizard/Field.jsx';
 import TemplatePageEditor from '../../components/TemplatePageEditor.jsx';
 import DriversGrid from '../../components/DriversGrid.jsx';
+import { DriversView } from '../../components/DriverCharts.jsx';
 import { YahooSearch, mergeFetch } from '../../components/PeerYahoo.jsx';
 import { FetchNote } from './templateSteps.jsx';
 import { toEngineInput } from '../../store/methodModel.js';
@@ -12,7 +13,12 @@ import {
 import { MIN_YEARS, MAX_YEARS } from '../../lib/engine/companyPage.js';
 import { fmtNum, fmtTpl, CURRENCIES, UNITS } from '../../lib/format.js';
 import { YearCheck } from '../../home/CompanyForms.jsx';
+import Heatmap from '../../components/Heatmap.jsx';
 import { updateCompany } from '../../store/store.js';
+import Timeline from '../../components/Timeline.jsx';
+import StatementPanels from '../../components/StatementPanels.jsx';
+import PasteDialog from '../../components/PasteDialog.jsx';
+import { CountUp } from '../../lib/motion.jsx';
 
 /**
  * Wizard steps for the DCF, following the user's twelve DCF templates:
@@ -87,12 +93,60 @@ function DcfLabelsEditor({ data, setData, company }) {
     <div className="step-tools">
       <YearCheck startYear={company?.startYear} fyEndMonth={company?.fyEndMonth} onUse={(y) => company?.id && updateCompany(company.id, { startYear: y })} />
       <PeriodLabelsCard labels={dcfLabels(s.labels, nHist(data), nFcst(data), company?.startYear, { keepBlank: true })} onChange={(labels) => setData((d) => ({ ...d, dcf: { ...d.dcf, settings: { ...d.dcf.settings, labels } } }))} />
-      {s.cf && s.tv && s.coe && (
-        <div className="readout">
-          Template <b>{templateName(s)}.xlsx</b> — {CF_KINDS.find((k) => k.value === s.cf)?.long}, terminal value by {s.tv === 'exit' ? `exit ${exitMultipleName(s.cf)}` : 'Gordon growth'}, cost of equity by {s.coe === 'capm' ? 'CAPM' : 'the build-up method'}.
-        </div>
-      )}
     </div>
+  );
+}
+
+function DcfTimeline({ data, company }) {
+  const s = S(data);
+  const lab = labelsOf(data, company);
+  const tail = s.tv === 'exit'
+    ? { label: 'Exit', sub: `× ${exitMultipleName(s.cf || 'fcff')}`, tip: `The business is valued at the end of the forecast at an exit ${exitMultipleName(s.cf || 'fcff')} multiple.` }
+    : { label: 'Terminal', sub: 'forever', tip: 'Everything after the last forecast year, by Gordon growth: final cash flow × (1 + g) ÷ (rate − g).' };
+  return (
+    <div className="tool-card">
+      <div className="tool-h">Timeline <span className="fld-opt">hover a year for its dates and how it is used</span></div>
+      <Timeline hist={lab.hist} fcst={lab.fcst} startYear={company?.startYear} fyEndMonth={company?.fyEndMonth} tail={tail} valDate={s.valDate} />
+    </div>
+  );
+}
+
+/** Settings exactly as the approved sample (DCF page 1, option B): timeline first, then Model and Conventions. */
+function DcfSettingsLayout({ data, setData, company, F, Extra, ctx }) {
+  const s = S(data);
+  const lab = labelsOf(data, company);
+  const tail = s.tv === 'exit'
+    ? { label: 'Exit', sub: `× ${exitMultipleName(s.cf || 'fcff')}`, tip: `The business is valued at the end of the forecast at an exit ${exitMultipleName(s.cf || 'fcff')} multiple.` }
+    : { label: 'Terminal', sub: 'forever', tip: 'Everything after the last forecast year, by Gordon growth: final cash flow × (1 + g) ÷ (rate − g).' };
+  return (
+    <>
+      <div className="box2">
+        <h3>Timeline</h3>
+        <div className="box2-s">hover a year to see its dates and how it is used</div>
+        <Timeline hist={lab.hist} fcst={lab.fcst} startYear={company?.startYear} fyEndMonth={company?.fyEndMonth} tail={tail} valDate={s.valDate} />
+        <div className="tl-ctls">
+          {F('dcf.settings.histYears', { inline: true })}
+          {F('dcf.settings.fcstYears', { inline: true })}
+          {F('dcf.settings.valDate', { inline: true })}
+          {F('dcf.settings.fyEnd', { inline: true })}
+        </div>
+      </div>
+      <div className="g2b">
+        <div className="box2">
+          <h3>Model</h3>
+          {F('dcf.settings.cf', { row: true, label: 'Cash flow', sub: 'What gets discounted' })}
+          {F('dcf.settings.tv', { row: true, sub: 'Value after the last forecast year' })}
+          {F('dcf.settings.coe', { row: true, sub: 'How Ke is built' })}
+        </div>
+        <div className="box2">
+          <h3>Conventions</h3>
+          {F('dcf.settings.lease', { row: true, label: 'Leases count as debt', sub: 'In net debt and WACC' })}
+          {F('dcf.settings.midYear', { row: true, label: 'Mid-year discounting', sub: 'Cash arrives evenly through the year' })}
+          {F('dcf.settings.normalise', { row: true, label: 'Normalise the terminal year', sub: 'Grow every line at g' })}
+        </div>
+      </div>
+      <div className="box2"><Extra data={data} setData={setData} company={company} ctx={ctx} /></div>
+    </>
   );
 }
 
@@ -128,9 +182,25 @@ export const dcfSettingsStep = () => ({
   ],
   Extra: DcfLabelsEditor,
   extraBelow: true,
+  Layout: DcfSettingsLayout,
+  summary: (data) => { const s = S(data); return s.cf && s.tv && s.coe ? `${s.cf.toUpperCase()} · ${s.tv === 'exit' ? 'Exit multiple' : 'Gordon'} · ${s.coe === 'capm' ? 'CAPM' : 'Build-up'}` : null; },
 });
 
 /* ======================= Company & historicals ======================= */
+
+function CompanyFetch({ data, setData, company }) {
+  const c = data.dcf.company;
+  const n = nHist(data);
+  const lab = labelsOf(data, company);
+  const setCo = (fn) => setData((d) => ({ ...d, dcf: { ...d.dcf, company: fn(d.dcf.company) } }));
+  return (
+    <div className="tool-card fetchbar">
+      <div className="tool-h">Fill from Yahoo Finance <span className="fld-opt">or paste from Excel into the statements below — every number stays editable</span></div>
+      <YahooSearch company={company} action="Fill the historicals" onPick={(m) => setCo((cur) => mergeFetch(cur, m, company, { n, alignTo: lab.hist }))} />
+      {c._fetched && <FetchNote f={c._fetched} company={company} />}
+    </div>
+  );
+}
 
 function CompanyExtra({ data, setData, company }) {
   const c = data.dcf.company;
@@ -139,11 +209,7 @@ function CompanyExtra({ data, setData, company }) {
   const setCo = (fn) => setData((d) => ({ ...d, dcf: { ...d.dcf, company: fn(d.dcf.company) } }));
   return (
     <div className="step-tools">
-      <div className="tool-card">
-        <div className="tool-h">Fill from Yahoo Finance <span className="fld-opt">optional</span></div>
-        <YahooSearch company={company} action="Fill the historicals" onPick={(m) => setCo((cur) => mergeFetch(cur, m, company, { n, alignTo: lab.hist }))} />
-        {c._fetched && <FetchNote f={c._fetched} company={company} />}
-      </div>
+      <div className="hint">✎ Click any number to change it · paste a block of numbers straight from Excel into any cell</div>
       <div className="tool-card">
         <div className="tool-h">{company.name} — historical financials</div>
         <TemplatePageEditor
@@ -153,6 +219,47 @@ function CompanyExtra({ data, setData, company }) {
         />
       </div>
     </div>
+  );
+}
+
+/** Company & historicals exactly as the approved sample (DCF page 2, option B). */
+function DcfCompanyLayout({ data, setData, company, F }) {
+  const c = data.dcf.company;
+  const n = nHist(data);
+  const lab = labelsOf(data, company);
+  const [pasting, setPasting] = React.useState(false);
+  const setCo = (fn) => setData((d) => ({ ...d, dcf: { ...d.dcf, company: fn(d.dcf.company) } }));
+  const r = resultOf(company, data);
+  const locale = CURRENCIES[company.currency]?.locale;
+  const sym = CURRENCIES[company.currency]?.symbol || '';
+  const unit = UNITS[company.unit] || '';
+  const mcap = fin(c.price) && fin(c.shares) ? c.price * c.shares : null;
+  const nd = r?.bridge?.netDebt;
+  return (
+    <>
+      <div className="box2 fetchbar2">
+        <div className="fb-row">
+          <div className="fb-q"><div className="fb-l">Fill from Yahoo Finance</div>
+            <YahooSearch company={company} action="Fetch" onPick={(m) => setCo((cur) => mergeFetch(cur, m, company, { n, alignTo: lab.hist }))} />
+          </div>
+          <button type="button" className="btn" onClick={() => setPasting(true)}>Paste from Excel</button>
+        </div>
+        {c._fetched ? <FetchNote f={c._fetched} company={company} /> : <div className="fb-s">Search a listed company to fill {n} years of statements, or paste them from Excel. Everything below stays editable.</div>}
+      </div>
+      <div className="box2 tiles5">
+        <div>{F('dcf.company.ticker', { inline: true, label: 'NSE / BSE ticker' })}</div>
+        <div>{F('dcf.company.price', { inline: true, label: 'Share price' })}</div>
+        <div>{F('dcf.company.shares', { inline: true, label: 'Diluted shares' })}</div>
+        <div><span className="tl">Market cap <em>· worked out</em></span><b>{mcap !== null ? `${sym}${fmtNum(mcap, 0, locale)} ${unit}` : '—'}</b></div>
+        <div><span className="tl">Net debt {lab.hist[lab.hist.length - 1]} <em>· worked out</em></span><b>{fin(nd) ? `${sym}${fmtNum(nd, 0, locale)} ${unit}` : '—'}</b></div>
+      </div>
+      <div className="hint">✎ Click any blue number to change it · paste a block of numbers straight from Excel · the trend and CAGR update as you type</div>
+      <StatementPanels page={c.page} onChange={(page) => setCo((cur) => ({ ...cur, page }))} n={n} labels={lab.hist} toggle={S(data).lease === 0 ? 0 : 1} company={company} />
+      {pasting && (
+        <PasteDialog mode="page" page={c.page} n={n} columns={lab.hist.map((l, i) => ({ id: i, label: l }))}
+          onApply={(pg) => setCo((cur) => ({ ...cur, page: pg }))} onClose={() => setPasting(false)} />
+      )}
+    </>
   );
 }
 
@@ -167,6 +274,8 @@ export const dcfCompanyStep = () => ({
   ],
   Extra: CompanyExtra,
   extraBelow: true,
+  Layout: DcfCompanyLayout,
+  summary: (data, ctx) => { const l = labelsOf(data, ctx.company).hist; return l.length ? `${l[0]}–${l[l.length - 1]}` : null; },
   validate: (data, ctx) => latestYearErrors(resultOf(ctx.company, data), ctx.company, 'the forecast'),
 });
 
@@ -189,7 +298,7 @@ function AssumptionsExtra({ data, setData, company }) {
     <div className="step-tools">
       <div className="tool-card">
         <div className="tool-h">Forecast drivers</div>
-        <DriversGrid drivers={data.dcf.drivers} onChange={setDrivers} m={m} labels={r.labels} refs={r.ref} locale={locale} unitLabel={unit} defs={dcfDriverDefs(r.cf)} emptyHist={emptyHistYears(r)} />
+        <DriversView Grid={DriversGrid} drivers={data.dcf.drivers} onChange={setDrivers} m={m} labels={r.labels} refs={r.ref} locale={locale} unitLabel={unit} defs={dcfDriverDefs(r.cf)} emptyHist={emptyHistYears(r)} />
       </div>
       <div className="tool-card">
         <div className="tool-h">What the drivers give <span className="fld-opt">{unit}</span></div>
@@ -216,6 +325,7 @@ export const dcfDriversStep = () => ({
   fields: () => [],
   Extra: AssumptionsExtra,
   extraBelow: true,
+  summary: (data) => `${dcfDriverDefs(S(data).cf || 'fcff').filter((d) => d.key).length} drivers × ${nFcst(data)} years`,
 });
 
 /* ============================ Discount rate ============================ */
@@ -280,6 +390,90 @@ function RateReadout({ data, company }) {
   );
 }
 
+/** The teal "Value per share, live" card of the approved DCF samples. */
+export function DcfLiveCard({ company, data, extra = [] }) {
+  const r = resultOf(company, data);
+  const v = r?.valuation;
+  const locale = CURRENCIES[company.currency]?.locale;
+  const sym = CURRENCIES[company.currency]?.symbol || '';
+  const unit = UNITS[company.unit] || '';
+  const px = data.dcf?.company?.price;
+  const ps = v && fin(v.perShare) ? v.perShare : null;
+  const gap = ps !== null && fin(px) && px > 0 ? ps / px - 1 : null;
+  const m = (x) => (fin(x) ? `${sym}${fmtNum(x, 0, locale)} ${unit}` : '—');
+  return (
+    <div className="live2">
+      <div className="live2-l">Value per share, live</div>
+      <div className="live2-v"><CountUp>{ps !== null ? `${sym}${fmtNum(ps, 2, locale)}` : '—'}</CountUp></div>
+      {gap !== null && <div className={`live2-g ${gap >= 0 ? 'up' : 'dn'}`}>{gap >= 0 ? '▲' : '▼'} {Math.abs(gap * 100).toFixed(1)}% vs {sym}{fmtNum(px, 2, locale)}</div>}
+      <div className="live2-kv"><span>Enterprise value</span><b>{m(v?.ev)}</b></div>
+      <div className="live2-kv"><span>Equity value</span><b>{m(v?.equity)}</b></div>
+      <div className="live2-kv"><span>{r?.wacc ? 'WACC' : 'Cost of equity'}</span><b>{r ? pct2(r.wacc ? r.wacc.wacc : r.coe.ke) : '—'}</b></div>
+      {extra.map(([a, b]) => <div className="live2-kv" key={a}><span>{a}</span><b>{b}</b></div>)}
+    </div>
+  );
+}
+
+/** Discount rate exactly as the approved sample (DCF page 4, option A): the rate as building blocks. */
+function DcfRateLayout({ data, setData, company, F, has, ctx }) {
+  const s = S(data);
+  const r = resultOf(company, data);
+  const coe = r?.coe, w = r?.wacc;
+  const p = (x) => (fin(x) ? `${(x * 100).toFixed(1)}%` : '—');
+  const capm = s.coe !== 'buildup';
+  const parts = capm
+    ? [{ l: `Risk-free ${p(coe?.rf)}`, v: coe?.rf, c: 'a' }, { l: `Beta ${fin(coe?.beta) ? coe.beta.toFixed(2) : '—'} × ERP ${p(coe?.erp)} = ${fin(coe?.beta) && fin(coe?.erp) ? p(coe.beta * coe.erp) : '—'}`, v: fin(coe?.beta) && fin(coe?.erp) ? coe.beta * coe.erp : 0, c: 'b' }]
+    : [['Risk-free', 'rf'], ['ERP', 'erp'], ['Size', 'size'], ['Industry', 'industry'], ['Specific', 'specific'], ['Country', 'country']].map(([l, k], i) => ({ l: `${l} ${p(coe?.[k])}`, v: coe?.[k], c: 'abcdef'[i] }));
+  const tot = parts.reduce((a, x) => a + (fin(x.v) && x.v > 0 ? x.v : 0), 0) || 1;
+  return (
+    <div className="gLb">
+      <div className="col16">
+        <div className="box2">
+          <h3>Cost of equity · {capm ? 'CAPM' : 'Build-up'}</h3>
+          <div className="box2-s">{capm ? 'risk-free + beta × equity risk premium' : 'risk-free + equity risk premium + size, industry, company and country premia'}</div>
+          <div className="stack">{parts.filter((x) => fin(x.v) && x.v > 0).map((x) => <div key={x.l} className={`stk ${x.c}`} style={{ flex: x.v / tot }} title={x.l}>{x.l}</div>)}</div>
+          <div className="stack-t">Ke {p(coe?.ke)}</div>
+          <div className="g3f">
+            {capm ? <>{F('dcf.capm.rf', { label: 'Risk-free rate' })}{F('dcf.capm.erp', { label: 'Equity risk premium' })}{F('dcf.capm.beta', { label: 'Beta' })}{F('dcf.capm.peerBeta')}{F('dcf.capm.targetDe')}{F('dcf.capm.taxRate')}</>
+              : <>{F('dcf.buildup.rf')}{F('dcf.buildup.erp')}{F('dcf.buildup.size')}{F('dcf.buildup.industry')}{F('dcf.buildup.specific')}{F('dcf.buildup.country')}</>}
+          </div>
+          {capm && F('dcf.capm.betaMode', { row: true, label: 'Beta from', sub: 'type a levered beta, or re-lever a peer unlevered beta (Hamada)' })}
+        </div>
+        {capm && <RateExtra data={data} setData={setData} />}
+        {has('dcf.wacc.kd') && (
+          <div className="box2">
+            <h3>Cost of debt</h3>
+            <div className="stack" style={{ width: `${Math.min(100, Math.max(30, (w?.kdAfter || 0) / (coe?.ke || 1) * 100))}%` }}><div className="stk d" style={{ flex: 1 }}>{p(w?.kd)} × (1 − {p(w?.taxRate)}) = {p(w?.kdAfter)} after tax</div></div>
+            <div className="g3f">{F('dcf.wacc.kd', { label: 'Pre-tax cost of debt' })}{F('dcf.wacc.taxRate', { label: 'Marginal tax rate' })}{F('dcf.wacc.targetWd', { label: 'Target D / (D + E)' })}</div>
+          </div>
+        )}
+        {has('dcf.wacc.nonOpOverride') && (
+          <div className="box2">
+            <h3>Overrides <span className="fa" style={{ fontWeight: 500 }}>optional</span></h3>
+            <div className="g2f">{F('dcf.wacc.nonOpOverride', { label: 'Non-operating investments' })}{F('dcf.wacc.netDebtOverride', { label: 'Net debt at the valuation date' })}</div>
+          </div>
+        )}
+      </div>
+      <div className="col16 stick">
+        <div className="box2 c">
+          <div className="lbl">{w ? 'WACC' : 'Cost of equity'}</div>
+          <div className="big2"><CountUp>{w ? p(w.wacc) : p(coe?.ke)}</CountUp></div>
+          {w && (
+            <>
+              <svg viewBox="0 0 120 120" className="wd-donut" aria-hidden="true">
+                <circle cx="60" cy="60" r="44" className="wd-bg" />
+                <circle cx="60" cy="60" r="44" className="wd-eq" strokeDasharray={`${(w.targetWe || 0) * 276.5} 276.5`} transform="rotate(-90 60 60)" />
+              </svg>
+              <div className="fa" style={{ fontSize: 12.5 }}>{p(w.targetWe)} equity at {p(coe?.ke)} · {p(w.targetWd)} debt at {p(w.kdAfter)}</div>
+            </>
+          )}
+        </div>
+        <DcfLiveCard company={company} data={data} />
+      </div>
+    </div>
+  );
+}
+
 export const dcfRateStep = () => ({
   id: 'dcfRate',
   title: 'Discount rate',
@@ -330,6 +524,8 @@ export const dcfRateStep = () => ({
   Extra: RateExtra,
   extraBelow: true,
   Readout: RateReadout,
+  Layout: DcfRateLayout,
+  summary: (data, ctx) => { const r = resultOf(ctx.company, data); return r ? (r.wacc ? `WACC ${pct2(r.wacc.wacc)}` : `Ke ${pct2(r.coe.ke)}`) : null; },
 });
 
 /* ============================ Terminal value ============================ */
@@ -352,6 +548,69 @@ function TerminalReadout({ data, company }) {
   );
 }
 
+/** Terminal value exactly as the approved sample (DCF page 5, option A): both methods side by side, then the sensitivity. */
+function DcfTerminalLayout({ data, setData, company, F }) {
+  const s = S(data);
+  const locale = CURRENCIES[company.currency]?.locale;
+  const sym = CURRENCIES[company.currency]?.symbol || '';
+  const unit = UNITS[company.unit] || '';
+  const setS = (patch) => setData((d) => ({ ...d, dcf: { ...d.dcf, settings: { ...d.dcf.settings, ...patch } } }));
+  const withTv = (tv) => resultOf(company, { ...data, dcf: { ...data.dcf, settings: { ...s, tv } } });
+  const rG = withTv('gordon'), rX = withTv('exit');
+  const per = (r) => (r && fin(r.valuation?.perShare) ? `${sym}${fmtNum(r.valuation.perShare, 2, locale)}` : '—');
+  const mult = exitMultipleName(s.cf || 'fcff');
+  const cur = s.tv === 'exit' ? rX : rG;
+  const v = cur?.valuation;
+  const card = (tv, title, input, desc, r) => {
+    const on = (s.tv || 'gordon') === tv;
+    return (
+      <div className={`opt2${on ? ' on' : ''}`} onClick={() => !on && setS({ tv })} role="radio" aria-checked={on} tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' && !on) setS({ tv }); }}>
+        <div className="opt2-k"><span className="radio2" />{title}{on ? ' · in use' : ''}</div>
+        <div className="opt2-r">
+          <div onClick={(e) => e.stopPropagation()}>{input}</div>
+          <div><div className="lbl">{on ? 'Gives' : 'Would give'}</div><div className="mid2"><CountUp>{per(r)}</CountUp> <span>a share</span></div></div>
+        </div>
+        <p>{desc}</p>
+      </div>
+    );
+  };
+  const gInput = s.tv === 'exit'
+    ? <label className="opt2-f"><span>Terminal growth</span><NumBox value={s.growth ?? null} onChange={(x) => setS({ growth: x })} suffix="%" /></label>
+    : F('dcf.settings.growth', { label: 'Terminal growth' });
+  const xInput = s.tv === 'exit'
+    ? F('dcf.settings.exitMultiple', { label: `Exit ${mult}` })
+    : <label className="opt2-f"><span>Exit {mult}</span><NumBox value={s.exitMultiple ?? null} onChange={(x) => setS({ exitMultiple: x })} suffix="x" /></label>;
+  const gv = rG?.valuation, xv = rX?.valuation;
+  return (
+    <>
+      <div className="g2b">
+        {card('gordon', 'GORDON GROWTH', gInput,
+          gv && fin(gv.tv) ? `Terminal value ${sym}${fmtNum(gv.tv, 0, locale)} ${unit} · ${fin(gv.tvShare) ? (gv.tvShare * 100).toFixed(1) : '—'}% of value · implied exit ${mult} ${fin(gv.implied) ? gv.implied.toFixed(1) + 'x' : 'NM'}` : 'Final-year cash flow × (1 + g) ÷ (rate − g); growth must stay below the rate.', rG)}
+        {card('exit', 'EXIT MULTIPLE', xInput,
+          xv && fin(xv.tv) ? `Terminal value ${sym}${fmtNum(xv.tv, 0, locale)} ${unit} · implied perpetual growth ${fin(xv.implied) ? pct2(xv.implied) : 'NM'}` : `Final-year ${s.cf === 'fcff' || !s.cf ? 'EBITDA' : 'PAT'} × an exit ${mult} — take it from your comps or precedent deals.`, rX)}
+      </div>
+      <div className="gLb">
+        <div className="box2">
+          <h3>Sensitivity preview</h3>
+          <div className="box2-s">value per share as the {cur?.wacc ? 'WACC' : 'cost of equity'} and {s.tv === 'exit' ? 'exit multiple' : 'growth'} move by the steps · base outlined</div>
+          {cur?.sens ? (
+            <div style={{ marginTop: 10 }}>
+              <Heatmap corner={`${cur.cf === 'fcff' ? 'WACC' : 'Ke'} ↓ · ${s.tv === 'exit' ? 'multiple' : 'g'} →`} rowLabels={cur.sens.rows} colLabels={cur.sens.cols}
+                grid={cur.sens.grid.map((row) => row.map((x) => (fin(x) ? x : NaN)))}
+                fmt={(x) => fmtNum(x, 1, locale)} fmtRow={(x) => fmtTpl(x, 'pct', locale)} fmtCol={(x) => (s.tv === 'exit' ? fmtTpl(x, 'x', locale) : fmtTpl(x, 'pct', locale))} />
+            </div>
+          ) : <div className="empty-s">Fill the earlier steps to see the sensitivity.</div>}
+        </div>
+        <div className="box2">
+          <h3>Sensitivity steps</h3>
+          <div className="col12">{F('dcf.settings.rateStep', { label: 'Discount-rate step' })}{F('dcf.settings.gStep', { label: 'Terminal-growth step' })}{F('dcf.settings.multStep', { label: 'Exit-multiple step' })}</div>
+          {v && fin(v.tvShare) && v.tvShare > 0.75 && <div className="warn2">{(v.tvShare * 100).toFixed(1)}% of the value is terminal — above ~75% the answer leans on this one input.</div>}
+        </div>
+      </div>
+    </>
+  );
+}
+
 export const dcfTerminalStep = () => ({
   id: 'dcfTerminal',
   title: 'Terminal value',
@@ -369,6 +628,12 @@ export const dcfTerminalStep = () => ({
     ];
   },
   Readout: TerminalReadout,
+  Layout: DcfTerminalLayout,
+  summary: (data, ctx) => {
+    const s = S(data); const r = resultOf(ctx.company, data); const v = r?.valuation;
+    if (s.tv === 'exit') return fin(s.exitMultiple) ? `exit ${s.exitMultiple}x` : null;
+    return fin(s.growth) ? `g ${s.growth}%${v && fin(v.tvShare) ? ` · ${(v.tvShare * 100).toFixed(0)}% of value` : ''}` : null;
+  },
   // the user's choice: a Gordon growth at or above the discount rate is stopped here, not carried
   // to an NM output (the template's own NM handling stays in the engine and the workbook)
   validate: (data, ctx) => {

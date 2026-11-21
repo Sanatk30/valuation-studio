@@ -14,6 +14,7 @@ import {
 import { computeComps } from '../lib/engine/comps.js';
 import { computePrecedent } from '../lib/engine/precedent.js';
 import { combinedStep } from './combined.jsx';
+import { IpoFinancingLayout, IpoPricingLayout, IpoStructureLayout } from './steps/ipoLayouts.jsx';
 import { toEngineInput } from '../store/methodModel.js';
 import { projectOperations } from '../lib/engine/drivers.js';
 import { computeDcfT, templateName } from '../lib/engine/dcfTemplate.js';
@@ -127,7 +128,7 @@ export const METHODS = {
     },
   },
   ipo: {
-    steps: [companyStep(PROJ), forecastStep(), ipoFinancingStep(), ipoPricingStep(), ipoStructureStep()],
+    steps: [companyStep(PROJ), forecastStep(), { ...ipoFinancingStep(), Layout: IpoFinancingLayout }, { ...ipoPricingStep(), Layout: IpoPricingLayout }, { ...ipoStructureStep(), Layout: IpoStructureLayout }],
     Output: out.ipo,
     preview(def, a, states, company) {
       const rows = [];

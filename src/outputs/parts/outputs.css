@@ -22,7 +22,7 @@
 /* ---------------- collapsible detail sections ---------------- */
 .qo-sections { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
 .qo-coll {
-  border: 1px solid var(--border); border-radius: var(--r, 12px);
+  border: 1px solid var(--border); border-radius: var(--r);
   background: var(--surface); box-shadow: var(--shadow-1);
 }
 .qo-coll-head {
@@ -30,19 +30,19 @@
   width: 100%; box-sizing: border-box; text-align: left;
   display: flex; align-items: center; gap: 10px; padding: 12px 16px;
   cursor: pointer; color: var(--muted); font-size: 13.5px; font-weight: 650; letter-spacing: -0.005em;
-  border-radius: var(--r, 12px);
+  border-radius: var(--r);
 }
 .qo-coll-head:hover { color: var(--text); background: var(--accent-tint); }
 .qo-coll-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.qo-coll.open > .qo-coll-head { color: var(--text); border-bottom: 1px solid var(--border); border-radius: var(--r, 12px) var(--r, 12px) 0 0; }
+.qo-coll.open > .qo-coll-head { color: var(--text); border-bottom: 1px solid var(--border); border-radius: var(--r) var(--r) 0 0; }
 .qo-chev { font-size: 9px; color: var(--faint); transition: transform 0.2s var(--ease); width: 10px; flex: none; }
 .qo-coll.open .qo-chev { transform: rotate(90deg); color: var(--accent-2); }
 .qo-coll-tag {
-  font-size: 9.5px; font-weight: 750; letter-spacing: 0.08em; flex: none;
+  font-size: 12px; font-weight: 750; letter-spacing: 0.08em; flex: none;
   color: var(--accent-2); background: var(--accent-soft);
-  border: 1px solid var(--border-strong); border-radius: 6px; padding: 2px 6px;
+  border: 1px solid var(--border-strong); border-radius: var(--r-sm); padding: 2px 6px;
 }
-.qo-coll-note { margin-left: auto; font-size: 11px; font-weight: 500; color: var(--faint); text-align: right; }
+.qo-coll-note { margin-left: auto; font-size: 12px; font-weight: 500; color: var(--faint); text-align: right; }
 .qo-coll-body { padding: 14px 16px 16px; }
 .qo-coll-body > * + * { margin-top: 14px; }
 .qo-coll-body .chartbox { margin-bottom: 0; }
@@ -50,16 +50,16 @@
 
 /* a titled block inside a section */
 .qo-sub { font-size: 12px; font-weight: 700; color: var(--text); margin: 0 0 8px; letter-spacing: -0.005em; }
-.qo-note { font-size: 11.5px; color: var(--faint); line-height: 1.6; }
+.qo-note { font-size: 12px; color: var(--faint); line-height: 1.6; }
 .qo-note b { color: var(--muted); }
 
 /* ---------------- sensitivity step inputs ---------------- */
 .qo-steps { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 14px; margin: 0 0 10px; }
 .qo-step { display: flex; flex-direction: column; gap: 4px; }
-.qo-step label { font-size: 10px; font-weight: 650; letter-spacing: 0.05em; text-transform: uppercase; color: var(--faint); }
+.qo-step label { font-size: 12px; font-weight: 650; letter-spacing: 0.05em; text-transform: uppercase; color: var(--faint); }
 .qo-step-box {
   display: inline-flex; align-items: center; gap: 6px;
-  background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 3px 8px;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 3px 8px;
 }
 .qo-step-box:focus-within { border-color: var(--accent); }
 .qo-step-box.bad { border-color: var(--red); }
@@ -67,10 +67,10 @@
   width: 58px; background: none; border: 0; outline: none; color: var(--text);
   font: inherit; font-size: 12.5px; text-align: right; font-variant-numeric: tabular-nums;
 }
-.qo-step-box span { font-size: 11px; color: var(--faint); white-space: nowrap; }
+.qo-step-box span { font-size: 12px; color: var(--faint); white-space: nowrap; }
 .qo-step-reset {
   appearance: none; border: 0; background: none; font: inherit; cursor: pointer;
-  font-size: 10.5px; color: var(--accent-2); padding: 2px 0; align-self: flex-start;
+  font-size: 12px; color: var(--accent-2); padding: 2px 0; align-self: flex-start;
 }
 .qo-step-reset:hover { text-decoration: underline; }
 
@@ -87,11 +87,39 @@ table.fin td.na { color: var(--faint); }
 /* segmented toggles on output pages (Y / Q, statement picker) */
 .qo-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0 0 12px; }
 .qo-bar .seg { margin: 0; }
-.qo-hint { font-size: 11px; color: var(--faint); }
+.qo-hint { font-size: 12px; color: var(--faint); }
 
 /* history-years stepper */
-.qo-years { display: inline-flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--muted); }
+.qo-years { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
 .qo-years select {
   background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
-  border-radius: 8px; padding: 4px 8px; font: inherit; font-size: 12px;
+  border-radius: var(--r-sm); padding: 4px 8px; font: inherit; font-size: 12px;
 }
+
+/* ---------------- O2 header: description line + key-figures strip ---------------- */
+.qo-intro { margin: 0 0 12px; }
+.qo-eyebrow { font-size: 12px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: var(--accent); }
+.qo-sub { font-size: 12.5px; color: var(--muted); line-height: 1.55; margin-top: 4px; max-width: 980px; }
+.qstrip {
+  display: flex; flex-wrap: wrap; gap: 1px; background: var(--border);
+  border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; margin-bottom: 14px; box-shadow: var(--shadow-1);
+}
+.qs-cell { flex: 1 1 165px; background: var(--surface); padding: 12px 16px; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.qs-cell.qs-lead { flex: 1.5 1 230px; box-shadow: inset 3px 0 0 var(--accent); }
+.qs-k { font-size: 12px; color: var(--muted); }
+.qs-v { font-size: 18px; font-weight: 650; letter-spacing: -0.015em; font-variant-numeric: tabular-nums; color: var(--text); }
+.qs-cell.qs-lead .qs-v { font-size: 25px; letter-spacing: -0.025em; }
+.qs-v.pos { color: var(--green); }
+.qs-v.neg { color: var(--red); }
+.qs-v.muted { color: var(--faint); }
+.qs-s { font-size: 12px; color: var(--faint); line-height: 1.45; }
+
+/* ---------------- O2 sections: one bordered list ---------------- */
+.qo-sections { gap: 0; border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); box-shadow: var(--shadow-1); margin-top: 4px; }
+.qo-sections > .qo-coll { border: 0; border-radius: 0; box-shadow: none; background: none; }
+.qo-sections > .qo-coll + .qo-coll { border-top: 1px solid var(--border); }
+.qo-sections > .qo-coll > .qo-coll-head { border-radius: 0; padding: 13px 18px; }
+.qo-sections > .qo-coll:first-child > .qo-coll-head { border-radius: var(--r) var(--r) 0 0; }
+.qo-sections > .qo-coll:last-child:not(.open) > .qo-coll-head { border-radius: 0 0 var(--r) var(--r); }
+.qo-sections > .qo-coll.open > .qo-coll-head { border-radius: 0; background: var(--surface-2); }
+.qo-sections > .qo-coll > .qo-coll-body { padding: 16px 18px 18px; }

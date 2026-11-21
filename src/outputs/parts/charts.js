@@ -6,13 +6,14 @@
  *
  * Missing values are passed to ECharts as null (a gap), never as 0.
  */
-import { themed, xCat, yVal, tipBy, tipItem, vgrad, agrad, refMarkLine, valueLabels, COL } from '../../lib/chartkit.js';
+import { themed, xCat, yVal, tipBy, tipItem, tipBox, tipHead, tipRow, vgrad, agrad, alpha, axisName, refMarkLine, valueLabels, footballOption, fitScatterOption, COL } from '../../lib/chartkit.js';
 import { fmtPct, fmtX } from '../../lib/format.js';
 import { fin, rnd } from './format.js';
 
-export const barStyle = (c, r = [4, 4, 0, 0]) => ({ color: vgrad(c), borderRadius: r });
-export const lineSeries = (name, c, data, { area = false, smooth = true, width = 2.4, symbol = true, dashed = false, yAxisIndex } = {}) => ({
-  name, type: 'line', smooth, showSymbol: symbol, symbolSize: 6,
+export const barStyle = (c, r = [2, 2, 0, 0]) => ({ color: vgrad(c), borderRadius: r });
+export const lineSeries = (name, c, data, { area = false, smooth = false, width = 2.2, symbol = true, dashed = false, yAxisIndex, end = null } = {}) => ({
+  name, type: 'line', smooth, showSymbol: symbol, symbolSize: 7, symbol: 'circle',
+  ...(end ? { endLabel: { show: true, color: c, fontFamily: 'Inter, sans-serif', fontSize: 12, fontWeight: 600, distance: 8, formatter: (p) => end(Array.isArray(p.value) ? p.value[p.value.length - 1] : p.value) } } : {}),
   lineStyle: { width, color: c, ...(dashed ? { type: 'dashed' } : {}) }, itemStyle: { color: c },
   ...(area ? { areaStyle: { color: agrad(c) } } : {}),
   ...(yAxisIndex !== undefined ? { yAxisIndex } : {}),
@@ -31,23 +32,51 @@ export function pctl(arr, q) {
   return s[lo] + (s[hi] - s[lo]) * (i - lo);
 }
 
-/** Revenue & EBITDA bars with the EBITDA-margin line (projection years). */
-export function projectionOption(f, labels, ops) {
+/**
+ * Revenue & EBITDA bars with the EBITDA-margin line (right axis). Optional:
+ *   nHist  — the first nHist columns are actuals: lighter bars, and the forecast
+ *            columns are shaded and labelled "Forecast"
+ *   cash   — { name, data } a cash-flow line (e.g. FCFF) over the forecast years
+ */
+export function projectionOption(f, labels, ops, { nHist = 0, cash = null } = {}) {
   const n = labels.length;
   const margins = ops.margin.filter(fin);
   const avg = margins.length ? margins.reduce((x, v) => x + v, 0) / margins.length : NaN;
+  const histBar = (c, i) => (i < nHist ? { itemStyle: { color: alpha(c, 0.45), borderRadius: [2, 2, 0, 0] } } : {});
+  const fcstArea = nHist > 0 && nHist < n ? {
+    markArea: {
+      silent: true, itemStyle: { color: COL.band },
+      label: { show: true, position: 'insideTop', color: COL.axis, fontSize: 12.5, fontWeight: 600, distance: 6 },
+      data: [[{ name: 'Forecast →', xAxis: labels[nHist] }, { xAxis: labels[n - 1] }]],
+    },
+  } : {};
+  // compound growth of revenue from the last actual year to the last forecast year
+  const r0 = ops.revenue[nHist - 1], r1 = ops.revenue[n - 1];
+  const cagr = nHist > 0 && nHist < n && r0 > 0 && r1 > 0 ? (Math.pow(r1 / r0, 1 / (n - nHist)) - 1) * 100 : NaN;
+  const cagrMark = fin(cagr) ? {
+    markPoint: {
+      symbol: 'circle', symbolSize: 0, silent: true, animation: false,
+      label: { show: true, position: 'top', distance: 26, color: COL.axisStrong, fontSize: 12, fontWeight: 600, formatter: `Revenue CAGR ${labels[nHist - 1]}–${labels[n - 1]}: ${fmtPct(cagr, 1)}` },
+      data: [{ coord: [labels[n - 1], rnd(r1)] }],
+    },
+  } : {};
   return themed({
     tooltip: tipBy({ 'EBITDA margin': (v) => fmtPct(v, 1) }, f.num),
     xAxis: xCat(labels),
-    yAxis: [moneyAxis(f), yVal({ position: 'right', splitLine: { show: false }, axisLabel: { color: COL.gold, formatter: '{value}%' } })],
+    yAxis: [
+      moneyAxis(f, { ...axisName(f.unitLabel, 14) }),
+      yVal({ position: 'right', splitLine: { show: false }, ...axisName('margin', 14), axisLabel: { color: COL.gold, formatter: '{value}%' } }),
+    ],
     series: [
-      barSeries('Revenue', COL.tealDeep, ops.revenue.map((v) => rnd(v))),
-      barSeries('EBITDA', COL.teal, ops.ebitda.map((v) => rnd(v)), { label: valueLabels(f.num, n) }),
+      { ...barSeries('Revenue', COL.tealDeep, ops.revenue.map((v, i) => ({ value: rnd(v), ...histBar(COL.tealDeep, i) }))), ...fcstArea },
+      barSeries('EBITDA', COL.teal, ops.ebitda.map((v, i) => ({ value: rnd(v), ...histBar(COL.teal, i) })), { label: valueLabels(f.num, n) }),
+      ...(cash ? [lineSeries(cash.name, COL.green, cash.data.map((v) => (fin(v) ? rnd(v) : null)), { width: 2.4, end: (v) => `${cash.name} ${f.num(v)}` })] : []),
       {
-        ...lineSeries('EBITDA margin', COL.gold, ops.margin.map((v) => rnd(v, 2)), { yAxisIndex: 1 }),
-        ...(fin(avg) ? { markLine: { silent: true, symbol: 'none', lineStyle: { color: COL.gold, type: 'dashed', width: 1, opacity: 0.6 }, label: { color: COL.gold, fontSize: 9.5, formatter: `avg ${fmtPct(avg, 1)}`, position: 'insideEndTop' }, data: [{ yAxis: +avg.toFixed(2) }] } } : {}),
+        ...lineSeries('EBITDA margin', COL.gold, ops.margin.map((v) => rnd(v, 2)), { yAxisIndex: 1, dashed: true, width: 2, end: (v) => `margin ${fmtPct(v, 1)}` }),
+        ...(fin(avg) ? { markLine: { silent: true, symbol: 'none', lineStyle: { color: COL.gold, type: 'dotted', width: 1, opacity: 0.7 }, label: { color: COL.gold, fontSize: 12, formatter: `avg ${fmtPct(avg, 1)}`, position: 'insideEndBottom' }, data: [{ yAxis: +avg.toFixed(2) }] } } : {}),
       },
     ],
+    grid: { left: 4, right: 120, top: 72, bottom: n > 9 ? 58 : 16, containLabel: true },
   }, { zoom: n > 9 });
 }
 
@@ -61,24 +90,34 @@ export function boxOption(groups) {
   const box = (v) => [Math.min(...v), pctl(v, 0.25), pctl(v, 0.5), pctl(v, 0.75), Math.max(...v)];
   return themed({
     tooltip: {
-      trigger: 'item', backgroundColor: '#161B25', borderColor: '#2A3242', borderWidth: 1, textStyle: { color: COL.text },
+      trigger: 'item', ...tipBox(),
       formatter: (p) => {
         const d = p.value;
-        return Array.isArray(d) && d.length >= 6
-          ? `<div style="font-weight:700;color:#AAB4C5;font-size:11px;margin-bottom:4px">${p.name}</div><div style="font-family:Inter,sans-serif">max ${fmtX(d[5], 1)}<br>Q3 ${fmtX(d[4], 1)}<br>median ${fmtX(d[3], 1)}<br>Q1 ${fmtX(d[2], 1)}<br>min ${fmtX(d[1], 1)}</div>`
-          : '';
+        if (!Array.isArray(d) || d.length < 6) return '';
+        const n = g.find((x) => x.label === p.name)?.v.length;
+        return tipHead(`${p.name}${n ? ` · ${n} value${n === 1 ? '' : 's'}` : ''}`)
+          + tipRow(null, 'High', fmtX(d[5], 1)) + tipRow(null, 'Upper quartile', fmtX(d[4], 1))
+          + tipRow(COL.teal, 'Median', `<b>${fmtX(d[3], 1)}</b>`) + tipRow(null, 'Lower quartile', fmtX(d[2], 1)) + tipRow(null, 'Low', fmtX(d[1], 1));
       },
     },
     legend: { show: false },
     xAxis: xCat(g.map((x) => x.label)),
     yAxis: yVal({ scale: true, axisLabel: { color: COL.axis, formatter: '{value}x' } }),
-    series: [{ type: 'boxplot', data: g.map((x) => box(x.v)), itemStyle: { color: 'rgba(108,140,255,0.14)', borderColor: COL.teal, borderWidth: 1.6 }, emphasis: { itemStyle: { borderColor: COL.gold } } }],
+    series: [
+      { name: 'Distribution', type: 'boxplot', boxWidth: [14, 40], data: g.map((x) => box(x.v)), itemStyle: { color: alpha(COL.teal, 0.16), borderColor: COL.teal, borderWidth: 1.6 }, emphasis: { itemStyle: { borderColor: COL.gold } } },
+      { name: 'Median', type: 'scatter', symbol: 'rect', symbolSize: [26, 2], silent: true, itemStyle: { color: COL.gold },
+        label: { show: true, position: 'right', distance: 22, color: COL.axisStrong, fontSize: 12, fontWeight: 600, formatter: (p) => `${(+p.value[1]).toFixed(1)}x` },
+        data: g.map((x) => [x.label, +pctl(x.v, 0.5).toFixed(3)]) },
+      // each value as a dot beside its box, so a small peer set shows every observation
+      { name: 'Values', type: 'scatter', symbolSize: 6, silent: true, itemStyle: { color: alpha(COL.text, 0.55) },
+        data: g.flatMap((x) => x.v.map((v) => [x.label, +v.toFixed(3)])) },
+    ],
   });
 }
 
 /** Two stacked 100% bars: pre vs post ownership. */
 export function ownershipOption(existingPostPct, newPostPct) {
-  const lbl = () => ({ show: true, position: 'inside', color: '#fff', fontFamily: 'Inter, sans-serif', fontSize: 10.5, fontWeight: 700, formatter: (p) => (p.value > 4 ? `${p.value}%` : '') });
+  const lbl = () => ({ show: true, position: 'inside', color: COL.onBar, fontFamily: 'Inter, sans-serif', fontSize: 12.5, fontWeight: 700, formatter: (p) => (p.value > 4 ? `${p.value}%` : '') });
   return themed({
     tooltip: tipBy({}, (v) => fmtPct(v, 1)),
     xAxis: xCat(['Pre-IPO', 'Post-IPO'], { axisLabel: { color: COL.axisStrong, fontFamily: 'Inter, sans-serif', fontSize: 12 } }),
@@ -102,4 +141,4 @@ export function stackedOption(f, labels, stacks, { line } = {}) {
   });
 }
 
-export { themed, xCat, yVal, tipBy, tipItem, vgrad, agrad, refMarkLine, valueLabels, COL, moneyAxis, pctAxis };
+export { themed, xCat, yVal, tipBy, tipItem, tipBox, tipHead, tipRow, vgrad, agrad, alpha, axisName, refMarkLine, valueLabels, footballOption, fitScatterOption, COL, moneyAxis, pctAxis };

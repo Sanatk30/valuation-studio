@@ -10,7 +10,9 @@ import Collapsible, { Sections } from './parts/Collapsible.jsx';
 import ChartBox, { EngineError } from './parts/ChartBox.jsx';
 import RegressionSections from './parts/RegressionSections.jsx';
 import { makeFmt, fin, upsidePct, attempt, tone } from './parts/format.js';
-import { boxOption } from './parts/charts.js';
+import { boxOption, fitScatterOption } from './parts/charts.js';
+import { useThemeMode } from '../lib/theme.js';
+
 
 /**
  * Comparable Company Analysis output — the template's Comps Summary (Table 1
@@ -57,15 +59,16 @@ function CompsPage({ a, f, set, c, R, showReg }) {
   const nPeers = c.peers.filter((p) => !p.empty).length;
 
   const ffItems = [
-    ...c.implied.map((r) => ({ label: r.label, low: num(r.price.low), mid: num(r.price.mid), high: num(r.price.high), color: r.key === headline ? '#F5B942' : undefined })),
-    ...(regPrice ? [{ label: `Regression (${R.yDef?.label || R.yVar}, ±1 SE)`, low: regPrice.lo, mid: regPrice.mid, high: regPrice.hi, color: '#22D3EE' }] : []),
+    ...c.implied.map((r) => ({ label: r.label, low: num(r.price.low), mid: num(r.price.mid), high: num(r.price.high), highlight: r.key === headline })),
+    ...(regPrice ? [{ label: `Regression (${R.yDef?.label || R.yVar}, ±1 SE)`, low: regPrice.lo, mid: regPrice.mid, high: regPrice.hi, alt: true }] : []),
   ].map((it) => ({ ...it, low: Math.min(...[it.low, it.mid, it.high].filter(fin)), high: Math.max(...[it.low, it.mid, it.high].filter(fin)) }));
   const ffOk = ffItems.some((it) => fin(it.low) && fin(it.high));
 
+  const theme = useThemeMode();
   const boxOpt = useMemo(() => boxOption(COMPS.COMPS_MULTIPLES.map((m) => ({
     label: COMPS.multipleLabel(m, lab),
     values: c.peers.filter((p) => p.include === 1).map((p) => p.mult[m.key]).filter(fin),
-  }))), [c]); // eslint-disable-line react-hooks/exhaustive-deps
+  }))), [c, theme]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const hRow = c.implied.find((r) => r.key === headline);
   const s = c.summary;
@@ -221,11 +224,23 @@ function SimpleRegressionSection({ a, c, f, locale, lab }) {
     ['Predicted multiple ŷ (−1 SE / +1 SE)', `${fmtTpl(R.yhat, 'x', locale)} (${fmtTpl(R.lo, 'x', locale)} / ${fmtTpl(R.hi, 'x', locale)})`],
     [`Implied price (${f.sym}) (−1 SE / +1 SE)`, `${fmtTpl(R.price.mid, 'n2', locale)} (${fmtTpl(R.price.lo, 'n2', locale)} / ${fmtTpl(R.price.hi, 'n2', locale)})`],
   ];
+  const isN = (v) => typeof v === 'number' && Number.isFinite(v);
+  const scatter = fitScatterOption(
+    R.rows.filter((r) => r.used).map((r) => ({ x: r.x * 100, y: r.y, name: r.name })),
+    {
+      fit: isN(R.slope) ? { slope: R.slope / 100, intercept: R.intercept } : null,
+      target: isN(R.targetX) && isN(R.yhat) ? { x: R.targetX * 100, y: R.yhat, name: a.company?.name || 'Target' } : null,
+      fx: (v) => `${(+v).toFixed(1)}%`, fy: (v) => `${(+v).toFixed(1)}x`, xTitle: xName, yTitle: yName, r2: isN(R.r2) ? R.r2 : NaN,
+    },
+  );
   return (
-    <Collapsible title={`Single-driver regression: ${yName} vs ${xName}`} tag="REGRESSION SHEET">
-      <div className="tablewrap"><table className="fin compact"><tbody>
-        {rows.map(([k, v]) => <tr key={k}><td>{k}</td><td>{v}</td></tr>)}
-      </tbody></table></div>
+    <Collapsible title={`Single-driver regression: ${yName} vs ${xName}`} tag="REGRESSION SHEET" defaultOpen={R.n >= 3}>
+      <div className="grid2">
+        <ChartBox title={`Peers — ${yName} vs ${xName}`} sub={`${R.n} peer${R.n === 1 ? '' : 's'} in the fit${isN(R.r2) ? `, R² ${R.r2.toFixed(2)}` : ''}; the target is the ringed point, on the fitted line`} option={scatter} height={300} empty="Not enough priced peers with both values to plot." />
+        <div className="tablewrap"><table className="fin compact"><tbody>
+          {rows.map(([k, v]) => <tr key={k}><td>{k}</td><td>{v}</td></tr>)}
+        </tbody></table></div>
+      </div>
       <div className="qo-note">
         The Excel export's 'Regression' sheet: ordinary least squares over the included peers whose two values are both numbers (needs at least 3).
         Change the variable codes in the workbook (cells B4 / B5) to try another pair. R² below about 0.5 or a p-value above about 0.10 means the driver explains little — fall back on the median multiple.

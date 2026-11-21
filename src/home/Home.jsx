@@ -1,12 +1,53 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Logo from './Logo.jsx';
+import FlowOverview from './FlowOverview.jsx';
 import { NewCompanyForm, CompanySettings, FY_OPTIONS } from './CompanyForms.jsx';
 import { METHODS } from '../methods/registry.js';
 import { METHOD_META, VALUATION_ORDER, ANALYSIS_ORDER } from '../methods/labels.js';
 import { useCompanyCtx } from '../wizard/MethodPage.jsx';
 import { setActive, resetMethod, updateMethod } from '../store/store.js';
-import { CURRENCIES, UNITS } from '../lib/format.js';
+import { CURRENCIES, UNITS, fmtPrice, fmtNum } from '../lib/format.js';
+import { combinedResult, rowLabel } from '../methods/combined.jsx';
+import { methodMarketPrice } from '../methods/figures.js';
+import FootballField from '../components/FootballField.jsx';
+import LiveChart from '../components/LiveChart.jsx';
+import { donutOption, areaTrendOption } from '../lib/chartkit.js';
+import { useThemeMode } from '../lib/theme.js';
+import { computeDcfT } from '../lib/engine/dcfTemplate.js';
+import { toEngineInput } from '../store/methodModel.js';
 import { effectiveYear1 } from '../lib/period.js';
+
+const fin = Number.isFinite;
+const median = (xs) => {
+  const s = [...xs].sort((x, y) => x - y);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+};
+
+/** A completed method's result in one line for its card (and one row for the snapshot chart). */
+function methodResult(id, record, ctx) {
+  const company = ctx.company;
+  if (id === 'combined') {
+    const res = combinedResult(record.methods.combined?.data || {}, { ...ctx, record });
+    return fin(res.value) ? { text: `${fmtPrice(res.value, company, 2)} / share`, row: { label: 'Combined', low: res.value, mid: res.value, high: res.value, highlight: true } } : null;
+  }
+  const figs = ctx.figuresOf(id) || [];
+  if (!figs.length) return null;
+  const short = METHOD_META[id].short;
+  if (figs.length === 1) {
+    const g = figs[0];
+    return { text: `${fmtPrice(g.value, company, 2)} / share`, row: { label: short, low: fin(g.low) ? g.low : g.value, mid: g.value, high: fin(g.high) ? g.high : g.value } };
+  }
+  const vals = figs.map((g) => g.value);
+  const mid = median(vals);
+  return {
+    text: `${fmtPrice(Math.min(...vals), company, 0)} – ${fmtPrice(Math.max(...vals), company, 0)} (${figs.length} multiples)`,
+    row: { label: `${short} · ${figs.length} multiples`, low: Math.min(...figs.map((g) => (fin(g.low) ? g.low : g.value))), mid, high: Math.max(...figs.map((g) => (fin(g.high) ? g.high : g.value))) },
+  };
+}
+
+const SunIcon = () => <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>;
+const MoonIcon = () => <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M20 14.5A8 8 0 019.5 4a8 8 0 1010.5 10.5z" /></svg>;
 
 const ICONS = {
   dcf: <path d="M3 17l6-6 4 4 8-8M15 7h6v6" />,
@@ -19,121 +60,221 @@ const ICONS = {
   ratios: <><path d="M19 5L5 19" /><circle cx="7" cy="7" r="2.6" /><circle cx="17" cy="17" r="2.6" /></>,
 };
 
-export function TopBar({ state, record, onHome, onNew, onSettings }) {
-  const [open, setOpen] = useState(false);
+const HOME_ICON = <><path d="M3 11l9-7 9 7" /><path d="M5 10v10h14V10" /></>;
+const SETTINGS_ICON = <><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z" /></>;
+const SEARCH_ICON = <><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" /></>;
+const Icon = ({ d }) => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">{d}</svg>;
+
+/**
+ * The app frame: one top bar (the layout the user picked with the flow-map
+ * overview) — the logo, Overview / method with a method switcher, the company
+ * menu, the theme and company settings. No sidebar: the overview map is the
+ * way into every method.
+ */
+export function TopBar({ state, record, method, onOpen, onHome, onNew, onSettings, theme, onTheme }) {
+  const [open, setOpen] = useState(null);   // 'co' | 'm' | null
   const ref = useRef(null);
   useEffect(() => {
     if (!open) return;
-    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(null); };
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
   }, [open]);
   const list = Object.values(state.companies).sort((a, b) => b.updatedAt - a.updatedAt);
-  const fy = record ? FY_OPTIONS.find((o) => o.value === record.fyEndMonth) : null;
-
+  const initials = (record?.name || 'QV').split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
+  const Chevron = () => <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9l6 6 6-6" /></svg>;
   return (
-    <header className="qv-top">
-      <button className="qv-brand" onClick={onHome} title="All methods">
-        <Logo />
-        <span className="qv-word"><b>QUANT</b> VALUE</span>
+    <header className="tb" ref={ref}>
+      <button className="tb-logo" onClick={onHome} title="Overview">
+        <i aria-hidden="true">QV</i><span>Quant Value</span>
       </button>
-      <div className="spacer" />
       {record && (
-        <div className="co-bar" ref={ref}>
-          <button className="co-pill" onClick={() => setOpen(!open)} aria-expanded={open}>
-            <span className="co-name">{record.name}</span>
-            <span className="co-meta">{CURRENCIES[record.currency].symbol} {record.currency} · {UNITS[record.unit]} · Year 1 = {effectiveYear1(record.startYear, record.fyEndMonth)}{fy && fy.value !== 12 ? ` · ${fy.label}` : ''}</span>
-            <span className="chev">▾</span>
+        <nav className="tb-crumb" aria-label="Breadcrumb">
+          {method ? <button onClick={onHome}>Overview</button> : <b>Overview</b>}
+          <span className="tb-sep">/</span>
+          <div className="tb-dd">
+            <button className={`tb-m${method ? ' on' : ''}`} onClick={() => setOpen(open === 'm' ? null : 'm')} aria-expanded={open === 'm'}>
+              {method ? METHOD_META[method].label : 'Open a method'} <Chevron />
+            </button>
+            {open === 'm' && (
+              <div className="tb-menu">
+                <div className="tb-menu-h">Valuation</div>
+                {VALUATION_ORDER.map((id) => <button key={id} className={method === id ? 'on' : ''} onClick={() => { setOpen(null); onOpen(id); }}><Icon d={ICONS[id]} />{METHOD_META[id].label}</button>)}
+                <div className="tb-menu-h">Analysis</div>
+                {ANALYSIS_ORDER.map((id) => <button key={id} className={method === id ? 'on' : ''} onClick={() => { setOpen(null); onOpen(id); }}><Icon d={ICONS[id]} />{METHOD_META[id].label}</button>)}
+              </div>
+            )}
+          </div>
+        </nav>
+      )}
+      <span className="spacer" />
+      <div id="tb-slot" className="tb-slot" />
+      {record && (
+        <div className="tb-dd">
+          <button className="tb-co" onClick={() => setOpen(open === 'co' ? null : 'co')} aria-expanded={open === 'co'} title="Switch company">
+            <i aria-hidden="true">{initials}</i>
+            <span><b>{record.name}</b><small>{record.currency} {UNITS[record.unit]} · FY ends {new Date(2000, (record.fyEndMonth || 12) - 1, 1).toLocaleString('en', { month: 'short' })} · Year 1 {effectiveYear1(record.startYear, record.fyEndMonth)}</small></span>
+            <Chevron />
           </button>
-          {open && (
-            <div className="co-menu">
-              <div className="co-menu-h">Saved companies</div>
+          {open === 'co' && (
+            <div className="tb-menu right">
+              <div className="tb-menu-h">Saved companies</div>
               {list.map((c) => (
-                <button key={c.id} className={c.id === record.id ? 'on' : ''} onClick={() => { setActive(c.id); setOpen(false); onHome(); }}>
+                <button key={c.id} className={c.id === record.id ? 'on' : ''} onClick={() => { setActive(c.id); setOpen(null); onHome(); }}>
                   <span>{c.name}</span><span className="co-meta">{c.currency} · {c.unit}</span>
                 </button>
               ))}
-              <div className="co-menu-sep" />
-              <button onClick={() => { setOpen(false); onNew(); }}>+ New company</button>
-              <button onClick={() => { setOpen(false); onSettings(); }}>Company settings…</button>
+              <div className="tb-menu-sep" />
+              <button onClick={() => { setOpen(null); onNew(); }}>+ New company</button>
+              <button onClick={() => { setOpen(null); onSettings(); }}>Company settings…</button>
             </div>
           )}
         </div>
       )}
+      {onTheme && (
+        <button className="tb-ic" onClick={onTheme} title={theme === 'dark' ? 'Light theme' : 'Dark theme'} aria-label={theme === 'dark' ? 'Light theme' : 'Dark theme'}>
+          {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
+        </button>
+      )}
+      {record && <button className="tb-ic" onClick={onSettings} title="Company settings" aria-label="Company settings"><Icon d={SETTINGS_ICON} /></button>}
     </header>
   );
 }
 
-function MethodCard({ id, record, ctx, onOpen }) {
-  const def = METHODS[id];
-  const meta = METHOD_META[id];
-  const p = ctx.progressOf(id);
-  const n = def.steps.length;
-  const mstate = record.methods[id];
-  const combinedLocked = id === 'combined' && !['dcf', 'comps', 'precedent'].some((m) => ctx.progressOf(m).complete);
-  const status = p.complete
-    ? { cls: 'done', text: 'Complete' }
-    : p.started
-      ? { cls: 'prog', text: `Step ${p.reachable + 1} of ${n} — ${def.steps[p.reachable]?.title}` }
-      : { cls: '', text: combinedLocked ? 'Complete a valuation method first' : `${n} step${n > 1 ? 's' : ''}` };
+const STATUS = (p, n, def, locked) => (p.complete
+  ? { cls: 'done', text: 'Complete', action: 'Open' }
+  : p.started
+    ? { cls: 'prog', text: `Step ${p.reachable + 1} of ${n} · ${def.steps[p.reachable]?.title || ''}`, action: 'Resume' }
+    : { cls: 'none', text: locked ? 'Complete a valuation method first' : 'Not started', action: 'Start' });
 
+/** The market price the completed valuations carry (their Company steps), else the Combined step's. */
+function marketPriceOf(record, ctx) {
+  const fromMethods = ['dcf', 'comps', 'precedent'].map((id) => (ctx.progressOf(id).complete ? methodMarketPrice(id, record.methods[id]?.data) : NaN)).find((v) => fin(v) && v > 0);
+  if (fin(fromMethods)) return fromMethods;
+  const c = record.methods.combined?.data?.combined?.marketPrice;
+  return fin(c) && c > 0 ? c : NaN;
+}
+
+/** One method in the numbered index: name, status, result, gap to the market, the action. */
+/** Mini bar sparkline for a KPI card: teal bars with quiet grey bars between them. */
+function MiniBars({ data }) {
+  const v = data.filter(fin);
+  if (v.length < 2) return null;
+  const max = Math.max(...v.map(Math.abs)) || 1, W = 150, H = 64, n = v.length, gap = W / (n * 2);
   return (
-    <div className={`m-card ${status.cls}${combinedLocked ? ' locked' : ''}`}>
-      <div className="m-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{ICONS[id]}</svg></div>
-      <div className="m-body">
-        <h3>{meta.label}</h3>
-        <p>{meta.blurb}</p>
-        <div className={`m-status ${status.cls}`}>{status.cls === 'done' ? '✓ ' : ''}{status.text}</div>
-      </div>
-      <div className="m-acts">
-        <button
-          className="btn primary sm" disabled={combinedLocked}
-          onClick={() => {
-            // "View output" opens the output, even when a step was last open (an Edit left unsaved)
-            if (p.complete && (mstate?.step ?? 0) < n) updateMethod(record.id, id, (m) => ({ ...m, step: n }));
-            onOpen(id);
-          }}
-        >
-          {p.complete ? 'View output' : p.started ? 'Continue' : 'Start'}
-        </button>
-        {p.started && (
-          <button className="btn ghost sm" onClick={() => { if (confirm(`Start ${meta.label} over? Its inputs are cleared; other methods are untouched.`)) resetMethod(record.id, id); }}>
-            Start over
-          </button>
-        )}
-        {mstate?.updatedAt && p.started && <span className="m-when">edited {new Date(mstate.updatedAt).toLocaleDateString()}</span>}
-      </div>
-    </div>
+    <svg className="mini" viewBox={`0 0 ${W} ${H}`} aria-hidden="true">
+      {v.map((x, i) => {
+        const h = Math.max(4, (Math.abs(x) / max) * (H - 6));
+        const g = Math.max(4, h * 0.62);
+        return (
+          <g key={i}>
+            <rect x={i * 2 * gap + gap * 0.15} y={H - g} width={gap * 0.7} height={g} rx="2.5" className="mb-ghost" />
+            <rect x={(i * 2 + 1) * gap + gap * 0.15} y={H - h} width={gap * 0.7} height={h} rx="2.5" className="mb-bar" />
+          </g>
+        );
+      })}
+    </svg>
   );
 }
 
+/** Mini area sparkline for a KPI card. */
+function MiniArea({ data }) {
+  const v = data.filter(fin);
+  if (v.length < 2) return null;
+  const W = 150, H = 64, lo = Math.min(...v), hi = Math.max(...v), span = hi - lo || 1;
+  const pts = v.map((x, i) => [(i / (v.length - 1)) * W, H - 6 - ((x - lo) / span) * (H - 14)]);
+  const line = pts.map((p) => p.map((c) => c.toFixed(1)).join(',')).join(' ');
+  return (
+    <svg className="mini" viewBox={`0 0 ${W} ${H}`} aria-hidden="true">
+      <defs><linearGradient id="maFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="var(--accent)" stopOpacity=".22" /><stop offset="1" stopColor="var(--accent)" stopOpacity="0" /></linearGradient></defs>
+      <polygon points={`0,${H} ${line} ${W},${H}`} fill="url(#maFill)" />
+      <polyline points={line} fill="none" className="ma-line" />
+    </svg>
+  );
+}
+
+const KPI_ICONS = {
+  value: <><path d="M4 7h16v10H4z" /><path d="M4 11h16" /><circle cx="15.5" cy="14" r="1" /></>,
+  dcf: ICONS.dcf,
+  done: <><path d="M5 12l4 4 10-10" /></>,
+};
+
+/** The DCF's figures the overview shows, when the DCF is complete. */
+function dcfSeries(record, ctx) {
+  if (!ctx.progressOf('dcf').complete) return null;
+  try {
+    const r = computeDcfT(toEngineInput(ctx.company, record.methods.dcf.data));
+    const r0 = r.F.rev[r.n - 1], r1 = r.F.rev[r.F.rev.length - 1], yrs = r.F.rev.length - r.n;
+    return {
+      labels: [...r.labels.hist, ...r.labels.fcst], nHist: r.n, cash: r.flows.cash, tvShare: r.valuation.tvShare,
+      cagr: r0 > 0 && r1 > 0 && yrs > 0 ? Math.pow(r1 / r0, 1 / yrs) - 1 : NaN,
+      rev: r.F.rev, ebitda: r.F.ebitda,
+    };
+  } catch { return null; }
+}
+
+const DONUT = ['#2B7C85', '#5FA8B0', '#9CCBD0', '#C9DFE1', '#E0A33A', '#7C6AC4'];
+const INSIGHT_ICONS = {
+  up: <><path d="M7 17L17 7M9 7h8v8" /></>,
+  down: <><path d="M7 7l10 10M17 9v8H9" /></>,
+  warn: <><path d="M12 3l9 16H3z" /><path d="M12 10v4M12 17h.01" /></>,
+  todo: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
+};
+
+/** The overview: the flow map the user picked (data → methods → combined value). */
 export function Home({ record, onOpen }) {
-  const ctx = useCompanyCtx(record);
-  return (
-    <div className="home">
-      <div className="home-intro">
-        <h1>Choose a valuation method</h1>
-        <p>Each method is independent: it has its own inputs and its own steps. Combined weights the results of the methods you finish.</p>
-      </div>
-      <h2 className="home-sec">Valuation</h2>
-      <div className="m-grid">{VALUATION_ORDER.map((id) => <MethodCard key={id} id={id} record={record} ctx={ctx} onOpen={onOpen} />)}</div>
-      <h2 className="home-sec">Analysis</h2>
-      <div className="m-grid">{ANALYSIS_ORDER.map((id) => <MethodCard key={id} id={id} record={record} ctx={ctx} onOpen={onOpen} />)}</div>
-    </div>
-  );
+  return <FlowOverview record={record} onOpen={onOpen} />;
 }
 
-export function FirstRun() {
+/** First launch (or no company open): the split screen the user approved. */
+export function FirstRun({ state }) {
+  const others = Object.values(state?.companies || {}).sort((a, b) => b.updatedAt - a.updatedAt);
+  const [menu, setMenu] = useState(false);
+  const meth = ['DCF', 'Comps', 'Precedent', 'LBO', 'IPO', '3-Statement', 'Ratios'];
   return (
-    <div className="first-run">
-      <div className="fr-brand">
-        <Logo size={64} />
-        <div>
-          <div className="fr-word"><b>QUANT</b> VALUE</div>
-          <div className="fr-tag">Financial quantitative analysis &amp; value insights</div>
-        </div>
-      </div>
-      <NewCompanyForm />
+    <div className="fr2">
+      <aside className="fr2-side">
+        <div className="fr2-brand"><i>QV</i><div><b>Quant Value</b><small>Financial quantitative analysis &amp; value insights</small></div></div>
+        <h2>Enter the company once.<br />Value it every way.</h2>
+        <p>Every method reads the same figures, and their answers meet in one combined value.</p>
+        <svg className="fr2-map" viewBox="0 0 420 330" aria-hidden="true">
+          {meth.map((m, i) => {
+            const y = 14 + i * 46;
+            return (
+              <g key={m}>
+                <path d={`M118,165 C150,165 150,${y + 15} 182,${y + 15}`} className="w" />
+                <path d={`M282,${y + 15} C300,${y + 15} 300,165 304,165`} className="w2" />
+                <rect x="182" y={y} width="100" height="30" rx="8" className="n" />
+                <text x="194" y={y + 19.5}>{m}</text>
+              </g>
+            );
+          })}
+          <rect x="0" y="140" width="118" height="50" rx="11" className="n" />
+          <text x="12" y="160" className="s">Your company</text>
+          <text x="12" y="178" className="b">one set of figures</text>
+          <rect x="304" y="128" width="116" height="74" rx="13" className="r" />
+          <text x="316" y="150" className="rs">Combined</text>
+          <text x="316" y="172" className="rb">value</text>
+          <text x="316" y="191" className="rs">appears as you go</text>
+        </svg>
+        <div className="fr2-feat"><span>✓ Yahoo Finance fill</span><span>✓ Paste from Excel</span><span>✓ Excel download</span></div>
+      </aside>
+      <main className="fr2-main">
+        {others.length > 0 && (
+          <div className="fr2-top">
+            <span>Already have one?</span>
+            <div className="tb-dd">
+              <button className="btn sm" onClick={() => setMenu(!menu)}>Open recent ▾</button>
+              {menu && (
+                <div className="tb-menu right">
+                  {others.map((c) => <button key={c.id} onClick={() => { setActive(c.id); setMenu(false); }}><span>{c.name}</span><span className="co-meta">{c.currency} · {c.unit}</span></button>)}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+        <NewCompanyForm />
+      </main>
     </div>
   );
 }

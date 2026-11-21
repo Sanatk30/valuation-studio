@@ -1,9 +1,10 @@
 import React, { useMemo } from 'react';
+import { useThemeMode } from '../../lib/theme.js';
 import * as REG from '../../lib/engine/regressionModel.js';
 import Collapsible from './Collapsible.jsx';
 import ChartBox from './ChartBox.jsx';
 import { fin, upsidePct } from './format.js';
-import { themed, xCat, yVal, vgrad, COL } from './charts.js';
+import { themed, xCat, yVal, vgrad, COL, tipBox } from './charts.js';
 
 const DASH = '—';
 /** significance stars from a two-tailed p-value */
@@ -28,13 +29,14 @@ export default function RegressionSections({ a, f, R, px }) {
   const yVar = R?.yVar;
   const yLabel = R?.yDef?.label || yVar;
   const obs = useMemo(() => REG.observations(a), [a]);
+  const theme = useThemeMode();
   const usedKeys = [...new Set((fit?.cols || []).map((c) => c.key))];
 
   const single = fit?.ok && fit.cols.length === 1 ? fit.cols[0] : null;
   const scatterOpt = useMemo(() => {
     if (!fit?.ok) return null;
-    const tip = { trigger: 'item', backgroundColor: '#161B25', borderColor: '#2A3242', borderWidth: 1, padding: [9, 12], textStyle: { color: COL.text, fontSize: 12 } };
-    const valAxis = (name) => ({ type: 'value', scale: true, name, nameTextStyle: { color: COL.axis, fontSize: 10.5 }, axisLabel: { color: COL.axis, fontSize: 11 }, splitLine: { lineStyle: { color: 'rgba(255,255,255,0.05)' } } });
+    const tip = { trigger: 'item', ...tipBox() };
+    const valAxis = (name) => ({ type: 'value', scale: true, name, nameTextStyle: { color: COL.axis, fontSize: 10.5 }, axisLabel: { color: COL.axis, fontSize: 11 }, nameLocation: 'middle', nameGap: 28, splitLine: { lineStyle: { color: COL.grid } } });
     const fy = vFmt(yVar);
     if (single) {
       const key = single.key;
@@ -63,8 +65,8 @@ export default function RegressionSections({ a, f, R, px }) {
         xAxis: valAxis(colLabel(single)), yAxis: valAxis(yLabel),
         series: [
           { name: 'Fit', type: 'line', symbol: 'none', silent: true, smooth: true, lineStyle: { width: 2, color: COL.gold, type: 'dashed' }, data: samples },
-          { name: 'Peers', type: 'scatter', symbolSize: 11, itemStyle: { color: COL.teal, borderColor: '#0B0E14', borderWidth: 1 }, label: { show: true, position: 'top', color: COL.axisStrong, fontSize: 9.5, formatter: (p) => p.data[2] }, data: raw.map((p) => [+p.x.toFixed(3), +p.y.toFixed(3), p.name]) },
-          ...(fin(tx) && R.pred?.ok ? [{ name: 'Target', type: 'scatter', symbol: 'diamond', symbolSize: 16, itemStyle: { color: COL.green, borderColor: '#0B0E14', borderWidth: 1 }, label: { show: true, position: 'bottom', color: COL.green, fontSize: 10, fontWeight: 700, formatter: (p) => p.data[2] }, data: [[+tx.toFixed(3), +R.pred.yHat.toFixed(3), a.company.name || 'Target']] }] : []),
+          { name: 'Peers', type: 'scatter', symbolSize: 11, itemStyle: { color: COL.teal, borderColor: COL.surface, borderWidth: 1 }, label: { show: true, position: 'top', color: COL.axisStrong, fontSize: 9.5, formatter: (p) => p.data[2] }, data: raw.map((p) => [+p.x.toFixed(3), +p.y.toFixed(3), p.name]) },
+          ...(fin(tx) && R.pred?.ok ? [{ name: 'Target', type: 'scatter', symbol: 'diamond', symbolSize: 16, itemStyle: { color: COL.green, borderColor: COL.surface, borderWidth: 1 }, label: { show: true, position: 'bottom', color: COL.green, fontSize: 10, fontWeight: 700, formatter: (p) => p.data[2] }, data: [[+tx.toFixed(3), +R.pred.yHat.toFixed(3), a.company.name || 'Target']] }] : []),
         ],
       });
     }
@@ -79,16 +81,16 @@ export default function RegressionSections({ a, f, R, px }) {
       xAxis: valAxis('fitted'), yAxis: valAxis('actual'),
       series: [
         { name: 'Perfect fit', type: 'line', symbol: 'none', silent: true, lineStyle: { width: 1.5, color: COL.gold, type: 'dashed' }, data: [[lo, lo], [hi, hi]] },
-        { name: 'Peers', type: 'scatter', symbolSize: 11, itemStyle: { color: COL.teal, borderColor: '#0B0E14', borderWidth: 1 }, label: { show: true, position: 'top', color: COL.axisStrong, fontSize: 9.5, formatter: (p) => p.data[2] }, data: pts },
+        { name: 'Peers', type: 'scatter', symbolSize: 11, itemStyle: { color: COL.teal, borderColor: COL.surface, borderWidth: 1 }, label: { show: true, position: 'top', color: COL.axisStrong, fontSize: 9.5, formatter: (p) => p.data[2] }, data: pts },
       ],
     });
-  }, [fit, single, obs, R, a.company.name]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [fit, single, obs, R, a.company.name, theme]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const residOpt = useMemo(() => {
     if (!fit?.ok) return null;
     const fy = vFmt(yVar);
     return themed({
-      tooltip: { trigger: 'axis', backgroundColor: '#161B25', borderColor: '#2A3242', borderWidth: 1, padding: [9, 12], textStyle: { color: COL.text, fontSize: 12 }, formatter: (ps) => `<b>${ps[0].name}</b><br/>residual ${fy(ps[0].value)}` },
+      tooltip: { trigger: 'axis', ...tipBox(), formatter: (ps) => `<b>${ps[0].name}</b><br/>residual ${fy(ps[0].value)}` },
       legend: { show: false },
       grid: { left: 8, right: 20, top: 24, bottom: 8, containLabel: true },
       xAxis: xCat(fit.rows.map((r) => r.name), { axisLabel: { color: COL.axis, fontSize: 10, rotate: fit.rows.length > 6 ? 25 : 0 } }),
@@ -99,7 +101,7 @@ export default function RegressionSections({ a, f, R, px }) {
         data: fit.rows.map((r) => +(r.yRaw - r.fittedRaw).toFixed(4)),
       }],
     });
-  }, [fit]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [fit, theme]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!R) return null;
   if (!fit?.ok) {
@@ -133,7 +135,7 @@ export default function RegressionSections({ a, f, R, px }) {
                   <td>{f.dec(fit.se[i], 4)}</td>
                   <td>{f.dec(fit.tStats[i], 2)}</td>
                   <td>{fin(fit.pVals[i]) ? fit.pVals[i].toFixed(4) : DASH}</td>
-                  <td style={{ color: COL.gold, fontWeight: 700 }}>{stars(fit.pVals[i])}</td>
+                  <td className="stars">{stars(fit.pVals[i])}</td>
                 </tr>
               ))}
             </tbody>
