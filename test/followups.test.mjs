@@ -77,6 +77,17 @@ console.log('\n=== Yahoo Apply: a second listing replaces the first one ===');
   ok(!('drivers.ebitda0' in a2.listing.applied), 'the record only holds what this listing wrote');
   const a3 = applyListing(data0, { company: {}, drivers: {}, listing: null }, { methodId: 'ts' });
   ok(a3.listing === null && a3.drivers.ebitda0 === null, 'a mapping with no listing note leaves listing null');
+
+  // keepTyped (the automatic fill and Refresh): typed numbers stay, earlier Yahoo numbers and blanks take Yahoo's
+  const typed2 = { ...a1, company: { ...a1.company, sharesOut: 400 }, history: { source: 'manual', annual: {} } };
+  const tcs2 = { ...tcs, company: { ...tcs.company, currentPrice: 3500, cash: null }, history: { source: 'yahoo', annual: {} } };
+  const k1 = applyListing(typed2, tcs2, { methodId: 'ts', keepTyped: true });
+  ok(k1.company.sharesOut === 400 && !('company.sharesOut' in k1.listing.applied), 'keepTyped: a typed share count is kept and not marked as Yahoo');
+  ok(k1.company.currentPrice === 3500 && k1.listing.applied['company.currentPrice'] === 3500, 'keepTyped: an earlier Yahoo price takes the new one');
+  ok(k1.company.cash === null, 'keepTyped: an earlier Yahoo value the new listing does not report is cleared');
+  ok(k1.history.source === 'manual', 'keepTyped: history typed by hand is kept');
+  const k2 = applyListing({ ...data0, history: null }, tcs2, { methodId: 'ts', keepTyped: true });
+  ok(k2.company.sharesOut === 362 && k2.history.source === 'yahoo', 'keepTyped: blanks and an empty history are filled');
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall follow-up checks passed');

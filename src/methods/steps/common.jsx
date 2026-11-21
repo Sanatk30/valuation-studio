@@ -155,14 +155,8 @@ export function companySymbol(record) {
 const COMPANY_PATHS = ['company.sharesOut', 'company.currentPrice', 'company.grossDebt', 'company.cash', 'company.taxRate', 'company.nol0'];
 
 /** Yahoo's figures mapped for this company: diluted shares when Yahoo reports two counts (the field asks for diluted). */
-function mapForCompany(raw, company, rates = {}) {
-  let mapped = mapListing(raw, company, rates);
-  if (mapped.needs?.shareBasis) {
-    const ids = (mapped.listing.shareOptions || []).map((o) => o.id);
-    mapped = mapListing(raw, company, rates, { shareBasis: ids.includes('diluted') ? 'diluted' : ids[0] });
-  }
-  return mapped;
-}
+// (mapListing falls back to the only reported count when diluted is not reported)
+const mapForCompany = (raw, company, rates = {}) => mapListing(raw, company, rates, { shareBasis: 'diluted' });
 
 /**
  * Company & balance sheet as the approved sample (option A): when the company
@@ -180,15 +174,19 @@ function CompanyLayout({ data, setData, company, ctx, F, Extra, specs }) {
   const started = useRef(false);
 
   const land = (mapped) => setData((d) => {
+    // a different listing applied meanwhile (Use another company) wins over a fill still in flight
+    if (d.listing?.symbol && mapped.listing?.symbol && d.listing.symbol !== mapped.listing.symbol) return d;
     const next = applyListing(d, mapped, { companyPaths: asked, methodId: ctx.methodId, keepTyped: true });
     if (askNol && !finite(next.company?.nol0)) next.company = { ...next.company, nol0: 0 };
     return next;
   });
   const run = async () => {
-    if (!symbol) return;
+    // Refresh re-reads the listing this method shows (it may be another company's); a first fill uses the company's ticker
+    const sym = data.listing?.symbol || symbol;
+    if (!sym) return;
     setSt('busy');
     try {
-      const raw = await fetchListing(symbol);
+      const raw = await fetchListing(sym);
       if (requiredCurrencies(raw, company.currency).length) { setSt({ fx: raw }); return; }
       land(mapForCompany(raw, company));
       setSt(null);
