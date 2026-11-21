@@ -110,11 +110,13 @@ export function useStore() {
 
 /* ------------------------------------------------------------ companies */
 
-export function createCompany({ name, currency, unit, startYear, fyEndMonth }) {
+export function createCompany({ name, currency, unit, startYear, fyEndMonth, listing = null }) {
   const id = uid();
   const now = Date.now();
   const rec = {
     id, name: name.trim(), currency, unit, startYear, fyEndMonth,
+    // the Yahoo listing picked when the company was created ({ symbol, exchange, name }), or null
+    listing: listing?.symbol ? { symbol: listing.symbol, exchange: listing.exchange || '', name: listing.name || '' } : null,
     createdAt: now, updatedAt: now,
     methods: Object.fromEntries(METHOD_IDS.map((m) => [m, blankMethodState(m)])),
   };

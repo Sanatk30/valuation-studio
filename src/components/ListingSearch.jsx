@@ -104,10 +104,10 @@ export default function ListingSearch({ company, onApply }) {
   );
 }
 
-function ListingPreview({ raw, company, onCancel, onApply }) {
+export function ListingPreview({ raw, company, onCancel, onApply, initialShareBasis = null }) {
   const need = useMemo(() => requiredCurrencies(raw, company.currency), [raw, company.currency]);
   const fx = useLiveRates(need, company.currency);
-  const [shareBasis, setShareBasis] = useState(null);
+  const [shareBasis, setShareBasis] = useState(initialShareBasis);
   const mapped = useMemo(
     () => mapListing(raw, company, rateNumbers(fx.rates), { shareBasis: shareBasis || undefined }),
     [raw, company, fx.rates, shareBasis],

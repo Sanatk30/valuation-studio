@@ -8,14 +8,17 @@ import { parseInputNumber, fmtBox } from '../lib/format.js';
  * input never shows a number the user did not type. Errors appear once the
  * field has been touched, or when the step asks to reveal them.
  */
-export function Field({ spec, data, onSet, company, reveal = false, row = false, sub, inline = false }) {
+export function Field({ spec, data, onSet, company, reveal = false, row = false, sub, inline = false, tag = null, help = null, filled = false }) {
   if (row) return <RowField spec={spec} data={data} onSet={onSet} company={company} reveal={reveal} sub={sub} />;
   if (inline) return <div className="fld-inl"><FieldBody spec={{ ...spec, hint: null }} data={data} onSet={onSet} company={company} reveal={reveal} />{spec.hint && <Tip title={spec.label} body={spec.hint} />}</div>;
-  return <FieldBody spec={spec} data={data} onSet={onSet} company={company} reveal={reveal} />;
+  return <FieldBody spec={help ? { ...spec, hint: help } : spec} data={data} onSet={onSet} company={company} reveal={reveal} tag={tag} filled={filled} />;
 }
 
-/** The field itself (its own component, so its hooks run on every render whatever the layout). */
-function FieldBody({ spec, data, onSet, company, reveal }) {
+/**
+ * The field itself (its own component, so its hooks run on every render whatever the layout).
+ * tag — a small label after the field name (e.g. "Yahoo"); filled — tint the box as filled for you.
+ */
+function FieldBody({ spec, data, onSet, company, reveal, tag = null, filled = false }) {
   const value = getPath(data, spec.path);
   const [touched, setTouched] = useState(false);
   const err = fieldError(spec, value);
@@ -127,10 +130,11 @@ function FieldBody({ spec, data, onSet, company, reveal }) {
   }
 
   return (
-    <div className={`fld${show ? ' bad' : ''}`}>
+    <div className={`fld${show ? ' bad' : ''}${filled ? ' yh' : ''}`}>
       <div className="fld-l">
         <label>{spec.label}</label>
-        {optional && <span className="fld-opt">optional</span>}
+        {tag}
+        {optional && !tag && <span className="fld-opt">optional</span>}
       </div>
       <NumBox
         value={value} plain={spec.kind === 'int'}

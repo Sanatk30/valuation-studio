@@ -1,14 +1,15 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { f, anyFilled } from '../fields.js';
 import { getPath, updateCompany } from '../../store/store.js';
 import { YearCheck } from '../../home/CompanyForms.jsx';
 import { METHOD_META } from '../labels.js';
 import YearGrid from '../../wizard/YearGrid.jsx';
-import ListingSearch from '../../components/ListingSearch.jsx';
+import ListingSearch, { ListingPreview } from '../../components/ListingSearch.jsx';
+import { fetchListing, mapListing, requiredCurrencies } from '../../lib/yahoo.js';
 import {
   HISTORY_LINES, HISTORY_GROUPS, HISTORY_MAX_YEARS, blankManualHistory, hasHistory, historyReference, fyLabel, validFyEnd,
 } from '../../lib/historyModel.js';
-import { fmtPct, fmtNum, CURRENCIES } from '../../lib/format.js';
+import { fmtPct, fmtNum, fmtDate, CURRENCIES, UNITS } from '../../lib/format.js';
 import { GRID_ROWS, gridErrors, resize, fitKeep } from './fieldSteps.js';
 
 /* ======================================================================
@@ -40,7 +41,7 @@ const TS_BALANCE_METHODS = ['ts', 'ratios'];
  * Company step's field paths). A value Yahoo does not report never clears
  * what the user already typed.
  */
-export function applyListing(data, mapped, { companyPaths = null, methodId = null } = {}) {
+export function applyListing(data, mapped, { companyPaths = null, methodId = null, keepTyped = false } = {}) {
   let next = { ...data };
   const pick = (src, keys) => Object.fromEntries(keys.filter((k) => src && finite(src[k])).map((k) => [k, src[k]]));
   const asked = companyPaths ? COMPANY_KEYS.filter((k) => companyPaths.includes(`company.${k}`)) : COMPANY_KEYS;
@@ -59,12 +60,16 @@ export function applyListing(data, mapped, { companyPaths = null, methodId = nul
     const cur = { ...(data[sec] || {}) };
     for (const k of keys) {
       const path = `${sec}.${k}`;
+      // keepTyped (the automatic fill and Refresh): a number the user typed stays; only blanks and
+      // numbers an earlier Yahoo fill put there (unchanged since) take Yahoo's figure
+      const typed = keepTyped && finite(cur[k]) && !(path in before && cur[k] === before[path]);
+      if (typed) continue;
       if (k in got) { cur[k] = got[k]; applied[path] = got[k]; }
       else if (path in before && cur[k] === before[path]) cur[k] = null;
     }
     next[sec] = cur;
   }
-  if ('history' in data && mapped.history) next.history = mapped.history;
+  if ('history' in data && mapped.history && !(keepTyped && data.history && data.history.source !== 'yahoo')) next.history = mapped.history;
   next.listing = mapped.listing ? { ...mapped.listing, applied } : null;
   return next;
 }
@@ -132,16 +137,135 @@ function CompanyExtras({ data, setData, company, ctx, specs }) {
   );
 }
 
-/** Company & balance sheet in the approved DCF style: the listing search on top, the figures as one card. */
-function CompanyLayout({ data, setData, company, ctx, F, Extra }) {
-  const paths = ['company.sharesOut', 'company.currentPrice', 'company.grossDebt', 'company.cash', 'company.taxRate', 'company.nol0'];
+/**
+ * The company's Yahoo ticker: the listing picked when the company was created,
+ * else one another method of this company was already filled from.
+ */
+export function companySymbol(record) {
+  if (record?.listing?.symbol) return record.listing.symbol;
+  const m = record?.methods || {};
+  const seen = [
+    ...Object.values(m).map((x) => x?.data?.listing?.symbol),
+    m.dcf?.data?.dcf?.company?._fetched?.symbol, m.lbo?.data?.lbo?.company?._fetched?.symbol,
+    m.comps?.data?.comps?.target?._fetched?.symbol, m.precedent?.data?.precedent?.company?._fetched?.symbol,
+  ];
+  return seen.find((x) => typeof x === 'string' && x) || null;
+}
+
+const COMPANY_PATHS = ['company.sharesOut', 'company.currentPrice', 'company.grossDebt', 'company.cash', 'company.taxRate', 'company.nol0'];
+
+/** Yahoo's figures mapped for this company: diluted shares when Yahoo reports two counts (the field asks for diluted). */
+function mapForCompany(raw, company, rates = {}) {
+  let mapped = mapListing(raw, company, rates);
+  if (mapped.needs?.shareBasis) {
+    const ids = (mapped.listing.shareOptions || []).map((o) => o.id);
+    mapped = mapListing(raw, company, rates, { shareBasis: ids.includes('diluted') ? 'diluted' : ids[0] });
+  }
+  return mapped;
+}
+
+/**
+ * Company & balance sheet as the approved sample (option A): when the company
+ * has a Yahoo ticker, the page fills itself the first time it opens — a bar
+ * says where the figures came from, each filled box carries a "Yahoo" tag.
+ * Numbers the user typed are never replaced; Refresh takes Yahoo's latest for
+ * the rest. A listing in another currency waits for the user to confirm the rate.
+ */
+function CompanyLayout({ data, setData, company, ctx, F, Extra, specs }) {
+  const symbol = companySymbol(ctx.record);
+  const asked = (specs || []).map((x) => x.path);
+  const askNol = asked.includes('company.nol0');
+  const [st, setSt] = useState(null);          // null | 'busy' | { error } | { fx: raw }
+  const [other, setOther] = useState(false);
+  const started = useRef(false);
+
+  const land = (mapped) => setData((d) => {
+    const next = applyListing(d, mapped, { companyPaths: asked, methodId: ctx.methodId, keepTyped: true });
+    if (askNol && !finite(next.company?.nol0)) next.company = { ...next.company, nol0: 0 };
+    return next;
+  });
+  const run = async () => {
+    if (!symbol) return;
+    setSt('busy');
+    try {
+      const raw = await fetchListing(symbol);
+      if (requiredCurrencies(raw, company.currency).length) { setSt({ fx: raw }); return; }
+      land(mapForCompany(raw, company));
+      setSt(null);
+    } catch (e) {
+      setSt({ error: e.message || String(e) });
+    }
+  };
+  const blank = COMPANY_PATHS.filter((p) => asked.includes(p)).every((p) => !finite(getPath(data, p)));
+  useEffect(() => {
+    if (started.current || !symbol || data.listing || !blank) return;
+    started.current = true;
+    run();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const L = data.listing;
+  const applied = L?.applied || {};
+  const fromYahoo = (p) => p in applied && getPath(data, p) === applied[p];
+  const nY = COMPANY_PATHS.filter((p) => asked.includes(p) && fromYahoo(p)).length;
+  const nAsk = COMPANY_PATHS.filter((p) => asked.includes(p)).length;
+  const ccyNote = (() => {
+    const conv = Object.entries(L?.rates || {}).filter(([, r]) => r && Number(r.rate) > 0);
+    const where = `${CURRENCIES[company.currency]?.symbol || ''} ${UNITS[company.unit] || ''}`.trim();
+    return conv.length ? `converted into ${where} at ${conv.map(([c, r]) => `${Number(r.rate).toFixed(4)} per ${c}`).join(', ')}` : `already in ${where}, no conversion needed`;
+  })();
+  const day = (iso) => (iso ? fmtDate(String(iso).slice(0, 10)) : null);
+  const initials = (L?.name || ctx.record?.listing?.name || symbol || company.name || '?').split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
+
+  const HELP = {
+    'company.sharesOut': L?.shareBasis === 'diluted' ? 'diluted shares' : `shares outstanding${L?.bsDate ? ` at ${day(L.bsDate)}` : ''}`,
+    'company.currentPrice': `latest quote${L?.priceAt ? `, ${day(L.priceAt)}` : ''}`,
+    'company.grossDebt': 'total debt incl. leases',
+    'company.cash': 'cash & equivalents',
+    'company.taxRate': 'tax ÷ pre-tax income, last reported year',
+  };
+  const field = (p) => {
+    if (p === 'company.nol0' && L) return F(p, { tag: <span className="ytag am">not on Yahoo</span>, help: 'Yahoo doesn’t report tax losses — 0 unless you type one' });
+    if (fromYahoo(p)) return F(p, { tag: <span className="ytag">Yahoo</span>, help: HELP[p], filled: true });
+    return F(p);
+  };
+
+  let bar;
+  if (!symbol && !L) {
+    bar = <div className="box2 fetchbar2"><Extra data={data} setData={setData} company={company} ctx={ctx} specs={specs} /></div>;
+  } else {
+    const busy = st === 'busy';
+    const title = L ? <>Filled from Yahoo Finance · {L.symbol}</> : busy ? <>Filling from Yahoo Finance · {symbol}…</> : <>Yahoo Finance · {symbol}</>;
+    const sub = st?.error ? `Couldn’t reach Yahoo just now (${st.error}) — try again, or type the figures below.`
+      : st?.fx ? `Yahoo reports ${st.fx.symbol} in ${requiredCurrencies(st.fx, company.currency).join(' and ')} — confirm the exchange rate to fill the boxes in ${company.currency}.`
+        : L ? `${L.bsDate ? `balance sheet at ${day(L.bsDate)} · ` : ''}${L.priceAt || L.at ? `price on ${day(L.priceAt || L.at)} · ` : ''}${ccyNote}`
+          : busy ? 'shares, price, debt, cash and tax rate' : 'press Fill to bring in shares, price, debt, cash and tax rate';
+    bar = (
+      <div className="box2 fetchbar2 ybar">
+        <div className="yb-row">
+          <span className="yb-av">{initials}</span>
+          <div className="yb-t"><b>{title}</b><small className={st?.error ? 'dn' : ''}>{sub}</small></div>
+          {L && !busy && <span className="yb-ok">✓ {nY} of {nAsk} filled</span>}
+          {st?.fx ? <button type="button" className="btn primary" onClick={() => setSt({ fx: st.fx, open: true })}>Confirm rate &amp; fill</button>
+            : <button type="button" className="btn" disabled={busy} onClick={run}>{L ? '↻ Refresh from Yahoo' : st?.error ? 'Try again' : 'Fill from Yahoo'}</button>}
+          <button type="button" className="btn ghost" onClick={() => setOther(!other)} aria-expanded={other}>{other ? 'Close' : 'Use another company'}</button>
+        </div>
+        {busy && <div className="pbar" style={{ marginTop: 12 }}><div /></div>}
+        {other && <div className="yb-other"><Extra data={data} setData={setData} company={company} ctx={ctx} specs={specs} /></div>}
+        {st?.fx && st.open && (
+          <ListingPreview raw={st.fx} company={company} initialShareBasis="diluted" onCancel={() => setSt({ fx: st.fx })}
+            onApply={(mapped) => { land(mapped); setSt(null); }} />
+        )}
+      </div>
+    );
+  }
+
   return (
     <>
-      <div className="box2 fetchbar2"><Extra data={data} setData={setData} company={company} ctx={ctx} /></div>
+      {bar}
       <div className="box2">
         <h3>Share data and balance sheet</h3>
-        <div className="box2-s">today’s figures · every number stays editable</div>
-        <div className="g3f">{paths.map((p) => F(p))}</div>
+        <div className="box2-s">today’s figures · every number stays editable{L && nY > 0 ? <> · <span className="ytag">Yahoo</span> = filled for you</> : null}</div>
+        <div className="g3f">{COMPANY_PATHS.map(field)}</div>
       </div>
     </>
   );
@@ -154,7 +278,10 @@ export const companyStep = (opts = {}) => ({
   Extra: CompanyExtras,
   Layout: CompanyLayout,
   fields: () => companySpecs(opts),
-  summary: (data) => (Number.isFinite(data.company?.sharesOut) ? `${data.company.sharesOut} shares${Number.isFinite(data.company?.currentPrice) ? ` · price ${data.company.currentPrice}` : ''}` : null),
+  summary: (data, ctx) => {
+    const c = data.company || {}; const L = CURRENCIES[ctx?.company?.currency]?.locale;
+    return Number.isFinite(c.sharesOut) ? `${fmtNum(c.sharesOut, 2, L)} shares${Number.isFinite(c.currentPrice) ? ` · price ${fmtNum(c.currentPrice, 2, L)}` : ''}` : null;
+  },
 });
 
 /* ======================================================================

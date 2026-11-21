@@ -149,7 +149,7 @@ export function NewCompanyForm({ onDone, onCancel }) {
   const submit = () => {
     setTried(true);
     if (!ok) return;
-    const id = createCompany({ name: name.trim(), currency, unit, startYear, fyEndMonth: Number(fy) });
+    const id = createCompany({ name: name.trim(), currency, unit, startYear, fyEndMonth: Number(fy), listing: listing ? { ...listing, name: name.trim() } : null });
     onDone?.(id);
   };
   const E = ({ k }) => (tried && errs[k] ? <div className="fld-e">{errs[k]}</div> : null);
