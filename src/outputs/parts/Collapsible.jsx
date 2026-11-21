@@ -52,9 +52,8 @@ export function Sections({ children }) {
   );
 }
 
-/** A section's chip label: its tag in words when it has one, else the title up to the first dash or colon. */
-const shortTitle = ({ title, tag }) => {
-  const t = String(title);
-  const head = t.split(/ — |: /)[0];
-  return head.length > 34 ? `${head.slice(0, 32)}…` : head || tag;
+/** A section's chip label: its title up to the first dash or colon, shortened past 34 characters. */
+const shortTitle = ({ title }) => {
+  const head = String(title).split(/ — |: /)[0];
+  return head.length > 34 ? `${head.slice(0, 32)}…` : head;
 };

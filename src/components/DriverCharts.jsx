@@ -85,7 +85,7 @@ function DriverCard({ d, row, hist, nHist, labels, onSet, onRow, emptyHist, unit
           )}
         </div>
       </div>
-      <svg ref={svg} viewBox={`0 0 ${W} ${H}`} className="drv-svg" onPointerMove={onMove} onPointerUp={onUp} onPointerLeave={onUp} role="img" aria-label={`${d.label}: history and forecast`}>
+      <svg ref={svg} viewBox={`0 0 ${W} ${H}`} className="drv-svg" onPointerMove={onMove} onPointerUp={onUp} onPointerLeave={onUp} onPointerCancel={onUp} role="img" aria-label={`${d.label}: history and forecast`}>
         <rect x={(x(nHist - 1) + x(nHist)) / 2} y="0" width={W - (x(nHist - 1) + x(nHist)) / 2} height={H} rx="8" className="drv-band" />
         {histLine.length > 1 && <polyline points={histLine.map((p) => p.join(',')).join(' ')} className="drv-hl" />}
         {fcLine.length > 1 && <polyline points={fcLine.map((p) => p.join(',')).join(' ')} className="drv-fl" />}

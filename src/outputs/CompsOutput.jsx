@@ -212,7 +212,6 @@ const X_NAMES = ['Revenue growth', 'EBITDA growth', 'PAT growth', 'EBITDA margin
 /** The workbook's single-driver 'Regression' sheet, as the app computes it. */
 function SimpleRegressionSection({ a, c, f, locale, lab }) {
   const R = useMemo(() => simpleRegression(c, simpleRegressionCodes(a.regression)), [a, c]);
-  if (!c.peers.length) return null;
   const yName = R.codes.y >= 4 ? `${Y_NAMES[R.codes.y - 1]} ${lab.f1}` : Y_NAMES[R.codes.y - 1];
   const xName = X_NAMES[R.codes.x - 1];
   const n3 = (v) => (fin(v) ? v.toFixed(3) : 'NA');
@@ -225,14 +224,16 @@ function SimpleRegressionSection({ a, c, f, locale, lab }) {
     [`Implied price (${f.sym}) (−1 SE / +1 SE)`, `${fmtTpl(R.price.mid, 'n2', locale)} (${fmtTpl(R.price.lo, 'n2', locale)} / ${fmtTpl(R.price.hi, 'n2', locale)})`],
   ];
   const isN = (v) => typeof v === 'number' && Number.isFinite(v);
-  const scatter = fitScatterOption(
+  const theme = useThemeMode();
+  const scatter = useMemo(() => fitScatterOption(
     R.rows.filter((r) => r.used).map((r) => ({ x: r.x * 100, y: r.y, name: r.name })),
     {
       fit: isN(R.slope) ? { slope: R.slope / 100, intercept: R.intercept } : null,
       target: isN(R.targetX) && isN(R.yhat) ? { x: R.targetX * 100, y: R.yhat, name: a.company?.name || 'Target' } : null,
       fx: (v) => `${(+v).toFixed(1)}%`, fy: (v) => `${(+v).toFixed(1)}x`, xTitle: xName, yTitle: yName, r2: isN(R.r2) ? R.r2 : NaN,
     },
-  );
+  ), [R, xName, yName, a.company?.name, theme]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!c.peers.length) return null;   // after the hooks, so they run on every render
   return (
     <Collapsible title={`Single-driver regression: ${yName} vs ${xName}`} tag="REGRESSION SHEET" defaultOpen={R.n >= 3}>
       <div className="grid2">

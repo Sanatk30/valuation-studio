@@ -220,6 +220,7 @@ html body { background-color: var(--bg); background-image: radial-gradient(var(-
 .stepper .fld-box { border: 0; border-left: 1px solid var(--border); border-right: 1px solid var(--border); border-radius: 0; width: 70px; }
 .stepper .fld-in { text-align: center; border: 0; border-radius: 0; }
 .fld-seg > button.has-tip { position: relative; }
+.seg.fld-seg { overflow: visible; }   /* the option explanations open below the buttons */
 .tip-i { position: relative; display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--surface-3); color: var(--muted); font: 700 11px var(--sans); cursor: help; flex: none; }
 .tipcard { position: absolute; z-index: 60; top: calc(100% + 10px); left: 50%; transform: translate(-50%, 4px); width: 300px; background: #15201F; color: #E9F0F0; border-radius: 12px; padding: 12px 14px; font: 400 12.5px/1.55 var(--sans); text-align: left; white-space: normal; box-shadow: 0 12px 30px rgba(0,0,0,.25); opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .15s, transform .15s, visibility .15s; }
 .tipcard::before { content: ''; position: absolute; top: -6px; left: 50%; margin-left: -6px; border: 6px solid transparent; border-top: 0; border-bottom-color: #15201F; }

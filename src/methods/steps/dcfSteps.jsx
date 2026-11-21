@@ -37,8 +37,15 @@ const labelsOf = (data, company) => dcfLabels(S(data).labels, nHist(data), nFcst
 const pct2 = (v) => (fin(v) ? `${(v * 100).toFixed(2)}%` : 'NM');
 
 /** The whole engine on the current data (null when it cannot run yet). */
+/** The engine on the current data, once per (company, data) — the layout, live card, step summaries and checks share it. */
+const RESULTS = new WeakMap();
 function resultOf(company, data) {
-  try { return computeDcfT(toEngineInput(company, data)); } catch { return null; }
+  const hit = data && typeof data === 'object' ? RESULTS.get(data) : null;
+  if (hit && hit.company === company) return hit.r;
+  let r;
+  try { r = computeDcfT(toEngineInput(company, data)); } catch { r = null; }
+  if (data && typeof data === 'object') RESULTS.set(data, { company, r });
+  return r;
 }
 
 /** Historical years with no revenue (blank or 0): they hold no figures. */

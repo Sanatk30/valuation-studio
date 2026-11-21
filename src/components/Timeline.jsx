@@ -24,8 +24,9 @@ export default function Timeline({ hist, fcst, startYear, fyEndMonth = 12, tail,
     ...fcst.map((l, i) => ({ l, k: 'f', sub: fcstSub, end: y1 ? y1 + i : null, tip: fcstTip ? fcstTip(i, fcst.length) : (i === fcst.length - 1 ? 'The final forecast year — its cash flow sets the terminal value.' : `Forecast year ${i + 1}.`) })),
   ];
   // the valuation date sits after the latest actual year (its own position is approximate)
-  const vd = valDate ? new Date(valDate) : null;
-  const vdTxt = vd && !Number.isNaN(vd.getTime()) ? `${vd.getDate()}-${MON[vd.getMonth()]}-${vd.getFullYear()}` : null;
+  // read 'YYYY-MM-DD' as a calendar date (new Date() would take it as UTC and shift it a day west of UTC)
+  const vm = /^(\d{4})-(\d{2})-(\d{2})$/.exec(valDate || '');
+  const vdTxt = vm && Number(vm[2]) >= 1 && Number(vm[2]) <= 12 ? `${Number(vm[3])}-${MON[Number(vm[2]) - 1]}-${vm[1]}` : null;
   return (
     <div className="tl2">
       <div className="tl2-row" style={{ gridTemplateColumns: `repeat(${boxes.length + (tail ? 1 : 0)}, minmax(0, 1fr))` }}>

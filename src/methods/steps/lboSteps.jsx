@@ -36,8 +36,15 @@ const nHold = (data) => clampN(S(data).holdYears, 5);
 const labelsOf = (data, company) => dcfLabels(S(data).labels, nHist(data), nHold(data), company?.startYear);
 const pct1 = (v) => (fin(v) ? `${(v * 100).toFixed(1)}%` : 'NM');
 
+/** The engine on the current data, once per (company, data) — the layout, live card, step summaries and checks share it. */
+const RESULTS = new WeakMap();
 function resultOf(company, data) {
-  try { return computeLboT(toEngineInput(company, data)); } catch { return null; }
+  const hit = data && typeof data === 'object' ? RESULTS.get(data) : null;
+  if (hit && hit.company === company) return hit.r;
+  let r;
+  try { r = computeLboT(toEngineInput(company, data)); } catch { r = null; }
+  if (data && typeof data === 'object') RESULTS.set(data, { company, r });
+  return r;
 }
 
 /** The teal "Sponsor returns, live" card of the approved LBO samples. */
