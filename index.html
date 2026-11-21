@@ -17,7 +17,8 @@
       // the theme before the first paint (src/lib/theme.js keeps it from here)
       (function () {
         var t = null;
-        try { t = localStorage.getItem('qv-theme'); } catch (e) {}
+        // 'qv-theme-v2': choices saved before the redesign are dropped, so every browser starts on light
+        try { t = localStorage.getItem('qv-theme-v2'); localStorage.removeItem('qv-theme'); } catch (e) {}
         if (t !== 'light' && t !== 'dark') t = 'light';   // light unless dark was chosen
         document.documentElement.setAttribute('data-theme', t);
       })();

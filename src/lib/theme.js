@@ -7,7 +7,8 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { setChartMode } from './chartkit.js';
 
-const KEY = 'qv-theme';
+// v2: choices saved before the redesign are dropped, so every browser starts on light
+const KEY = 'qv-theme-v2';
 
 export function storedTheme() {
   try {
